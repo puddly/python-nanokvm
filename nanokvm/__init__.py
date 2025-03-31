@@ -1,3 +1,3 @@
-from .client import NanoKVMClient
+from .client import ButtonType, NanoKVMClient
 
-__all__ = ["NanoKVMClient"]
+__all__ = ["ButtonType", "NanoKVMClient"]

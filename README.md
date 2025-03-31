@@ -7,7 +7,7 @@ Async Python client for [NanoKVM](https://github.com/sipeed/NanoKVM).
 ```python
 
 from aiohttp import ClientSession
-from nanokvm import NanoKVMClient
+from nanokvm import ButtonType, NanoKVMClient
 
 
 async with ClientSession() as session:
@@ -22,4 +22,6 @@ async with ClientSession() as session:
 
     async for frame in client.mjpeg_stream():
         print(frame)
+
+    await client.push_button(ButtonType.POWER, duration_ms=1000)
 ```

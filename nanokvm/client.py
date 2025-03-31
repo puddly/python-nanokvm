@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+import enum
 import io
 import logging
 from typing import Any
@@ -29,6 +30,11 @@ class NanoKVMNotAuthenticated(Exception):
 
 class NanoKVMApiError(Exception):
     pass
+
+
+class ButtonType(enum.StrEnum):
+    POWER = "power"
+    RESET = "reset"
 
 
 class NanoKVMClient:
@@ -120,3 +126,10 @@ class NanoKVMClient:
             raise ValueError(f"Invalid characters in text: {invalid_chars}")
 
         return await self._api("POST", "hid/paste", data={"content": text})
+
+    async def push_button(self, button: ButtonType, duration_ms: int) -> Any:
+        return await self._api(
+            "POST",
+            "vm/gpio",
+            data={"type": button.value, "duration": duration_ms},
+        )
