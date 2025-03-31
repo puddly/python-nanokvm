@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request: ~
+
+jobs:
+  ci:
+    name: Run CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Register Python problem matcher
+        run: |
+          echo "::add-matcher::.github/workflows/matchers/python.json"
+
+      - name: Run pre-commit
+        run: |
+          uv venv venv
+          . venv/bin/activate
+
+          uv pip install -e '.[testing]'
+          uv pip install pre-commit pytest-github-actions-annotate-failures
+
+          pre-commit install-hooks
+          pre-commit run --show-diff-on-failure --color=always --all-files
+
+      - name: Run pytest
+        run: |
+          . venv/bin/activate
+          pytest \
+            -n auto \
+            -qq \
+            --timeout=20 \
+            --durations=10 \
+            --cov nanokvm \
+            --cov-config pyproject.toml \
+            -o console_output_style=count \
+            -p no:sugar \
+            tests
+
+          coverage report --fail-under=100

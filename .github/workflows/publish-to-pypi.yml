@@ -1,0 +1,47 @@
+name: Publish distributions to PyPI
+
+on:
+  release:
+    types:
+      - published
+
+jobs:
+  pypi-build:
+    name: Build Python wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install build tools
+        run: pip install wheel build
+      - name: Build wheel & sdist
+        run: python -m build
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+  pypi-publish:
+    name: Publish distributions to PyPI
+    runs-on: ubuntu-latest
+    needs: pypi-build
+    environment:
+      name: pypi
+      url: https://pypi.org/p/nanokvm
+    permissions:
+      # IMPORTANT: this permission is mandatory for Trusted Publishing
+      id-token: write
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

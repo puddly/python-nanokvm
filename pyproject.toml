@@ -1,0 +1,99 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel", "setuptools-git-versioning<3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanokvm"
+dynamic = ["version"]
+description = "Async client for NanoKVM devices."
+urls = {repository = "https://github.com/puddly/python-nanokvm"}
+authors = [
+    {name = "puddly", email = "puddly3@gmail.com"}
+]
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.13"
+dependencies = [
+    "aiohttp",
+    "cryptography",
+    "yarl",
+    "pillow",
+]
+
+[tool.setuptools.packages.find]
+exclude = ["tests", "tests.*"]
+
+[project.optional-dependencies]
+testing = [
+    "tomli",
+    "coverage[toml]",
+    "pytest",
+    "pytest-xdist",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-timeout",
+    "aioresponses",
+]
+
+[tool.setuptools-git-versioning]
+enabled = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+required-version = ">=0.5.0"
+target-version = "py39"
+line-length = 88
+
+exclude = [
+    ".venv",
+    ".git",
+    ".tox",
+    "docs",
+    "venv",
+    "bin",
+    "lib",
+    "deps",
+    "build",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["F811"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = [
+    "nanokvm",
+]
+combine-as-imports = true
+split-on-trailing-comma = false
+
+[tool.codespell]
+ignore-words-list = ["hass"]
+skip = ["./.*", "tests/*", "pyproject.toml"]
+quiet-level = 2
+
+[tool.mypy]
+strict = true
+install_types = true
+non_interactive = true
+show_error_codes = true
+show_error_context = true
+error_summary = true
+
+[tool.coverage.run]
+source = ["nanokvm"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if typing.TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "raise NotImplementedError()",
+]
