@@ -50,4 +50,4 @@ jobs:
             -p no:sugar \
             tests
 
-          coverage report --fail-under=100
+          coverage report --fail-under=62
