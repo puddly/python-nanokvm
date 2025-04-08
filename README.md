@@ -7,18 +7,19 @@ Async Python client for [NanoKVM](https://github.com/sipeed/NanoKVM).
 ```python
 
 from aiohttp import ClientSession
-from nanokvm import ButtonType, NanoKVMClient
+from nanokvm.models import ButtonType
+from nanokvm.client import NanoKVMClient
 
 
 async with ClientSession() as session:
     client = NanoKVMClient("http://kvm-8b76.local/api/", session)
     await client.authenticate("username", "password")
 
-    hw_info = await client.get_hardware_info()
-    dev_info = await client.get_device_info()
-    gpio_state = await client.get_gpio_state()
+    dev = await client.get_info()
+    hw = await client.get_hardware()
+    gpio = await client.get_gpio()
 
-    await client.send_keys("Hello\nworld!")
+    await client.paste_text("Hello\nworld!")
 
     async for frame in client.mjpeg_stream():
         print(frame)

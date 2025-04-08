@@ -18,6 +18,7 @@ dependencies = [
     "cryptography",
     "yarl",
     "pillow",
+    "pydantic",
 ]
 
 [tool.setuptools.packages.find]
