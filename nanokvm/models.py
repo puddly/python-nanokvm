@@ -200,7 +200,7 @@ class GetSSHStateRsp(BaseModel):
 
 
 class GetSwapStateRsp(BaseModel):
-    enabled: bool
+    enabled: bool | None = None
 
 
 class GetMdnsStateRsp(BaseModel):
