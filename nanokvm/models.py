@@ -137,7 +137,7 @@ class IPInfo(BaseModel):
 
 
 class GetInfoRsp(BaseModel):
-    ip: str
+    ips: list[IPInfo]
     mdns: str
     image: str
     application: str
