@@ -137,7 +137,7 @@ class IPInfo(BaseModel):
 
 
 class GetInfoRsp(BaseModel):
-    ip: str
+    ips: list[IPInfo]
     mdns: str
     image: str
     application: str
@@ -200,7 +200,7 @@ class GetSSHStateRsp(BaseModel):
 
 
 class GetSwapStateRsp(BaseModel):
-    enabled: bool
+    enabled: bool | None = None
 
 
 class GetMdnsStateRsp(BaseModel):
