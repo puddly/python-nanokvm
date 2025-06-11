@@ -26,6 +26,7 @@ from .models import (
     GetCdRomRsp,
     GetGpioRsp,
     GetHardwareRsp,
+    GetHdmiStateRsp,
     GetHidModeRsp,
     GetInfoRsp,
     GetMdnsStateRsp,
@@ -572,8 +573,16 @@ class NanoKVMClient:
         """Reboot the KVM device."""
         await self._api_request_json(hdrs.METH_POST, "/vm/system/reboot")
 
+    async def get_hdmi_state(self) -> GetHdmiStateRsp:
+        """Get the HDMI state."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/vm/hdmi",
+            response_model=GetHdmiStateRsp,
+        )
+
     async def reset_hdmi(self) -> None:
-        """Reset the HDMI connection (relevant for PCIe version)."""
+        """Reset the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/reset")
 
     async def reset_hid(self) -> None:

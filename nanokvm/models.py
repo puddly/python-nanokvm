@@ -315,3 +315,7 @@ class SetMouseJigglerModeReq(BaseModel):
 
 class GetMouseJigglerModeRsp(BaseModel):
     mode: MouseJigglerMode
+
+
+class GetHdmiStateRsp(BaseModel):
+    enabled: bool
