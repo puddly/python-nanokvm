@@ -32,7 +32,7 @@ from .models import (
     GetMdnsStateRsp,
     GetMemoryLimitRsp,
     GetMountedImageRsp,
-    GetMouseJigglerModeRsp,
+    GetMouseJigglerRsp,
     GetOLEDRsp,
     GetPreviewRsp,
     GetSSHStateRsp,
@@ -53,7 +53,7 @@ from .models import (
     SetGpioReq,
     SetHidModeReq,
     SetMemoryLimitReq,
-    SetMouseJigglerModeReq,
+    SetMouseJigglerReq,
     SetOledReq,
     SetPreviewReq,
     SetSwapSizeReq,
@@ -629,22 +629,20 @@ class NanoKVMClient:
         """Perform a Tailscale action: restart."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/restart")
 
-    async def mouse_jiggler_state(self) -> GetMouseJigglerModeRsp:
+    async def mouse_jiggler_state(self) -> GetMouseJigglerRsp:
         """Get the mouse jiggler state."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/mouse-jiggler",
-            response_model=GetMouseJigglerModeRsp,
+            response_model=GetMouseJigglerRsp,
         )
 
-    async def mouse_jiggler_enable(self, mode: MouseJigglerMode) -> None:
-        """Enable the mouse jiggler."""
+    async def set_mouse_jiggler_state(
+        self, enabled: bool, mode: MouseJigglerMode
+    ) -> None:
+        """Set the mouse jiggler state."""
         await self._api_request_json(
             hdrs.METH_POST,
-            "/vm/mouse-jiggler/enable",
-            data=SetMouseJigglerModeReq(mode=mode),
+            "/vm/mouse-jiggler",
+            data=SetMouseJigglerReq(enabled=enabled, mode=mode),
         )
-
-    async def mouse_jiggler_disable(self) -> None:
-        """Disable the mouse jiggler."""
-        await self._api_request_json(hdrs.METH_POST, "/vm/mouse-jiggler/disable")

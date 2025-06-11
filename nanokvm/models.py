@@ -309,11 +309,13 @@ class DownloadImageReq(BaseModel):
     # cdrom field is ignored for downloads
 
 
-class SetMouseJigglerModeReq(BaseModel):
+class SetMouseJigglerReq(BaseModel):
+    enabled: bool
     mode: MouseJigglerMode
 
 
-class GetMouseJigglerModeRsp(BaseModel):
+class GetMouseJigglerRsp(BaseModel):
+    enabled: bool
     mode: MouseJigglerMode
 
 
