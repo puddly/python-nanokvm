@@ -31,10 +31,11 @@ from .models import (
     GetMdnsStateRsp,
     GetMemoryLimitRsp,
     GetMountedImageRsp,
+    GetMouseJigglerModeRsp,
     GetOLEDRsp,
     GetPreviewRsp,
     GetSSHStateRsp,
-    GetSwapStateRsp,
+    GetSwapSizeRsp,
     GetTailscaleStatusRsp,
     GetVersionRsp,
     GetVirtualDeviceRsp,
@@ -46,12 +47,15 @@ from .models import (
     LoginReq,
     LoginRsp,
     MountImageReq,
+    MouseJigglerMode,
     PasteReq,
     SetGpioReq,
     SetHidModeReq,
     SetMemoryLimitReq,
+    SetMouseJigglerModeReq,
     SetOledReq,
     SetPreviewReq,
+    SetSwapSizeReq,
     StatusImageRsp,
     UpdateVirtualDeviceReq,
     UpdateVirtualDeviceRsp,
@@ -305,12 +309,19 @@ class NanoKVMClient:
             response_model=GetSSHStateRsp,
         )
 
-    async def get_swap_state(self) -> GetSwapStateRsp:
-        """Get Swap enabled state."""
-        return await self._api_request_json(
+    async def get_swap_size(self) -> int:
+        """Get Swap size."""
+        rsp = await self._api_request_json(
             hdrs.METH_GET,
             "/vm/swap",
-            response_model=GetSwapStateRsp,
+            response_model=GetSwapSizeRsp,
+        )
+        return rsp.size
+
+    async def set_swap_size(self, size_mb: int) -> None:
+        """Set the Swap size."""
+        await self._api_request_json(
+            hdrs.METH_POST, "/vm/swap", data=SetSwapSizeReq(size=size_mb)
         )
 
     async def get_mdns_state(self) -> GetMdnsStateRsp:
@@ -608,3 +619,23 @@ class NanoKVMClient:
     async def tailscale_restart(self) -> None:
         """Perform a Tailscale action: restart."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/restart")
+
+    async def mouse_jiggler_state(self) -> GetMouseJigglerModeRsp:
+        """Get the mouse jiggler state."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/vm/mouse-jiggler",
+            response_model=GetMouseJigglerModeRsp,
+        )
+
+    async def mouse_jiggler_enable(self, mode: MouseJigglerMode) -> None:
+        """Enable the mouse jiggler."""
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/vm/mouse-jiggler/enable",
+            data=SetMouseJigglerModeReq(mode=mode),
+        )
+
+    async def mouse_jiggler_disable(self) -> None:
+        """Disable the mouse jiggler."""
+        await self._api_request_json(hdrs.METH_POST, "/vm/mouse-jiggler/disable")

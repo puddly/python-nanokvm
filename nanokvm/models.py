@@ -94,6 +94,13 @@ class HWVersion(StrEnum):
     UNKNOWN = "Unknown"
 
 
+class MouseJigglerMode(StrEnum):
+    """Mouse Jiggler Modes."""
+
+    ABSOLUTE = "absolute"
+    RELATIVE = "relative"
+
+
 # Generic Response Wrapper
 class ApiResponse(BaseModel, Generic[T]):
     """Generic API response structure."""
@@ -199,8 +206,12 @@ class GetSSHStateRsp(BaseModel):
     enabled: bool
 
 
-class GetSwapStateRsp(BaseModel):
-    enabled: bool | None = None
+class GetSwapSizeRsp(BaseModel):
+    size: int
+
+
+class SetSwapSizeReq(BaseModel):
+    size: int
 
 
 class GetMdnsStateRsp(BaseModel):
@@ -296,3 +307,11 @@ class StatusImageRsp(BaseModel):
 class DownloadImageReq(BaseModel):
     file: str  # URL of the image to download
     # cdrom field is ignored for downloads
+
+
+class SetMouseJigglerModeReq(BaseModel):
+    mode: MouseJigglerMode
+
+
+class GetMouseJigglerModeRsp(BaseModel):
+    mode: MouseJigglerMode
