@@ -585,6 +585,14 @@ class NanoKVMClient:
         """Reset the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/reset")
 
+    async def enable_hdmi(self) -> None:
+        """Enable the HDMI connection."""
+        await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/enable")
+
+    async def disable_hdmi(self) -> None:
+        """Disable the HDMI connection."""
+        await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/disable")
+
     async def reset_hid(self) -> None:
         """Reset the HID subsystem."""
         await self._api_request_json(hdrs.METH_POST, "/hid/reset")
