@@ -637,7 +637,7 @@ class NanoKVMClient:
         """Perform a Tailscale action: restart."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/restart")
 
-    async def mouse_jiggler_state(self) -> GetMouseJigglerRsp:
+    async def get_mouse_jiggler_state(self) -> GetMouseJigglerRsp:
         """Get the mouse jiggler state."""
         return await self._api_request_json(
             hdrs.METH_GET,
