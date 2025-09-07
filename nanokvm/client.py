@@ -26,15 +26,17 @@ from .models import (
     GetCdRomRsp,
     GetGpioRsp,
     GetHardwareRsp,
+    GetHdmiStateRsp,
     GetHidModeRsp,
     GetInfoRsp,
     GetMdnsStateRsp,
     GetMemoryLimitRsp,
     GetMountedImageRsp,
+    GetMouseJigglerRsp,
     GetOLEDRsp,
     GetPreviewRsp,
     GetSSHStateRsp,
-    GetSwapStateRsp,
+    GetSwapSizeRsp,
     GetTailscaleStatusRsp,
     GetVersionRsp,
     GetVirtualDeviceRsp,
@@ -46,12 +48,15 @@ from .models import (
     LoginReq,
     LoginRsp,
     MountImageReq,
+    MouseJigglerMode,
     PasteReq,
     SetGpioReq,
     SetHidModeReq,
     SetMemoryLimitReq,
+    SetMouseJigglerReq,
     SetOledReq,
     SetPreviewReq,
+    SetSwapSizeReq,
     StatusImageRsp,
     UpdateVirtualDeviceReq,
     UpdateVirtualDeviceRsp,
@@ -305,12 +310,19 @@ class NanoKVMClient:
             response_model=GetSSHStateRsp,
         )
 
-    async def get_swap_state(self) -> GetSwapStateRsp:
-        """Get Swap enabled state."""
-        return await self._api_request_json(
+    async def get_swap_size(self) -> int:
+        """Get Swap size."""
+        rsp = await self._api_request_json(
             hdrs.METH_GET,
             "/vm/swap",
-            response_model=GetSwapStateRsp,
+            response_model=GetSwapSizeRsp,
+        )
+        return rsp.size
+
+    async def set_swap_size(self, size_mb: int) -> None:
+        """Set the Swap size."""
+        await self._api_request_json(
+            hdrs.METH_POST, "/vm/swap", data=SetSwapSizeReq(size=size_mb)
         )
 
     async def get_mdns_state(self) -> GetMdnsStateRsp:
@@ -561,9 +573,25 @@ class NanoKVMClient:
         """Reboot the KVM device."""
         await self._api_request_json(hdrs.METH_POST, "/vm/system/reboot")
 
+    async def get_hdmi_state(self) -> GetHdmiStateRsp:
+        """Get the HDMI state."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/vm/hdmi",
+            response_model=GetHdmiStateRsp,
+        )
+
     async def reset_hdmi(self) -> None:
-        """Reset the HDMI connection (relevant for PCIe version)."""
+        """Reset the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/reset")
+
+    async def enable_hdmi(self) -> None:
+        """Enable the HDMI connection."""
+        await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/enable")
+
+    async def disable_hdmi(self) -> None:
+        """Disable the HDMI connection."""
+        await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/disable")
 
     async def reset_hid(self) -> None:
         """Reset the HID subsystem."""
@@ -608,3 +636,21 @@ class NanoKVMClient:
     async def tailscale_restart(self) -> None:
         """Perform a Tailscale action: restart."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/restart")
+
+    async def get_mouse_jiggler_state(self) -> GetMouseJigglerRsp:
+        """Get the mouse jiggler state."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/vm/mouse-jiggler",
+            response_model=GetMouseJigglerRsp,
+        )
+
+    async def set_mouse_jiggler_state(
+        self, enabled: bool, mode: MouseJigglerMode
+    ) -> None:
+        """Set the mouse jiggler state."""
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/vm/mouse-jiggler",
+            data=SetMouseJigglerReq(enabled=enabled, mode=mode),
+        )
