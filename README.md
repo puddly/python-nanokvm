@@ -26,3 +26,19 @@ async with ClientSession() as session:
 
     await client.push_button(ButtonType.POWER, duration_ms=1000)
 ```
+
+## SSH Usage
+
+```python
+from nanokvm.ssh_client import NanoKVMSSH
+
+# Create SSH client
+ssh = NanoKVMSSH("kvm-8b76.local")
+await ssh.authenticate("password")
+
+# Run commands
+uptime = await ssh.run_command("cat /proc/uptime")
+disk = await ssh.run_command("df -h /")
+
+await ssh.disconnect()
+```
