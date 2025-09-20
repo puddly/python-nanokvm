@@ -56,9 +56,13 @@ class NanoKVMSSH:
                 )
             )
         except paramiko.AuthenticationException as e:
-            raise NanoKVMSSHAuthenticationError(f"SSH authentication failed: {e}") from e
+            raise NanoKVMSSHAuthenticationError(
+                f"SSH authentication failed: {e}"
+            ) from e
         except (paramiko.SSHException, paramiko.BadHostKeyException, OSError) as e:
-            raise NanoKVMSSHAuthenticationError(f"SSH connection failed: {e}") from e
+            raise NanoKVMSSHAuthenticationError(
+                f"SSH connection failed: {e}"
+            ) from e
 
     async def disconnect(self) -> None:
         """Close SSH connection."""
