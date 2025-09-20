@@ -28,7 +28,9 @@ class NanoKVMSSHCommandError(NanoKVMSSHError):
 class NanoKVMSSH:
     """SSH client for NanoKVM terminal access."""
 
-    def __init__(self, host: str, username: str = DEFAULT_SSH_USERNAME, port: int = 22) -> None:
+    def __init__(
+        self, host: str, username: str = DEFAULT_SSH_USERNAME, port: int = 22
+    ) -> None:
         """Initialize the SSH client."""
         self.host = host
         self.port = port
@@ -42,9 +44,10 @@ class NanoKVMSSH:
         self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
         try:
+            client = self.ssh_client  # Capture for lambda
             await loop.run_in_executor(
                 None,
-                lambda: self.ssh_client.connect(
+                lambda: client.connect(
                     self.host,
                     port=self.port,
                     username=self.username,
@@ -53,9 +56,9 @@ class NanoKVMSSH:
                 )
             )
         except paramiko.AuthenticationException as e:
-            raise NanoKVMSSHAuthenticationError(f"SSH authentication failed: {e}")
+            raise NanoKVMSSHAuthenticationError(f"SSH authentication failed: {e}") from e
         except (paramiko.SSHException, paramiko.BadHostKeyException, OSError) as e:
-            raise NanoKVMSSHAuthenticationError(f"SSH connection failed: {e}")
+            raise NanoKVMSSHAuthenticationError(f"SSH connection failed: {e}") from e
 
     async def disconnect(self) -> None:
         """Close SSH connection."""
@@ -66,7 +69,9 @@ class NanoKVMSSH:
     async def run_command(self, command: str, timeout: int = 30) -> str:
         """Run a command via SSH and return output."""
         if not self.ssh_client:
-            raise NanoKVMSSHNotConnectedError("SSH not connected, call authenticate first")
+            raise NanoKVMSSHNotConnectedError(
+                "SSH not connected, call authenticate first"
+            )
         loop = asyncio.get_running_loop()
         try:
             output, error = await asyncio.wait_for(
@@ -81,10 +86,11 @@ class NanoKVMSSH:
         except asyncio.TimeoutError:
             raise NanoKVMSSHCommandError(
                 f"SSH command timed out after {timeout} seconds"
-            )
+            ) from None
 
     def _exec_command_sync(self, command: str) -> tuple[str, str]:
         """Synchronous SSH command execution."""
+        assert self.ssh_client is not None  # Should be set after authenticate()
         stdin, stdout, stderr = self.ssh_client.exec_command(command)
         output = stdout.read().decode('utf-8')
         error = stderr.read().decode('utf-8')
