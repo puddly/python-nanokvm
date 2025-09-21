@@ -52,7 +52,7 @@ class NanoKVMSSH:
                     port=self.port,
                     username=self.username,
                     password=password,
-                    timeout=10
+                    timeout=10,
                 )
             )
         except paramiko.AuthenticationException as e:
@@ -60,9 +60,7 @@ class NanoKVMSSH:
                 f"SSH authentication failed: {e}"
             ) from e
         except (paramiko.SSHException, paramiko.BadHostKeyException, OSError) as e:
-            raise NanoKVMSSHAuthenticationError(
-                f"SSH connection failed: {e}"
-            ) from e
+            raise NanoKVMSSHAuthenticationError(f"SSH connection failed: {e}") from e
 
     async def disconnect(self) -> None:
         """Close SSH connection."""
@@ -82,7 +80,7 @@ class NanoKVMSSH:
                 loop.run_in_executor(
                     None, self._exec_command_sync, command
                 ),
-                timeout=timeout
+                timeout=timeout,
             )
             if error:
                 raise NanoKVMSSHCommandError(f"SSH command error: {error}")
@@ -96,6 +94,6 @@ class NanoKVMSSH:
         """Synchronous SSH command execution."""
         assert self.ssh_client is not None  # Should be set after authenticate()
         stdin, stdout, stderr = self.ssh_client.exec_command(command)
-        output = stdout.read().decode('utf-8')
-        error = stderr.read().decode('utf-8')
+        output = stdout.read().decode("utf-8")
+        error = stderr.read().decode("utf-8")
         return output, error
