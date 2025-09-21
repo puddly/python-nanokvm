@@ -77,9 +77,7 @@ class NanoKVMSSH:
         loop = asyncio.get_running_loop()
         try:
             output, error = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None, self._exec_command_sync, command
-                ),
+                loop.run_in_executor(None, self._exec_command_sync, command),
                 timeout=timeout,
             )
             if error:
