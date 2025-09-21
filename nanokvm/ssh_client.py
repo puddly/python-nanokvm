@@ -53,7 +53,7 @@ class NanoKVMSSH:
                     username=self.username,
                     password=password,
                     timeout=10,
-                )
+                ),
             )
         except paramiko.AuthenticationException as e:
             raise NanoKVMSSHAuthenticationError(
