@@ -7,7 +7,7 @@ Async Python client for [NanoKVM](https://github.com/sipeed/NanoKVM).
 ```python
 
 from aiohttp import ClientSession
-from nanokvm.models import ButtonType
+from nanokvm.models import GpioType
 from nanokvm.client import NanoKVMClient
 
 
@@ -24,7 +24,7 @@ async with ClientSession() as session:
     async for frame in client.mjpeg_stream():
         print(frame)
 
-    await client.push_button(ButtonType.POWER, duration_ms=1000)
+    await client.push_button(GpioType.POWER, duration_ms=1000)
 ```
 
 ## SSH Usage
