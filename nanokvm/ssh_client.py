@@ -6,10 +6,12 @@ import asyncio
 
 import paramiko
 
+from .client import NanoKVMError
+
 DEFAULT_SSH_USERNAME = "root"
 
 
-class NanoKVMSSHError(Exception):
+class NanoKVMSSHError(NanoKVMError):
     """Base exception for SSH client errors."""
 
 
