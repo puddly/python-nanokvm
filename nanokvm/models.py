@@ -91,6 +91,7 @@ class HWVersion(StrEnum):
     ALPHA = "Alpha"
     BETA = "Beta"
     PCIE = "PCIE"
+    PRO = "Pro"
     UNKNOWN = "Unknown"
 
 
