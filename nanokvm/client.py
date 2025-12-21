@@ -28,6 +28,7 @@ from .models import (
     GetHardwareRsp,
     GetHdmiStateRsp,
     GetHidModeRsp,
+    GetImagesRsp,
     GetInfoRsp,
     GetMdnsStateRsp,
     GetMemoryLimitRsp,
@@ -395,6 +396,14 @@ class NanoKVMClient:
             hdrs.METH_GET,
             "/extensions/tailscale/status",
             response_model=GetTailscaleStatusRsp,
+        )
+
+    async def get_images(self) -> GetImagesRsp:
+        """Get the list of available image files."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/storage/image",
+            response_model=GetImagesRsp,
         )
 
     async def get_mounted_image(self) -> GetMountedImageRsp:
