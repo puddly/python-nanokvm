@@ -1,24 +1,15 @@
-from aiohttp import ClientSession
 from aioresponses import aioresponses
+import pytest
 
 from nanokvm.client import NanoKVMApiError, NanoKVMClient
 from nanokvm.models import ApiResponseCode
 
 
-async def test_client() -> None:
-    """Test the NanoKVMClient."""
-    async with ClientSession() as session:
-        client = NanoKVMClient("http://localhost:8888/api/", session)
-        assert client is not None
-
-
 async def test_get_images_success() -> None:
     """Test get_images with a successful response."""
-    async with ClientSession() as session:
-        client = NanoKVMClient(
-            "http://localhost:8888/api/", session, token="test-token"
-        )
-
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
         with aioresponses() as m:
             m.get(
                 "http://localhost:8888/api/storage/image",
@@ -44,11 +35,9 @@ async def test_get_images_success() -> None:
 
 async def test_get_images_empty() -> None:
     """Test get_images with an empty list."""
-    async with ClientSession() as session:
-        client = NanoKVMClient(
-            "http://localhost:8888/api/", session, token="test-token"
-        )
-
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
         with aioresponses() as m:
             m.get(
                 "http://localhost:8888/api/storage/image",
@@ -63,20 +52,30 @@ async def test_get_images_empty() -> None:
 
 async def test_get_images_api_error() -> None:
     """Test get_images with an API error response."""
-    async with ClientSession() as session:
-        client = NanoKVMClient(
-            "http://localhost:8888/api/", session, token="test-token"
-        )
-
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
         with aioresponses() as m:
             m.get(
                 "http://localhost:8888/api/storage/image",
                 payload={"code": -1, "msg": "failed to list images", "data": None},
             )
 
-            try:
+            with pytest.raises(NanoKVMApiError) as exc_info:
                 await client.get_images()
-                raise AssertionError("Expected NanoKVMApiError to be raised")
-            except NanoKVMApiError as e:
-                assert e.code == ApiResponseCode.FAILURE
-                assert "failed to list images" in e.msg
+
+            assert exc_info.value.code == ApiResponseCode.FAILURE
+            assert "failed to list images" in exc_info.value.msg
+
+
+async def test_client_context_manager() -> None:
+    """Test that client properly initializes and cleans up with context manager."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        # Verify session is created
+        assert client._session is not None
+        assert not client._session.closed
+
+    # After exiting context, session should be closed
+    assert client._session is None
