@@ -28,6 +28,7 @@ from .models import (
     GetHardwareRsp,
     GetHdmiStateRsp,
     GetHidModeRsp,
+    GetImagesRsp,
     GetInfoRsp,
     GetMdnsStateRsp,
     GetMemoryLimitRsp,
@@ -194,7 +195,7 @@ class NanoKVMClient:
                 raw_response = await response.json(content_type=None)
                 _LOGGER.debug("Raw JSON response data: %s", raw_response)
                 # Parse the outer ApiResponse structure
-                api_response = ApiResponse[response_model].parse_obj(raw_response)  # type: ignore
+                api_response = ApiResponse[response_model].model_validate(raw_response)  # type: ignore
             except (json.JSONDecodeError, ValidationError) as err:
                 raise NanoKVMInvalidResponseError(
                     f"Invalid JSON response received: {err}"
@@ -395,6 +396,14 @@ class NanoKVMClient:
             hdrs.METH_GET,
             "/extensions/tailscale/status",
             response_model=GetTailscaleStatusRsp,
+        )
+
+    async def get_images(self) -> GetImagesRsp:
+        """Get the list of available image files."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/storage/image",
+            response_model=GetImagesRsp,
         )
 
     async def get_mounted_image(self) -> GetMountedImageRsp:
