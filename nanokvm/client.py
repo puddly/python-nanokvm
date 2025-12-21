@@ -194,7 +194,7 @@ class NanoKVMClient:
                 raw_response = await response.json(content_type=None)
                 _LOGGER.debug("Raw JSON response data: %s", raw_response)
                 # Parse the outer ApiResponse structure
-                api_response = ApiResponse[response_model].parse_obj(raw_response)  # type: ignore
+                api_response = ApiResponse[response_model].model_validate(raw_response)  # type: ignore
             except (json.JSONDecodeError, ValidationError) as err:
                 raise NanoKVMInvalidResponseError(
                     f"Invalid JSON response received: {err}"
