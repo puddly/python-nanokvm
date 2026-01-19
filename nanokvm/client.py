@@ -49,6 +49,7 @@ from .models import (
     LoginReq,
     LoginRsp,
     MountImageReq,
+    MouseButton,
     MouseJigglerMode,
     PasteReq,
     SetGpioReq,
@@ -109,21 +110,44 @@ class NanoKVMClient:
     def __init__(
         self,
         url: str,
-        session: ClientSession,
         *,
         token: str | None = None,
         request_timeout: int = 10,
     ) -> None:
-        """Initialize the NanoKVM client."""
+        """
+        Initialize the NanoKVM client.
+
+        Args:
+            url: Base URL of the NanoKVM API (e.g., "http://192.168.1.1/api/")
+            token: Optional pre-existing authentication token
+            request_timeout: Request timeout in seconds (default: 10)
+        """
         self.url = yarl.URL(url)
-        self.session = session
+        self._session: ClientSession | None = None
         self._token = token
         self._request_timeout = request_timeout
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
 
     @property
     def token(self) -> str | None:
         """Return the current auth token."""
         return self._token
+
+    async def __aenter__(self) -> NanoKVMClient:
+        """Async context manager entry."""
+        self._session = ClientSession()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Async context manager exit - cleanup resources."""
+        # Close WebSocket connection
+        if self._ws is not None and not self._ws.closed:
+            await self._ws.close()
+            self._ws = None
+        # Close HTTP session
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
 
     @contextlib.asynccontextmanager
     async def _request(
@@ -135,13 +159,17 @@ class NanoKVMClient:
         **kwargs: Any,
     ) -> AsyncIterator[ClientResponse]:
         """Make an API request."""
+        assert self._session is not None, (
+            "Client session not initialized. "
+            "Use as context manager: 'async with NanoKVMClient(url) as client:'"
+        )
         cookies = {}
         if authenticate:
             if not self._token:
                 raise NanoKVMNotAuthenticatedError("Client is not authenticated")
             cookies["nano-kvm-token"] = self._token
 
-        async with self.session.request(
+        async with self._session.request(
             method,
             self.url / path.lstrip("/"),
             headers={
@@ -663,3 +691,131 @@ class NanoKVMClient:
             "/vm/mouse-jiggler",
             data=SetMouseJigglerReq(enabled=enabled, mode=mode),
         )
+
+    async def _get_ws(self) -> aiohttp.ClientWebSocketResponse:
+        """Get or create WebSocket connection for mouse events."""
+        if self._ws is None or self._ws.closed:
+            assert self._session is not None, (
+                "Client session not initialized. "
+                "Use as context manager: 'async with NanoKVMClient(url) as client:'"
+            )
+
+            if not self._token:
+                raise NanoKVMNotAuthenticatedError("Client is not authenticated")
+
+            # WebSocket URL uses ws:// or wss:// scheme
+            scheme = "ws" if self.url.scheme == "http" else "wss"
+            ws_url = self.url.with_scheme(scheme) / "ws"
+
+            self._ws = await self._session.ws_connect(
+                str(ws_url),
+                headers={"Cookie": f"nano-kvm-token={self._token}"},
+            )
+        return self._ws
+
+    async def _send_mouse_event(
+        self, event_type: int, button_state: int, x: float, y: float
+    ) -> None:
+        """
+        Send a mouse event via WebSocket.
+
+        Args:
+            event_type: 0=mouse_up, 1=mouse_down, 2=move_abs, 3=move_rel, 4=scroll
+            button_state: Button state (0=no buttons, 1=left, 2=right, 4=middle)
+            x: X coordinate (0.0-1.0 for abs/rel/scroll) or 0.0 for button events
+            y: Y coordinate (0.0-1.0 for abs/rel/scroll) or 0.0 for button events
+        """
+        ws = await self._get_ws()
+
+        # Scale coordinates for absolute/relative movements and scroll
+        if event_type in (2, 3, 4):  # move_abs, move_rel, or scroll
+            x_val = int(x * 32768)
+            y_val = int(y * 32768)
+        else:
+            x_val = int(x)
+            y_val = int(y)
+
+        # Message format: [2, event_type, button_state, x_val, y_val]
+        # where 2 indicates mouse event
+        message = [2, event_type, button_state, x_val, y_val]
+
+        _LOGGER.debug("Sending mouse event: %s", message)
+        await ws.send_json(message)
+
+    async def mouse_move_abs(self, x: float, y: float) -> None:
+        """
+        Move mouse to absolute position.
+
+        Args:
+            x: X coordinate (0.0 to 1.0, left to right)
+            y: Y coordinate (0.0 to 1.0, top to bottom)
+        """
+        await self._send_mouse_event(2, 0, x, y)
+
+    async def mouse_move_rel(self, dx: float, dy: float) -> None:
+        """
+        Move mouse relative to current position.
+
+        Args:
+            dx: Horizontal movement (-1.0 to 1.0)
+            dy: Vertical movement (-1.0 to 1.0)
+        """
+        await self._send_mouse_event(3, 0, dx, dy)
+
+    async def mouse_down(self, button: MouseButton = MouseButton.LEFT) -> None:
+        """
+        Press a mouse button.
+
+        Args:
+            button: Mouse button to press (MouseButton.LEFT, MouseButton.RIGHT,
+                MouseButton.MIDDLE)
+        """
+        await self._send_mouse_event(1, int(button), 0.0, 0.0)
+
+    async def mouse_up(self) -> None:
+        """
+        Release a mouse button.
+
+        Note: Mouse up event always uses button_state=0 per the NanoKVM protocol.
+        """
+        await self._send_mouse_event(0, 0, 0.0, 0.0)
+
+    async def mouse_click(
+        self,
+        button: MouseButton = MouseButton.LEFT,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> None:
+        """
+        Click a mouse button at current position or specified coordinates.
+
+        Args:
+            button: Mouse button to click (MouseButton.LEFT, MouseButton.RIGHT,
+                MouseButton.MIDDLE)
+            x: Optional X coordinate (0.0 to 1.0) for absolute positioning
+                before click
+            y: Optional Y coordinate (0.0 to 1.0) for absolute positioning
+                before click
+        """
+        # Move to position if coordinates provided
+        if x is not None and y is not None:
+            await self.mouse_move_abs(x, y)
+            # Small delay to ensure position update
+            await asyncio.sleep(0.05)
+
+        # Send mouse down
+        await self.mouse_down(button)
+        # Small delay between down and up
+        await asyncio.sleep(0.05)
+        # Send mouse up
+        await self.mouse_up()
+
+    async def mouse_scroll(self, dx: float, dy: float) -> None:
+        """
+        Scroll the mouse wheel.
+
+        Args:
+            dx: Horizontal scroll amount (-1.0 to 1.0)
+            dy: Vertical scroll amount (-1.0 to 1.0) # positive=up, negative=down)
+        """
+        await self._send_mouse_event(4, 0, dx, dy)

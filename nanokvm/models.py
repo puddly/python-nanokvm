@@ -102,6 +102,14 @@ class MouseJigglerMode(StrEnum):
     RELATIVE = "relative"
 
 
+class MouseButton(IntEnum):
+    """Mouse Button types."""
+
+    LEFT = 1
+    RIGHT = 2
+    MIDDLE = 4
+
+
 # Generic Response Wrapper
 class ApiResponse(BaseModel, Generic[T]):
     """Generic API response structure."""
