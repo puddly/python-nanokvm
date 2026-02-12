@@ -28,6 +28,7 @@ from .models import (
     GetHardwareRsp,
     GetHdmiStateRsp,
     GetHidModeRsp,
+    GetHostnameRsp,
     GetImagesRsp,
     GetInfoRsp,
     GetMdnsStateRsp,
@@ -54,6 +55,7 @@ from .models import (
     PasteReq,
     SetGpioReq,
     SetHidModeReq,
+    SetHostnameReq,
     SetMemoryLimitReq,
     SetMouseJigglerReq,
     SetOledReq,
@@ -321,6 +323,22 @@ class NanoKVMClient:
             hdrs.METH_GET,
             "/vm/hardware",
             response_model=GetHardwareRsp,
+        )
+
+    async def get_hostname(self) -> GetHostnameRsp:
+        """Get the configured hostname."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/vm/hostname",
+            response_model=GetHostnameRsp,
+        )
+
+    async def set_hostname(self, hostname: str) -> None:
+        """Set the device hostname (applies after reboot)."""
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/vm/hostname",
+            data=SetHostnameReq(hostname=hostname),
         )
 
     async def get_gpio(self) -> GetGpioRsp:
