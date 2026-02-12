@@ -160,6 +160,14 @@ class GetInfoRsp(BaseModel):
     device_key: str = Field(alias="deviceKey")
 
 
+class GetHostnameRsp(BaseModel):
+    hostname: str
+
+
+class SetHostnameReq(BaseModel):
+    hostname: str  # Applies after reboot
+
+
 class GetHardwareRsp(BaseModel):
     version: HWVersion
 
