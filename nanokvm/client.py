@@ -8,10 +8,12 @@ import contextlib
 import io
 import json
 import logging
+from pathlib import Path
+import ssl
 from typing import Any, TypeVar, overload
 
 import aiohttp
-from aiohttp import BodyPartReader, ClientResponse, ClientSession, MultipartReader, hdrs
+from aiohttp import BodyPartReader, ClientResponse, ClientSession, MultipartReader, TCPConnector, hdrs
 from PIL import Image
 from pydantic import BaseModel, ValidationError
 import yarl
@@ -106,6 +108,10 @@ class NanoKVMInvalidResponseError(NanoKVMError):
     """Exception for unexpected or unparsable responses."""
 
 
+class NanoKVMSSLError(NanoKVMError):
+    """Exception for SSL/TLS configuration errors."""
+
+
 class NanoKVMClient:
     """Async API client for the NanoKVM."""
 
@@ -115,20 +121,74 @@ class NanoKVMClient:
         *,
         token: str | None = None,
         request_timeout: int = 10,
+        verify_ssl: bool = True,
+        ssl_ca_cert: str | None = None,
+        use_password_obfuscation: bool = True,
     ) -> None:
         """
         Initialize the NanoKVM client.
 
         Args:
-            url: Base URL of the NanoKVM API (e.g., "http://192.168.1.1/api/")
+            url: Base URL of the NanoKVM API (e.g., "https://kvm.local/api/")
             token: Optional pre-existing authentication token
             request_timeout: Request timeout in seconds (default: 10)
+            verify_ssl: Enable SSL certificate verification (default: True).
+                Set to False to disable verification for self-signed certificates.
+            ssl_ca_cert: Path to custom CA certificate bundle file for SSL verification.
+                Useful for self-signed certificates or private CAs.
+            use_password_obfuscation: Use password obfuscation/encryption (default: True).
+                Older NanoKVM versions require obfuscated passwords.
+                Newer versions (with HTTPS) accept plain text passwords.
+                Set to False for newer NanoKVM devices with HTTPS.
         """
         self.url = yarl.URL(url)
         self._session: ClientSession | None = None
         self._token = token
         self._request_timeout = request_timeout
         self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._verify_ssl = verify_ssl
+        self._ssl_ca_cert = ssl_ca_cert
+        self._use_password_obfuscation = use_password_obfuscation
+
+    def _create_ssl_context(self) -> ssl.SSLContext | bool:
+        """
+        Create and configure SSL context based on initialization parameters.
+
+        Returns:
+            ssl.SSLContext: Configured SSL context for custom certificates
+            True: Use default SSL verification (aiohttp default)
+            False: Disable SSL verification
+
+        Raises:
+            NanoKVMSSLError: If SSL configuration is invalid
+        """
+
+        if not self._verify_ssl:
+            _LOGGER.warning(
+                "SSL verification is disabled. This is insecure and should only be "
+                "used for testing with self-signed certificates."
+            )
+            return False
+
+        if not self._ssl_ca_cert:
+            return True
+
+        try:
+            ca_path = Path(self._ssl_ca_cert)
+            if not ca_path.is_file():
+                raise NanoKVMSSLError(
+                    f"CA certificate not found: {self._ssl_ca_cert}"
+                )
+
+            ssl_ctx = ssl.create_default_context(cafile=self._ssl_ca_cert)
+            _LOGGER.debug("Using custom CA certificate: %s", self._ssl_ca_cert)
+
+            return ssl_ctx
+
+        except ssl.SSLError as err:
+            raise NanoKVMSSLError(f"Failed to create SSL context: {err}") from err
+        except OSError as err:
+            raise NanoKVMSSLError(f"Failed to load SSL certificates: {err}") from err
 
     @property
     def token(self) -> str | None:
@@ -137,7 +197,16 @@ class NanoKVMClient:
 
     async def __aenter__(self) -> NanoKVMClient:
         """Async context manager entry."""
-        self._session = ClientSession()
+
+        ssl_config = self._create_ssl_context()
+        connector = TCPConnector(ssl=ssl_config)
+        self._session = ClientSession(connector=connector)
+
+        _LOGGER.debug(
+            "Created client session with SSL verification: %s",
+            "disabled" if ssl_config is False else "enabled",
+        )
+
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -246,6 +315,14 @@ class NanoKVMClient:
     async def authenticate(self, username: str, password: str) -> None:
         """Authenticate and store the session token."""
         _LOGGER.debug("Attempting authentication for user: %s", username)
+
+        if self._use_password_obfuscation:
+            _LOGGER.debug("Using password obfuscation")
+            password_to_send = obfuscate_password(password)
+        else:
+            _LOGGER.debug("Using plain text password")
+            password_to_send = password
+
         try:
             login_response = await self._api_request_json(
                 hdrs.METH_POST,
@@ -254,7 +331,7 @@ class NanoKVMClient:
                 authenticate=False,
                 data=LoginReq(
                     username=username,
-                    password=obfuscate_password(password),
+                    password=password_to_send,
                 ),
             )
 
