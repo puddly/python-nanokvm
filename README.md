@@ -8,11 +8,8 @@ Async Python client for [NanoKVM](https://github.com/sipeed/NanoKVM).
 from nanokvm.client import NanoKVMClient
 from nanokvm.models import GpioType, MouseButton
 
-#NanoKVM with HTTPS (recommended)
-async with NanoKVMClient(
-    "https://kvm.local/api/",
-    use_password_obfuscation=False  # Newer versions use plain text
-) as client:
+# NanoKVM (auto-detects password mode)
+async with NanoKVMClient("https://kvm.local/api/") as client:
     await client.authenticate("username", "password")
 
     # Get device information
@@ -55,18 +52,29 @@ disk = await ssh.run_command("df -h /")
 await ssh.disconnect()
 ```
 
-### For Legacy NanoKVM (HTTP with password obfuscation)
+### Password Obfuscation Modes
+
+By default, the client **auto-detects** the correct password mode. It tries obfuscated password first, and falls back to plain text if authentication fails. You can also force a specific mode:
 
 ```python
-# Older NanoKVM versions with HTTP (backward compatibility)
+# Auto-detect (default) — recommended
+async with NanoKVMClient("https://kvm.local/api/") as client:
+    await client.authenticate("username", "password")
+
+# Force plain text (newer NanoKVM with HTTPS)
+async with NanoKVMClient(
+    "https://kvm.local/api/",
+    use_password_obfuscation=False
+) as client:
+    await client.authenticate("username", "password")
+
+# Force obfuscation (older NanoKVM with HTTP)
 async with NanoKVMClient(
     "http://kvm.local/api/",
-    use_password_obfuscation=True  # Default: True for backward compatibility
+    use_password_obfuscation=True
 ) as client:
     await client.authenticate("username", "password")
 ```
-
-**Note:** Password obfuscation is enabled by default for backward compatibility with older NanoKVM versions. For newer HTTPS-enabled devices, set `use_password_obfuscation=False`.
 
 ## HTTPS/SSL Configuration
 
@@ -77,10 +85,7 @@ The client supports HTTPS connections with flexible SSL/TLS configuration option
 For modern NanoKVM devices with HTTPS and valid certificates:
 
 ```python
-async with NanoKVMClient(
-    "https://kvm.local/api/",
-    use_password_obfuscation=False 
-) as client:
+async with NanoKVMClient("https://kvm.local/api/") as client:
     await client.authenticate("username", "password")
 ```
 
@@ -96,7 +101,6 @@ For self-signed certificates, you have two options:
 async with NanoKVMClient(
     "https://kvm.local/api/",
     verify_ssl=False,
-    use_password_obfuscation=False
 ) as client:
     await client.authenticate("username", "password")
 ```
@@ -107,7 +111,6 @@ async with NanoKVMClient(
 async with NanoKVMClient(
     "https://kvm.local/api/",
     ssl_ca_cert="/path/to/ca.pem",
-    use_password_obfuscation=False
 ) as client:
     await client.authenticate("username", "password")
 ```

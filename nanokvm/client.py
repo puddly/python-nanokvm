@@ -12,7 +12,14 @@ import ssl
 from typing import Any, TypeVar, overload
 
 import aiohttp
-from aiohttp import BodyPartReader, ClientResponse, ClientSession, MultipartReader, TCPConnector, hdrs
+from aiohttp import (
+    BodyPartReader,
+    ClientResponse,
+    ClientSession,
+    MultipartReader,
+    TCPConnector,
+    hdrs,
+)
 from PIL import Image
 from pydantic import BaseModel, ValidationError
 import yarl
@@ -118,7 +125,7 @@ class NanoKVMClient:
         request_timeout: int = 10,
         verify_ssl: bool = True,
         ssl_ca_cert: str | None = None,
-        use_password_obfuscation: bool = True,
+        use_password_obfuscation: bool | None = None,
     ) -> None:
         """
         Initialize the NanoKVM client.
@@ -131,10 +138,10 @@ class NanoKVMClient:
                 Set to False to disable verification for self-signed certificates.
             ssl_ca_cert: Path to custom CA certificate bundle file for SSL verification.
                 Useful for self-signed certificates or private CAs.
-            use_password_obfuscation: Use password obfuscation/encryption (default: True).
-                Older NanoKVM versions require obfuscated passwords.
-                Newer versions (with HTTPS) accept plain text passwords.
-                Set to False for newer NanoKVM devices with HTTPS.
+            use_password_obfuscation: Control password obfuscation mode (default: None).
+                None = auto-detect (try obfuscated first, fall back to plain text).
+                True = always use obfuscated passwords (older NanoKVM versions).
+                False = always use plain text passwords (newer HTTPS-enabled versions).
         """
         self.url = yarl.URL(url)
         self._session: ClientSession | None = None
@@ -296,17 +303,8 @@ class NanoKVMClient:
 
         return api_response.data
 
-    async def authenticate(self, username: str, password: str) -> None:
-        """Authenticate and store the session token."""
-        _LOGGER.debug("Attempting authentication for user: %s", username)
-
-        if self._use_password_obfuscation:
-            _LOGGER.debug("Using password obfuscation")
-            password_to_send = obfuscate_password(password)
-        else:
-            _LOGGER.debug("Using plain text password")
-            password_to_send = password
-
+    async def _do_authenticate(self, username: str, password_to_send: str) -> None:
+        """Perform a single authentication attempt with the given password."""
         try:
             login_response = await self._api_request_json(
                 hdrs.METH_POST,
@@ -332,6 +330,32 @@ class NanoKVMClient:
                 ) from err
             else:
                 raise
+
+    async def authenticate(self, username: str, password: str) -> None:
+        """Authenticate and store the session token."""
+        _LOGGER.debug("Attempting authentication for user: %s", username)
+
+        if self._use_password_obfuscation is True:
+            _LOGGER.debug("Using password obfuscation (forced)")
+            await self._do_authenticate(username, obfuscate_password(password))
+        elif self._use_password_obfuscation is False:
+            _LOGGER.debug("Using plain text password (forced)")
+            await self._do_authenticate(username, password)
+        else:
+            # Auto-detect: try obfuscated first, fall back to plain text
+            _LOGGER.debug("Auto-detecting password mode")
+            try:
+                await self._do_authenticate(
+                    username, obfuscate_password(password)
+                )
+                _LOGGER.info("Auto-detected obfuscated password mode")
+            except NanoKVMAuthenticationFailure:
+                _LOGGER.debug(
+                    "Obfuscated authentication failed, "
+                    "trying plain text password"
+                )
+                await self._do_authenticate(username, password)
+                _LOGGER.info("Auto-detected plain text password mode")
 
     async def logout(self) -> None:
         """Log out and clear the session token."""
