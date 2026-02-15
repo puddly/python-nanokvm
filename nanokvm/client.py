@@ -8,7 +8,6 @@ import contextlib
 import io
 import json
 import logging
-from pathlib import Path
 import ssl
 from typing import Any, TypeVar, overload
 
@@ -108,10 +107,6 @@ class NanoKVMInvalidResponseError(NanoKVMError):
     """Exception for unexpected or unparsable responses."""
 
 
-class NanoKVMSSLError(NanoKVMError):
-    """Exception for SSL/TLS configuration errors."""
-
-
 class NanoKVMClient:
     """Async API client for the NanoKVM."""
 
@@ -160,7 +155,8 @@ class NanoKVMClient:
             False: Disable SSL verification
 
         Raises:
-            NanoKVMSSLError: If SSL configuration is invalid
+            FileNotFoundError: If the CA certificate file is missing.
+            ssl.SSLError: If the CA certificate is invalid.
         """
 
         if not self._verify_ssl:
@@ -173,22 +169,10 @@ class NanoKVMClient:
         if not self._ssl_ca_cert:
             return True
 
-        try:
-            ca_path = Path(self._ssl_ca_cert)
-            if not ca_path.is_file():
-                raise NanoKVMSSLError(
-                    f"CA certificate not found: {self._ssl_ca_cert}"
-                )
+        ssl_ctx = ssl.create_default_context(cafile=self._ssl_ca_cert)
+        _LOGGER.debug("Using custom CA certificate: %s", self._ssl_ca_cert)
 
-            ssl_ctx = ssl.create_default_context(cafile=self._ssl_ca_cert)
-            _LOGGER.debug("Using custom CA certificate: %s", self._ssl_ca_cert)
-
-            return ssl_ctx
-
-        except ssl.SSLError as err:
-            raise NanoKVMSSLError(f"Failed to create SSL context: {err}") from err
-        except OSError as err:
-            raise NanoKVMSSLError(f"Failed to load SSL certificates: {err}") from err
+        return ssl_ctx
 
     @property
     def token(self) -> str | None:
@@ -198,7 +182,7 @@ class NanoKVMClient:
     async def __aenter__(self) -> NanoKVMClient:
         """Async context manager entry."""
 
-        ssl_config = self._create_ssl_context()
+        ssl_config = await asyncio.to_thread(self._create_ssl_context)
         connector = TCPConnector(ssl=ssl_config)
         self._session = ClientSession(connector=connector)
 
