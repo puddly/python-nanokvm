@@ -345,14 +345,11 @@ class NanoKVMClient:
             # Auto-detect: try obfuscated first, fall back to plain text
             _LOGGER.debug("Auto-detecting password mode")
             try:
-                await self._do_authenticate(
-                    username, obfuscate_password(password)
-                )
+                await self._do_authenticate(username, obfuscate_password(password))
                 _LOGGER.info("Auto-detected obfuscated password mode")
             except NanoKVMAuthenticationFailure:
                 _LOGGER.debug(
-                    "Obfuscated authentication failed, "
-                    "trying plain text password"
+                    "Obfuscated authentication failed, trying plain text password"
                 )
                 await self._do_authenticate(username, password)
                 _LOGGER.info("Auto-detected plain text password mode")

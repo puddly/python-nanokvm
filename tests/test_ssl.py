@@ -36,9 +36,7 @@ async def test_custom_ca_certificate(tmp_path: Path) -> None:
         mock_ctx = MagicMock(spec=ssl.SSLContext)
         mock_ssl_context.return_value = mock_ctx
 
-        client = NanoKVMClient(
-            "https://kvm.local/api/", ssl_ca_cert=str(ca_cert_file)
-        )
+        client = NanoKVMClient("https://kvm.local/api/", ssl_ca_cert=str(ca_cert_file))
 
         ssl_config = client._create_ssl_context()
 
@@ -81,9 +79,7 @@ async def test_password_obfuscation_auto_by_default() -> None:
 
 async def test_password_obfuscation_can_be_disabled() -> None:
     """Test that password obfuscation can be disabled."""
-    client = NanoKVMClient(
-        "https://kvm.local/api/", use_password_obfuscation=False
-    )
+    client = NanoKVMClient("https://kvm.local/api/", use_password_obfuscation=False)
     assert client._use_password_obfuscation is False
 
 
@@ -143,9 +139,7 @@ async def test_auto_detect_obfuscation_succeeds() -> None:
 
             await client.authenticate("root", "password123")
 
-            calls = m.requests[
-                ("POST", yarl.URL("https://kvm.local/api/auth/login"))
-            ]
+            calls = m.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
             assert len(calls) == 1
             request_json = calls[0].kwargs.get("json")
             assert request_json["password"].startswith("U2FsdGVkX1")
@@ -177,19 +171,12 @@ async def test_auto_detect_fallback_to_plain_text() -> None:
 
             await client.authenticate("root", "password123")
 
-            calls = m.requests[
-                ("POST", yarl.URL("https://kvm.local/api/auth/login"))
-            ]
+            calls = m.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
             assert len(calls) == 2
             # First attempt: obfuscated
-            assert calls[0].kwargs.get("json")[
-                "password"
-            ].startswith("U2FsdGVkX1")
+            assert calls[0].kwargs.get("json")["password"].startswith("U2FsdGVkX1")
             # Second attempt: plain text
-            assert (
-                calls[1].kwargs.get("json")["password"]
-                == "password123"
-            )
+            assert calls[1].kwargs.get("json")["password"] == "password123"
             assert client.token == "abc123"
 
 
