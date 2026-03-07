@@ -288,7 +288,7 @@ class NanoKVMClient:
         async with self._request(
             method,
             path,
-            json=(data.dict() if data is not None else None),
+            json=(data.model_dump() if data is not None else None),
             **kwargs,
         ) as response:
             try:
