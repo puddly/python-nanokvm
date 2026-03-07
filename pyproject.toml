@@ -29,6 +29,7 @@ exclude = ["tests", "tests.*"]
 testing = [
     "tomli",
     "coverage[toml]",
+    "cryptography",
     "pytest",
     "pytest-xdist",
     "pytest-asyncio",

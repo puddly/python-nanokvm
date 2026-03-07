@@ -105,7 +105,25 @@ async with NanoKVMClient(
     await client.authenticate("username", "password")
 ```
 
-#### Option 2: Use custom CA certificate (recommended)
+#### Option 2: Certificate pinning (recommended for self-signed)
+
+NanoKVM devices generate self-signed certificates for `localhost` with no CA to verify against. Certificate pinning verifies the server's certificate fingerprint directly instead of relying on CA-based trust.
+
+```python
+from nanokvm.utils import async_fetch_remote_fingerprint
+
+# First, fetch the fingerprint (trust-on-first-use)
+fingerprint = await async_fetch_remote_fingerprint("https://kvm.local/api/")
+
+# Then connect with the pinned fingerprint
+async with NanoKVMClient(
+    "https://kvm.local/api/",
+    ssl_fingerprint=fingerprint,
+) as client:
+    await client.authenticate("username", "password")
+```
+
+#### Option 3: Use custom CA certificate
 
 ```python
 async with NanoKVMClient(

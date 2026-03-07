@@ -1,6 +1,8 @@
+import asyncio
 import base64
 import hashlib
 import os
+import ssl
 import urllib.parse
 
 from cryptography.hazmat.primitives import padding
@@ -52,3 +54,34 @@ def obfuscate_password(password: str) -> str:
     )
 
     return urllib.parse.quote(base64.b64encode(password_enc).decode("utf-8"), safe="")
+
+
+async def async_fetch_remote_fingerprint(
+    url: str, *, timeout: float | None = 10.0
+) -> str:
+    """Retrieve the SHA-256 fingerprint of the remote server's TLS certificate.
+
+    Connects to the server with verification disabled to grab the raw certificate,
+    then returns its SHA-256 hash as an uppercase hex string.
+
+    This is useful for establishing an initial trust-on-first-use pin with
+    `NanoKVMClient(url, ssl_fingerprint=...)`.
+    """
+    parsed_url = urllib.parse.urlparse(url)
+    hostname = parsed_url.hostname
+    port = parsed_url.port or 443
+
+    ssl_ctx = await asyncio.to_thread(ssl.create_default_context)
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    async with asyncio.timeout(timeout):
+        _, writer = await asyncio.open_connection(hostname, port, ssl=ssl_ctx)
+
+    try:
+        ssl_obj = writer.get_extra_info("ssl_object")
+        der_cert = ssl_obj.getpeercert(binary_form=True)
+        return hashlib.sha256(der_cert).hexdigest().upper()
+    finally:
+        writer.close()
+        await writer.wait_closed()
