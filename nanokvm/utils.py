@@ -56,7 +56,9 @@ def obfuscate_password(password: str) -> str:
     return urllib.parse.quote(base64.b64encode(password_enc).decode("utf-8"), safe="")
 
 
-async def async_fetch_remote_fingerprint(url: str) -> str:
+async def async_fetch_remote_fingerprint(
+    url: str, *, timeout: float | None = 10.0
+) -> str:
     """Retrieve the SHA-256 fingerprint of the remote server's TLS certificate.
 
     Connects to the server with verification disabled to grab the raw certificate,
@@ -73,7 +75,8 @@ async def async_fetch_remote_fingerprint(url: str) -> str:
     ssl_ctx.check_hostname = False
     ssl_ctx.verify_mode = ssl.CERT_NONE
 
-    reader, writer = await asyncio.open_connection(hostname, port, ssl=ssl_ctx)
+    async with asyncio.timeout(timeout):
+        reader, writer = await asyncio.open_connection(hostname, port, ssl=ssl_ctx)
 
     try:
         ssl_obj = writer.get_extra_info("ssl_object")
