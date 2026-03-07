@@ -16,8 +16,8 @@ from aiohttp import (
     BodyPartReader,
     ClientResponse,
     ClientSession,
+    Fingerprint,
     MultipartReader,
-    TCPConnector,
     hdrs,
 )
 from PIL import Image
@@ -120,11 +120,13 @@ class NanoKVMClient:
     def __init__(
         self,
         url: str,
+        session: ClientSession | None = None,
         *,
         token: str | None = None,
         request_timeout: int = 10,
         verify_ssl: bool = True,
         ssl_ca_cert: str | None = None,
+        pinned_ca_cert_hash: str | None = None,
         use_password_obfuscation: bool | None = None,
     ) -> None:
         """
@@ -132,31 +134,40 @@ class NanoKVMClient:
 
         Args:
             url: Base URL of the NanoKVM API (e.g., "https://kvm.local/api/")
+            session: aiohttp ClientSession to use for requests.
             token: Optional pre-existing authentication token
             request_timeout: Request timeout in seconds (default: 10)
             verify_ssl: Enable SSL certificate verification (default: True).
                 Set to False to disable verification for self-signed certificates.
             ssl_ca_cert: Path to custom CA certificate bundle file for SSL verification.
                 Useful for self-signed certificates or private CAs.
+            pinned_ca_cert_hash: SHA-256 fingerprint of the server's TLS certificate
+                as a hex string. When set, the client will verify the server's
+                certificate fingerprint instead of performing CA-based verification.
+                Use `async_fetch_remote_fingerprint()` to retrieve this value.
             use_password_obfuscation: Control password obfuscation mode (default: None).
                 None = auto-detect (try obfuscated first, fall back to plain text).
                 True = always use obfuscated passwords (older NanoKVM versions).
                 False = always use plain text passwords (newer HTTPS-enabled versions).
         """
         self.url = yarl.URL(url)
-        self._session: ClientSession | None = None
+        self._session: ClientSession | None = session
+        self._auto_close_session = session is None
         self._token = token
         self._request_timeout = request_timeout
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._verify_ssl = verify_ssl
         self._ssl_ca_cert = ssl_ca_cert
+        self._pinned_ca_cert_hash = pinned_ca_cert_hash
         self._use_password_obfuscation = use_password_obfuscation
+        self._ssl_config: ssl.SSLContext | Fingerprint | bool | None = None
 
-    def _create_ssl_context(self) -> ssl.SSLContext | bool:
+    def _create_ssl_context(self) -> ssl.SSLContext | Fingerprint | bool:
         """
         Create and configure SSL context based on initialization parameters.
 
         Returns:
+            Fingerprint: Certificate fingerprint pinning (when pinned_ca_cert_hash set)
             ssl.SSLContext: Configured SSL context for custom certificates
             True: Use default SSL verification (aiohttp default)
             False: Disable SSL verification
@@ -165,6 +176,10 @@ class NanoKVMClient:
             FileNotFoundError: If the CA certificate file is missing.
             ssl.SSLError: If the CA certificate is invalid.
         """
+
+        if self._pinned_ca_cert_hash:
+            _LOGGER.debug("Using certificate fingerprint pinning")
+            return Fingerprint(bytes.fromhex(self._pinned_ca_cert_hash))
 
         if not self._verify_ssl:
             _LOGGER.warning(
@@ -188,16 +203,10 @@ class NanoKVMClient:
 
     async def __aenter__(self) -> NanoKVMClient:
         """Async context manager entry."""
+        if self._session is None:
+            self._session = ClientSession()
 
-        ssl_config = await asyncio.to_thread(self._create_ssl_context)
-        connector = TCPConnector(ssl=ssl_config)
-        self._session = ClientSession(connector=connector)
-
-        _LOGGER.debug(
-            "Created client session with SSL verification: %s",
-            "disabled" if ssl_config is False else "enabled",
-        )
-
+        self._ssl_config = await asyncio.to_thread(self._create_ssl_context)
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -206,8 +215,9 @@ class NanoKVMClient:
         if self._ws is not None and not self._ws.closed:
             await self._ws.close()
             self._ws = None
+
         # Close HTTP session
-        if self._session is not None:
+        if self._session is not None and self._auto_close_session:
             await self._session.close()
             self._session = None
 
@@ -221,15 +231,14 @@ class NanoKVMClient:
         **kwargs: Any,
     ) -> AsyncIterator[ClientResponse]:
         """Make an API request."""
-        assert self._session is not None, (
-            "Client session not initialized. "
-            "Use as context manager: 'async with NanoKVMClient(url) as client:'"
-        )
         cookies = {}
         if authenticate:
             if not self._token:
                 raise NanoKVMNotAuthenticatedError("Client is not authenticated")
             cookies["nano-kvm-token"] = self._token
+
+        assert self._session is not None
+        assert self._ssl_config is not None
 
         async with self._session.request(
             method,
@@ -240,6 +249,7 @@ class NanoKVMClient:
             cookies=cookies,
             timeout=aiohttp.ClientTimeout(total=self._request_timeout),
             raise_for_status=True,
+            ssl=self._ssl_config,
             **kwargs,
         ) as response:
             yield response
@@ -795,11 +805,6 @@ class NanoKVMClient:
     async def _get_ws(self) -> aiohttp.ClientWebSocketResponse:
         """Get or create WebSocket connection for mouse events."""
         if self._ws is None or self._ws.closed:
-            assert self._session is not None, (
-                "Client session not initialized. "
-                "Use as context manager: 'async with NanoKVMClient(url) as client:'"
-            )
-
             if not self._token:
                 raise NanoKVMNotAuthenticatedError("Client is not authenticated")
 
@@ -807,9 +812,13 @@ class NanoKVMClient:
             scheme = "ws" if self.url.scheme == "http" else "wss"
             ws_url = self.url.with_scheme(scheme) / "ws"
 
+            assert self._session is not None
+            assert self._ssl_config is not None
+
             self._ws = await self._session.ws_connect(
                 str(ws_url),
                 headers={"Cookie": f"nano-kvm-token={self._token}"},
+                ssl=self._ssl_config,
             )
         return self._ws
 
