@@ -139,7 +139,8 @@ async def nanokvm_https_server(tmp_path: pathlib.Path) -> AsyncGenerator[str, No
         site = web.TCPSite(runner, "127.0.0.1", 0, ssl_context=ssl_ctx)
         await site.start()
 
-        yield site.name + "api/"
+        host, port = runner.addresses[0]
+        yield f"https://{host}:{port}/api/"
     finally:
         await runner.cleanup()
 
