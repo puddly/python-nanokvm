@@ -46,6 +46,16 @@ def openssl_encrypt_aes256cbc_md5(plaintext: bytes, password: bytes) -> bytes:
     return b"Salted__" + salt + ciphertext
 
 
+def obfuscate_password(password: str) -> str:
+    """Obfuscate a password."""
+    password_enc = openssl_encrypt_aes256cbc_md5(
+        plaintext=password.encode("utf-8"),
+        password=SECRET_KEY,
+    )
+
+    return urllib.parse.quote(base64.b64encode(password_enc).decode("utf-8"), safe="")
+
+
 async def async_fetch_remote_fingerprint(url: str) -> str:
     """Retrieve the SHA-256 fingerprint of the remote server's TLS certificate.
 
@@ -72,13 +82,3 @@ async def async_fetch_remote_fingerprint(url: str) -> str:
     finally:
         writer.close()
         await writer.wait_closed()
-
-
-def obfuscate_password(password: str) -> str:
-    """Obfuscate a password."""
-    password_enc = openssl_encrypt_aes256cbc_md5(
-        plaintext=password.encode("utf-8"),
-        password=SECRET_KEY,
-    )
-
-    return urllib.parse.quote(base64.b64encode(password_enc).decode("utf-8"), safe="")
