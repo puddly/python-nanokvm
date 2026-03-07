@@ -152,7 +152,7 @@ class NanoKVMClient:
         """
         self.url = yarl.URL(url)
         self._session: ClientSession | None = session
-        self._auto_close_session = session is None
+        self._external_session_provided = session is not None
         self._token = token
         self._request_timeout = request_timeout
         self._ws: aiohttp.ClientWebSocketResponse | None = None
@@ -203,7 +203,7 @@ class NanoKVMClient:
 
     async def __aenter__(self) -> NanoKVMClient:
         """Async context manager entry."""
-        if self._session is None:
+        if self._session is None and not self._external_session_provided:
             self._session = ClientSession()
 
         self._ssl_config = await asyncio.to_thread(self._create_ssl_context)
@@ -217,10 +217,8 @@ class NanoKVMClient:
             self._ws = None
 
         # Close HTTP session
-        if self._session is not None:
-            if self._auto_close_session:
-                await self._session.close()
-
+        if self._session is not None and not self._external_session_provided:
+            await self._session.close()
             self._session = None
 
     @contextlib.asynccontextmanager
