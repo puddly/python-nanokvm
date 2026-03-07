@@ -165,7 +165,7 @@ async def test_certificate_pinning(nanokvm_https_server: str) -> None:
     # Step 3: pinned fingerprint allows the connection to succeed
     async with NanoKVMClient(
         url,
-        pinned_ca_cert_hash=fingerprint,
+        ssl_fingerprint=fingerprint,
         use_password_obfuscation=False,
     ) as client:
         await client.authenticate("admin", "test")
@@ -178,7 +178,7 @@ async def test_certificate_pinning_wrong_hash(nanokvm_https_server: str) -> None
 
     async with NanoKVMClient(
         url,
-        pinned_ca_cert_hash="AB" * 32,
+        ssl_fingerprint="AB" * 32,
         use_password_obfuscation=False,
     ) as client:
         with pytest.raises(aiohttp.ServerFingerprintMismatch):

@@ -53,7 +53,7 @@ async def async_fetch_remote_fingerprint(url: str) -> str:
     then returns its SHA-256 hash as an uppercase hex string.
 
     This is useful for establishing an initial trust-on-first-use pin with
-    `NanoKVMClient(url, pinned_ca_cert_hash=...)`.
+    `NanoKVMClient(url, ssl_fingerprint=...)`.
     """
     parsed_url = urllib.parse.urlparse(url)
     hostname = parsed_url.hostname

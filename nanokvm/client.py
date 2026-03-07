@@ -126,7 +126,7 @@ class NanoKVMClient:
         session: ClientSession | None = None,
         verify_ssl: bool = True,
         ssl_ca_cert: str | None = None,
-        pinned_ca_cert_hash: str | None = None,
+        ssl_fingerprint: str | None = None,
         use_password_obfuscation: bool | None = None,
     ) -> None:
         """
@@ -141,7 +141,7 @@ class NanoKVMClient:
                 Set to False to disable verification for self-signed certificates.
             ssl_ca_cert: Path to custom CA certificate bundle file for SSL verification.
                 Useful for self-signed certificates or private CAs.
-            pinned_ca_cert_hash: SHA-256 fingerprint of the server's TLS certificate
+            ssl_fingerprint: SHA-256 fingerprint of the server's TLS certificate
                 as a hex string. When set, the client will verify the server's
                 certificate fingerprint instead of performing CA-based verification.
                 Use `async_fetch_remote_fingerprint()` to retrieve this value.
@@ -158,7 +158,7 @@ class NanoKVMClient:
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._verify_ssl = verify_ssl
         self._ssl_ca_cert = ssl_ca_cert
-        self._pinned_ca_cert_hash = pinned_ca_cert_hash
+        self._ssl_fingerprint = ssl_fingerprint
         self._use_password_obfuscation = use_password_obfuscation
         self._ssl_config: ssl.SSLContext | Fingerprint | bool | None = None
 
@@ -167,7 +167,7 @@ class NanoKVMClient:
         Create and configure SSL context based on initialization parameters.
 
         Returns:
-            Fingerprint: Certificate fingerprint pinning (when pinned_ca_cert_hash set)
+            Fingerprint: Certificate fingerprint pinning (when ssl_fingerprint set)
             ssl.SSLContext: Configured SSL context for custom certificates
             True: Use default SSL verification (aiohttp default)
             False: Disable SSL verification
@@ -177,9 +177,9 @@ class NanoKVMClient:
             ssl.SSLError: If the CA certificate is invalid.
         """
 
-        if self._pinned_ca_cert_hash:
+        if self._ssl_fingerprint:
             _LOGGER.debug("Using certificate fingerprint pinning")
-            return Fingerprint(bytes.fromhex(self._pinned_ca_cert_hash))
+            return Fingerprint(bytes.fromhex(self._ssl_fingerprint))
 
         if not self._verify_ssl:
             _LOGGER.warning(

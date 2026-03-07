@@ -118,7 +118,7 @@ fingerprint = await async_fetch_remote_fingerprint("https://kvm.local/api/")
 # Then connect with the pinned fingerprint
 async with NanoKVMClient(
     "https://kvm.local/api/",
-    pinned_ca_cert_hash=fingerprint,
+    ssl_fingerprint=fingerprint,
 ) as client:
     await client.authenticate("username", "password")
 ```
