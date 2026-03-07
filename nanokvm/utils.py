@@ -76,7 +76,7 @@ async def async_fetch_remote_fingerprint(
     ssl_ctx.verify_mode = ssl.CERT_NONE
 
     async with asyncio.timeout(timeout):
-        reader, writer = await asyncio.open_connection(hostname, port, ssl=ssl_ctx)
+        _, writer = await asyncio.open_connection(hostname, port, ssl=ssl_ctx)
 
     try:
         ssl_obj = writer.get_extra_info("ssl_object")
