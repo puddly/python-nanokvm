@@ -179,7 +179,7 @@ class NanoKVMClient:
 
         if self._ssl_fingerprint:
             _LOGGER.debug("Using certificate fingerprint pinning")
-            return Fingerprint(bytes.fromhex(self._ssl_fingerprint))
+            return Fingerprint(bytes.fromhex(self._ssl_fingerprint.replace(":", "")))
 
         if not self._verify_ssl:
             _LOGGER.warning(

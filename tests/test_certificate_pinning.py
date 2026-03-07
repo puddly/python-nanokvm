@@ -173,6 +173,25 @@ async def test_certificate_pinning(nanokvm_https_server: str) -> None:
         assert client.token == "fake-token-123"
 
 
+async def test_certificate_pinning_colon_separated(nanokvm_https_server: str) -> None:
+    """Test that colon-separated fingerprints (e.g. from openssl) are accepted."""
+    url = nanokvm_https_server
+    fingerprint = await async_fetch_remote_fingerprint(url)
+
+    # Convert "AABB..." to "AA:BB:..."
+    colon_fingerprint = ":".join(
+        fingerprint[i : i + 2] for i in range(0, len(fingerprint), 2)
+    )
+
+    async with NanoKVMClient(
+        url,
+        ssl_fingerprint=colon_fingerprint,
+        use_password_obfuscation=False,
+    ) as client:
+        await client.authenticate("admin", "test")
+        assert client.token == "fake-token-123"
+
+
 async def test_certificate_pinning_wrong_hash(nanokvm_https_server: str) -> None:
     """Test that a wrong pinned hash is rejected."""
     url = nanokvm_https_server
