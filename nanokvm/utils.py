@@ -71,7 +71,7 @@ async def async_fetch_remote_fingerprint(
     hostname = parsed_url.hostname
     port = parsed_url.port or 443
 
-    ssl_ctx = ssl.create_default_context()
+    ssl_ctx = await asyncio.to_thread(ssl.create_default_context)
     ssl_ctx.check_hostname = False
     ssl_ctx.verify_mode = ssl.CERT_NONE
 
