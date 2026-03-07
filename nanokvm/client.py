@@ -120,10 +120,10 @@ class NanoKVMClient:
     def __init__(
         self,
         url: str,
-        session: ClientSession | None = None,
         *,
         token: str | None = None,
         request_timeout: int = 10,
+        session: ClientSession | None = None,
         verify_ssl: bool = True,
         ssl_ca_cert: str | None = None,
         pinned_ca_cert_hash: str | None = None,
