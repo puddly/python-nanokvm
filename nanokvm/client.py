@@ -217,8 +217,10 @@ class NanoKVMClient:
             self._ws = None
 
         # Close HTTP session
-        if self._session is not None and self._auto_close_session:
-            await self._session.close()
+        if self._session is not None:
+            if self._auto_close_session:
+                await self._session.close()
+
             self._session = None
 
     @contextlib.asynccontextmanager

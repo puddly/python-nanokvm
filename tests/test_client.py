@@ -1,3 +1,4 @@
+from aiohttp import ClientSession
 from aioresponses import aioresponses
 import pytest
 
@@ -79,3 +80,23 @@ async def test_client_context_manager() -> None:
 
     # After exiting context, session should be closed
     assert client._session is None
+
+
+async def test_client_context_manager_external_session() -> None:
+    """Test that client properly deals with an external session."""
+    async with ClientSession() as session:
+        # Both clients connect with the same external session
+        async with (
+            NanoKVMClient("http://localhost:8888/api/", session=session) as client1,
+            NanoKVMClient("http://localhost:8888/api/", session=session) as client2,
+        ):
+            # Verify session is created
+            assert client1._session is session
+            assert client2._session is session
+
+        # Both exit but the session is still open
+        assert not session.closed
+        assert client1._session is None
+        assert client2._session is None
+
+    assert session.closed
