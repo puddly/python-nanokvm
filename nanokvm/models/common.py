@@ -1,4 +1,4 @@
-"""Models for NanoKVM API."""
+"""Shared models for NanoKVM API (both Pro and non-Pro)."""
 
 from __future__ import annotations
 
@@ -32,14 +32,6 @@ class GpioType(StrEnum):
     POWER = "power"
 
 
-class ScreenSettingType(StrEnum):
-    """Screen Setting types (non-Pro only)."""
-
-    RESOLUTION = "resolution"
-    FPS = "fps"
-    QUALITY = "quality"
-
-
 class RunScriptType(StrEnum):
     """Script Execution types."""
 
@@ -53,13 +45,6 @@ class VirtualDevice(StrEnum):
     NETWORK = "network"
     DISK = "disk"
     MIC = "mic"  # Pro only
-
-
-class DiskType(StrEnum):
-    """Virtual Disk types (Pro only)."""
-
-    SDCARD = "sdcard"  # Pro only
-    EMMC = "emmc"  # Pro only
 
 
 class TailscaleState(StrEnum):
@@ -116,13 +101,6 @@ class MouseButton(IntEnum):
     LEFT = 1
     RIGHT = 2
     MIDDLE = 4
-
-
-class RateControlMode(StrEnum):
-    """Stream rate control modes (Pro only)."""
-
-    CBR = "cbr"  # Pro only
-    VBR = "vbr"  # Pro only
 
 
 # Generic Response Wrapper
@@ -200,13 +178,6 @@ class GetGpioRsp(BaseModel):
     hdd: bool  # HDD LED state (only valid for Alpha hardware)
 
 
-class SetScreenReq(BaseModel):
-    """Non-Pro only. Pro uses separate stream endpoints."""
-
-    type: ScreenSettingType
-    value: int
-
-
 class GetScriptsRsp(BaseModel):
     files: list[str]
 
@@ -224,51 +195,11 @@ class DeleteScriptReq(BaseModel):
     name: str
 
 
-class GetVirtualDeviceRsp(BaseModel):
-    """Non-Pro virtual device status."""
-
-    network: bool
-    media: bool
-    disk: bool
-
-
-class GetVirtualDeviceProRsp(BaseModel):
-    """Pro virtual device status."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    is_network_enabled: bool = Field(alias="isNetworkEnabled")
-    is_mic_enabled: bool = Field(alias="isMicEnabled")
-    mounted_disk: str = Field(alias="mountedDisk")
-    is_sd_card_exist: bool = Field(alias="isSdCardExist")
-    is_emmc_exist: bool = Field(alias="isEmmcExist")
-
-
 class UpdateVirtualDeviceReq(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     device: VirtualDevice
     type: str | None = None  # Pro only (sdcard/emmc for disk device)
-
-
-class RefreshVirtualDeviceReq(BaseModel):
-    """Pro only."""
-
-    device: str
-
-
-class GetMemoryLimitRsp(BaseModel):
-    """Non-Pro only."""
-
-    enabled: bool
-    limit: int  # In MB
-
-
-class SetMemoryLimitReq(BaseModel):
-    """Non-Pro only."""
-
-    enabled: bool
-    limit: int  # In MB
 
 
 class GetOLEDRsp(BaseModel):
@@ -285,18 +216,6 @@ class GetSSHStateRsp(BaseModel):
     enabled: bool
 
 
-class GetSwapSizeRsp(BaseModel):
-    """Non-Pro only."""
-
-    size: int
-
-
-class SetSwapSizeReq(BaseModel):
-    """Non-Pro only."""
-
-    size: int
-
-
 class GetMdnsStateRsp(BaseModel):
     enabled: bool
 
@@ -311,150 +230,12 @@ class SetMouseJigglerReq(BaseModel):
     mode: MouseJigglerMode
 
 
-class GetHdmiStateRsp(BaseModel):
-    """Non-Pro only (PCIe variant)."""
-
-    enabled: bool
-
-
 class GetWebTitleRsp(BaseModel):
     title: str
 
 
 class SetWebTitleReq(BaseModel):
     title: str
-
-
-# Pro-only VM Models
-class GetLowPowerRsp(BaseModel):
-    """Pro only."""
-
-    enabled: bool
-
-
-class SetLowPowerReq(BaseModel):
-    """Pro only."""
-
-    enable: bool
-
-
-class GetEdidRsp(BaseModel):
-    """Pro only."""
-
-    edid: str
-
-
-class SwitchEdidReq(BaseModel):
-    """Pro only."""
-
-    edid: str
-
-
-class GetCustomEdidListRsp(BaseModel):
-    """Pro only."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    edid_list: list[str] = Field(default_factory=list, alias="edidList")
-
-
-class DeleteEdidReq(BaseModel):
-    """Pro only."""
-
-    edid: str
-
-
-class GetHdmiCaptureRsp(BaseModel):
-    """Pro only."""
-
-    enabled: bool
-
-
-class SetHdmiCaptureReq(BaseModel):
-    """Pro only."""
-
-    enabled: bool
-
-
-class GetHdmiPassthroughRsp(BaseModel):
-    """Pro only."""
-
-    enabled: bool
-
-
-class SetHdmiPassthroughReq(BaseModel):
-    """Pro only."""
-
-    enabled: bool
-
-
-class SetTimeZoneReq(BaseModel):
-    """Pro only."""
-
-    timezone: str
-
-
-class GetTimeZoneRsp(BaseModel):
-    """Pro only."""
-
-    timezone: str
-
-
-class GetTimeStatusRsp(BaseModel):
-    """Pro only."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    is_synchronized: bool = Field(alias="isSynchronized")
-    last_sync_time: int = Field(alias="lastSyncTime")
-
-
-class GetLcdTimeFormatRsp(BaseModel):
-    """Pro only."""
-
-    format: str
-
-
-class SetLcdTimeFormatReq(BaseModel):
-    """Pro only."""
-
-    format: str
-
-
-class GetMenuBarConfigRsp(BaseModel):
-    """Pro only."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    disabled_items: list[str] = Field(default_factory=list, alias="disabledItems")
-
-
-class SetMenuBarConfigReq(BaseModel):
-    """Pro only."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    disabled_items: list[str] = Field(alias="disabledItems")
-
-
-class SetLedStripReq(BaseModel):
-    """Pro only."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    on: bool
-    horizontal_count: int = Field(alias="hor")
-    vertical_count: int = Field(alias="ver")
-    brightness: int
-
-
-class GetLedStripRsp(BaseModel):
-    """Pro only."""
-
-    on: bool
-    horizontal_count: int = Field(alias="hor")
-    vertical_count: int = Field(alias="ver")
-    brightness: int
 
 
 # HID Models
@@ -521,12 +302,6 @@ class GetMountedImageRsp(BaseModel):
     read_only: bool = Field(False, alias="readOnly")  # Pro only
 
 
-class GetCdRomRsp(BaseModel):
-    """Non-Pro only."""
-
-    cdrom: int
-
-
 class DeleteImageReq(BaseModel):
     file: str
 
@@ -550,7 +325,7 @@ class SetMacNameReq(BaseModel):
 
 
 class WiFiInfo(BaseModel):
-    """WiFi connection details (Pro only)."""
+    """WiFi connection details."""
 
     ssid: str
     bssid: str
@@ -569,31 +344,9 @@ class GetWifiRsp(BaseModel):
     wifi: WiFiInfo | None = None  # Pro only
 
 
-class ScanWifiRsp(BaseModel):
-    """Pro only."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    wifi_list: list[WiFiInfo] = Field(default_factory=list, alias="wifiList")
-
-
 class ConnectWifiReq(BaseModel):
     ssid: str
     password: str
-
-
-class GetStaticIPRsp(BaseModel):
-    """Pro only."""
-
-    enabled: bool
-    ip: str
-
-
-class SetStaticIPReq(BaseModel):
-    """Pro only."""
-
-    enabled: bool
-    ip: str
 
 
 class GetTailscaleStatusRsp(BaseModel):
@@ -605,37 +358,6 @@ class GetTailscaleStatusRsp(BaseModel):
 
 class LoginTailscaleRsp(BaseModel):
     url: str
-
-
-# Stream Models (Pro only)
-class SetRateControlModeReq(BaseModel):
-    """Pro only."""
-
-    mode: RateControlMode
-
-
-class SetStreamModeReq(BaseModel):
-    """Pro only."""
-
-    mode: str
-
-
-class SetStreamQualityReq(BaseModel):
-    """Pro only."""
-
-    quality: int
-
-
-class SetGopReq(BaseModel):
-    """Pro only."""
-
-    gop: int
-
-
-class SetFpsReq(BaseModel):
-    """Pro only."""
-
-    fps: int
 
 
 # Application Models
@@ -665,10 +387,3 @@ class StatusImageRsp(BaseModel):
 
 class DownloadImageReq(BaseModel):
     file: str  # URL of the image to download
-
-
-# Extensions Models (Pro only)
-class GetKvmadminStatusRsp(BaseModel):
-    """Pro only."""
-
-    state: str
