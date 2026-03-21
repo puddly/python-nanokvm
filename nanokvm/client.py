@@ -168,7 +168,7 @@ def require_hardware(*versions: HWVersion) -> Callable[[F], F]:
         @functools.wraps(func)
         async def wrapper(self: NanoKVMClient, *args: Any, **kwargs: Any) -> Any:
             if self._hw_version is None:
-                raise NanoKVMNotSupportedError(
+                raise NanoKVMError(
                     f"{func.__name__} requires hardware detection; "
                     f"call detect_hardware() first"
                 )
