@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Coroutine
 import contextlib
+import functools
 import io
 import json
 import logging
@@ -157,6 +158,33 @@ class NanoKVMNotSupportedError(NanoKVMError):
     """Feature not supported on this hardware variant."""
 
 
+F = TypeVar("F", bound=Callable[..., Coroutine[Any, Any, Any]])
+
+
+def require_hardware(*versions: HWVersion) -> Callable[[F], F]:
+    """Decorator that restricts a method to specific hardware versions."""
+
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        async def wrapper(self: NanoKVMClient, *args: Any, **kwargs: Any) -> Any:
+            if self._hw_version is None:
+                raise NanoKVMNotSupportedError(
+                    f"{func.__name__} requires hardware detection; "
+                    f"call detect_hardware() first"
+                )
+            if self._hw_version not in versions:
+                allowed = ", ".join(v.value for v in versions)
+                raise NanoKVMNotSupportedError(
+                    f"{func.__name__} requires hardware: {allowed} "
+                    f"(detected: {self._hw_version})"
+                )
+            return await func(self, *args, **kwargs)
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+
 class NanoKVMClient:
     """Async API client for the NanoKVM."""
 
@@ -204,7 +232,7 @@ class NanoKVMClient:
         self._ssl_fingerprint = ssl_fingerprint
         self._use_password_obfuscation = use_password_obfuscation
         self._ssl_config: ssl.SSLContext | Fingerprint | bool | None = None
-        self._is_pro: bool | None = None
+        self._hw_version: HWVersion | None = None
 
     def _create_ssl_context(self) -> ssl.SSLContext | Fingerprint | bool:
         """
@@ -246,29 +274,15 @@ class NanoKVMClient:
         return self._token
 
     @property
-    def is_pro(self) -> bool | None:
-        """Whether connected to NanoKVM Pro. None if not yet detected."""
-        return self._is_pro
+    def hw_version(self) -> HWVersion | None:
+        """The detected hardware version. None if not yet detected."""
+        return self._hw_version
 
-    async def _ensure_hardware_detected(self) -> None:
-        """Detect hardware version if not already known."""
-        if self._is_pro is not None:
-            return
+    async def detect_hardware(self) -> None:
+        """Detect and store the hardware version."""
         hw = await self.get_hardware()
-        self._is_pro = hw.version == HWVersion.PRO
-        _LOGGER.info("Detected hardware: %s (Pro=%s)", hw.version, self._is_pro)
-
-    async def _require_pro(self, feature: str) -> None:
-        """Raise if not connected to NanoKVM Pro."""
-        await self._ensure_hardware_detected()
-        if not self._is_pro:
-            raise NanoKVMNotSupportedError(f"{feature} requires NanoKVM Pro")
-
-    async def _require_non_pro(self, feature: str) -> None:
-        """Raise if connected to NanoKVM Pro (feature is non-Pro only)."""
-        await self._ensure_hardware_detected()
-        if self._is_pro:
-            raise NanoKVMNotSupportedError(f"{feature} is not available on NanoKVM Pro")
+        self._hw_version = hw.version
+        _LOGGER.info("Detected hardware: %s", hw.version)
 
     async def __aenter__(self) -> NanoKVMClient:
         """Async context manager entry."""
@@ -439,7 +453,7 @@ class NanoKVMClient:
                 await self._do_authenticate(username, password)
                 _LOGGER.info("Auto-detected plain text password mode")
 
-        await self._ensure_hardware_detected()
+        await self.detect_hardware()
 
     async def logout(self) -> None:
         """Log out and clear the session token."""
@@ -580,8 +594,11 @@ class NanoKVMClient:
         self,
     ) -> GetVirtualDeviceRsp | GetVirtualDeviceProRsp:
         """Get the status of virtual devices."""
-        await self._ensure_hardware_detected()
-        model = GetVirtualDeviceProRsp if self._is_pro else GetVirtualDeviceRsp
+        model = (
+            GetVirtualDeviceProRsp
+            if self._hw_version == HWVersion.PRO
+            else GetVirtualDeviceRsp
+        )
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/device/virtual",
@@ -644,9 +661,9 @@ class NanoKVMClient:
 
     # ── VM (non-Pro only) ──────────────────────────────────────────────
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def get_swap_size(self) -> int:
-        """Get Swap size. Non-Pro only."""
-        await self._require_non_pro("get_swap_size")
+        """Get Swap size."""
         rsp = await self._api_request_json(
             hdrs.METH_GET,
             "/vm/swap",
@@ -654,193 +671,194 @@ class NanoKVMClient:
         )
         return rsp.size
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def set_swap_size(self, size_mb: int) -> None:
-        """Set the Swap size. Non-Pro only."""
-        await self._require_non_pro("set_swap_size")
+        """Set the Swap size."""
         await self._api_request_json(
             hdrs.METH_POST, "/vm/swap", data=SetSwapSizeReq(size=size_mb)
         )
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def enable_swap(self) -> None:
-        """Enable swap. Non-Pro only."""
-        await self._require_non_pro("enable_swap")
+        """Enable swap."""
         await self._api_request_json(hdrs.METH_POST, "/vm/swap/enable")
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def disable_swap(self) -> None:
-        """Disable swap. Non-Pro only."""
-        await self._require_non_pro("disable_swap")
+        """Disable swap."""
         await self._api_request_json(hdrs.METH_POST, "/vm/swap/disable")
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def get_memory_limit(self) -> GetMemoryLimitRsp:
-        """Get the configured Go memory limit. Non-Pro only."""
-        await self._require_non_pro("get_memory_limit")
+        """Get the configured Go memory limit."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/memory/limit",
             response_model=GetMemoryLimitRsp,
         )
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def set_memory_limit(self, enabled: bool, limit_mb: int) -> None:
-        """Set or disable the Go memory limit. Non-Pro only."""
-        await self._require_non_pro("set_memory_limit")
+        """Set or disable the Go memory limit."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/memory/limit",
             data=SetMemoryLimitReq(enabled=enabled, limit=limit_mb),
         )
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def get_hdmi_state(self) -> GetHdmiStateRsp:
-        """Get the HDMI state. Non-Pro only (PCIe variant)."""
-        await self._require_non_pro("get_hdmi_state")
+        """Get the HDMI state (PCIe variant)."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/hdmi",
             response_model=GetHdmiStateRsp,
         )
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def reset_hdmi(self) -> None:
-        """Reset the HDMI connection. Non-Pro only."""
-        await self._require_non_pro("reset_hdmi")
+        """Reset the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/reset")
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def enable_hdmi(self) -> None:
-        """Enable the HDMI connection. Non-Pro only."""
-        await self._require_non_pro("enable_hdmi")
+        """Enable the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/enable")
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def disable_hdmi(self) -> None:
-        """Disable the HDMI connection. Non-Pro only."""
-        await self._require_non_pro("disable_hdmi")
+        """Disable the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/disable")
 
     # ── VM (Pro only) ──────────────────────────────────────────────────
 
+    @require_hardware(HWVersion.PRO)
     async def refresh_virtual_device(self, device: str) -> None:
-        """Refresh a virtual device (e.g. emmc). Pro only."""
-        await self._require_pro("refresh_virtual_device")
+        """Refresh a virtual device (e.g. emmc)."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/device/virtual/refresh",
             data=RefreshVirtualDeviceReq(device=device),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def get_lcd_time_format(self) -> GetLcdTimeFormatRsp:
-        """Get the LCD time format. Pro only."""
-        await self._require_pro("get_lcd_time_format")
+        """Get the LCD time format."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/lcd/time/format",
             response_model=GetLcdTimeFormatRsp,
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_lcd_time_format(self, fmt: str) -> None:
-        """Set the LCD time format (12h/24h). Pro only."""
-        await self._require_pro("set_lcd_time_format")
+        """Set the LCD time format (12h/24h)."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/lcd/time/format",
             data=SetLcdTimeFormatReq(format=fmt),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def get_hdmi_capture(self) -> GetHdmiCaptureRsp:
-        """Get HDMI capture status. Pro only."""
-        await self._require_pro("get_hdmi_capture")
+        """Get HDMI capture status."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/hdmi/capture",
             response_model=GetHdmiCaptureRsp,
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_hdmi_capture(self, enabled: bool) -> None:
-        """Set HDMI capture status. Pro only."""
-        await self._require_pro("set_hdmi_capture")
+        """Set HDMI capture status."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/hdmi/capture",
             data=SetHdmiCaptureReq(enabled=enabled),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def get_hdmi_passthrough(self) -> GetHdmiPassthroughRsp:
-        """Get HDMI passthrough status. Pro only."""
-        await self._require_pro("get_hdmi_passthrough")
+        """Get HDMI passthrough status."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/hdmi/passthrough",
             response_model=GetHdmiPassthroughRsp,
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_hdmi_passthrough(self, enabled: bool) -> None:
-        """Set HDMI passthrough status. Pro only."""
-        await self._require_pro("set_hdmi_passthrough")
+        """Set HDMI passthrough status."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/hdmi/passthrough",
             data=SetHdmiPassthroughReq(enabled=enabled),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def get_edid(self) -> GetEdidRsp:
-        """Get current EDID. Pro only."""
-        await self._require_pro("get_edid")
+        """Get current EDID."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/edid",
             response_model=GetEdidRsp,
         )
 
+    @require_hardware(HWVersion.PRO)
     async def switch_edid(self, edid: str) -> None:
-        """Switch EDID. Pro only."""
-        await self._require_pro("switch_edid")
+        """Switch EDID."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/edid",
             data=SwitchEdidReq(edid=edid),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def get_custom_edid_list(self) -> GetCustomEdidListRsp:
-        """Get custom EDID list. Pro only."""
-        await self._require_pro("get_custom_edid_list")
+        """Get custom EDID list."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/edid/custom",
             response_model=GetCustomEdidListRsp,
         )
 
+    @require_hardware(HWVersion.PRO)
     async def delete_edid(self, edid: str) -> None:
-        """Delete a custom EDID. Pro only."""
-        await self._require_pro("delete_edid")
+        """Delete a custom EDID."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/edid/delete",
             data=DeleteEdidReq(edid=edid),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def get_low_power(self) -> GetLowPowerRsp:
-        """Get low power status. Pro only."""
-        await self._require_pro("get_low_power")
+        """Get low power status."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/low-power",
             response_model=GetLowPowerRsp,
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_low_power(self, enable: bool) -> None:
-        """Set low power mode. Pro only."""
-        await self._require_pro("set_low_power")
+        """Set low power mode."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/low-power",
             data=SetLowPowerReq(enable=enable),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def get_led_strip(self) -> GetLedStripRsp:
-        """Get LED strip configuration. Pro only."""
-        await self._require_pro("get_led_strip")
+        """Get LED strip configuration."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/ledstrip/get",
             response_model=GetLedStripRsp,
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_led_strip(
         self,
         *,
@@ -849,8 +867,7 @@ class NanoKVMClient:
         vertical_count: int,
         brightness: int,
     ) -> None:
-        """Set LED strip configuration. Pro only."""
-        await self._require_pro("set_led_strip")
+        """Set LED strip configuration."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/ledstrip/set",
@@ -862,50 +879,50 @@ class NanoKVMClient:
             ),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def get_timezone(self) -> GetTimeZoneRsp:
-        """Get the configured timezone. Pro only."""
-        await self._require_pro("get_timezone")
+        """Get the configured timezone."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/timezone",
             response_model=GetTimeZoneRsp,
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_timezone(self, timezone: str) -> None:
-        """Set the timezone. Pro only."""
-        await self._require_pro("set_timezone")
+        """Set the timezone."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/timezone",
             data=SetTimeZoneReq(timezone=timezone),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def get_time_status(self) -> GetTimeStatusRsp:
-        """Get time synchronization status. Pro only."""
-        await self._require_pro("get_time_status")
+        """Get time synchronization status."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/time/status",
             response_model=GetTimeStatusRsp,
         )
 
+    @require_hardware(HWVersion.PRO)
     async def sync_time(self) -> None:
-        """Synchronize time. Pro only."""
-        await self._require_pro("sync_time")
+        """Synchronize time."""
         await self._api_request_json(hdrs.METH_POST, "/vm/time/sync")
 
+    @require_hardware(HWVersion.PRO)
     async def get_menubar_config(self) -> GetMenuBarConfigRsp:
-        """Get menu bar configuration. Pro only."""
-        await self._require_pro("get_menubar_config")
+        """Get menu bar configuration."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/menubar",
             response_model=GetMenuBarConfigRsp,
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_menubar_config(self, disabled_items: list[str]) -> None:
-        """Set menu bar configuration. Pro only."""
-        await self._require_pro("set_menubar_config")
+        """Set menu bar configuration."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/menubar",
@@ -989,9 +1006,9 @@ class NanoKVMClient:
             data=DeleteImageReq(file=file),
         )
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def get_cdrom_status(self) -> GetCdRomRsp:
-        """Check if the mounted image is in CD-ROM mode. Non-Pro only."""
-        await self._require_non_pro("get_cdrom_status")
+        """Check if the mounted image is in CD-ROM mode."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/storage/cdrom",
@@ -1036,27 +1053,27 @@ class NanoKVMClient:
 
     # ── Network (Pro only) ─────────────────────────────────────────────
 
+    @require_hardware(HWVersion.PRO)
     async def get_static_ip(self) -> GetStaticIPRsp:
-        """Get static IP configuration. Pro only."""
-        await self._require_pro("get_static_ip")
+        """Get static IP configuration."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/network/static-ip",
             response_model=GetStaticIPRsp,
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_static_ip(self, enabled: bool, ip: str) -> None:
-        """Set static IP configuration. Pro only."""
-        await self._require_pro("set_static_ip")
+        """Set static IP configuration."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/network/static-ip",
             data=SetStaticIPReq(enabled=enabled, ip=ip),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def scan_wifi(self) -> ScanWifiRsp:
-        """Scan for available WiFi networks. Pro only."""
-        await self._require_pro("scan_wifi")
+        """Scan for available WiFi networks."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/network/wifi/scan",
@@ -1065,45 +1082,45 @@ class NanoKVMClient:
 
     # ── Stream (Pro only) ──────────────────────────────────────────────
 
+    @require_hardware(HWVersion.PRO)
     async def set_rate_control_mode(self, mode: RateControlMode) -> None:
-        """Set the stream rate control mode (CBR/VBR). Pro only."""
-        await self._require_pro("set_rate_control_mode")
+        """Set the stream rate control mode (CBR/VBR)."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/stream/rate-control",
             data=SetRateControlModeReq(mode=mode),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_stream_mode(self, mode: str) -> None:
-        """Set the stream mode. Pro only."""
-        await self._require_pro("set_stream_mode")
+        """Set the stream mode."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/stream/mode",
             data=SetStreamModeReq(mode=mode),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_stream_quality(self, quality: int) -> None:
-        """Set the stream quality / bit-rate. Pro only."""
-        await self._require_pro("set_stream_quality")
+        """Set the stream quality / bit-rate."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/stream/quality",
             data=SetStreamQualityReq(quality=quality),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_gop(self, gop: int) -> None:
-        """Set the stream GOP (Group of Pictures). Pro only."""
-        await self._require_pro("set_gop")
+        """Set the stream GOP (Group of Pictures)."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/stream/gop",
             data=SetGopReq(gop=gop),
         )
 
+    @require_hardware(HWVersion.PRO)
     async def set_fps(self, fps: int) -> None:
-        """Set the stream FPS. Pro only."""
-        await self._require_pro("set_fps")
+        """Set the stream FPS."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/stream/fps",
@@ -1167,37 +1184,36 @@ class NanoKVMClient:
 
     # ── Download ────────────────────────────────────────────────────────
 
-    async def _download_path(self, suffix: str) -> str:
-        """Get the correct download path for the hardware variant."""
-        await self._ensure_hardware_detected()
-        if self._is_pro:
-            return f"/storage/download{suffix}"
-        return f"/download{suffix}"
-
     async def is_image_download_enabled(self) -> ImageEnabledRsp:
         """Check if the /data partition allows downloads."""
-        path = await self._download_path("/image/enabled")
+        prefix = (
+            "/storage/download" if self._hw_version == HWVersion.PRO else "/download"
+        )
         return await self._api_request_json(
             hdrs.METH_GET,
-            path,
+            f"{prefix}/image/enabled",
             response_model=ImageEnabledRsp,
         )
 
     async def get_image_download_status(self) -> StatusImageRsp:
         """Get the status of an ongoing image download."""
-        path = await self._download_path("/image/status")
+        prefix = (
+            "/storage/download" if self._hw_version == HWVersion.PRO else "/download"
+        )
         return await self._api_request_json(
             hdrs.METH_GET,
-            path,
+            f"{prefix}/image/status",
             response_model=StatusImageRsp,
         )
 
     async def download_image(self, url: str) -> StatusImageRsp:
         """Start downloading an image from a URL."""
-        path = await self._download_path("/image")
+        prefix = (
+            "/storage/download" if self._hw_version == HWVersion.PRO else "/download"
+        )
         return await self._api_request_json(
             hdrs.METH_POST,
-            path,
+            f"{prefix}/image",
             response_model=StatusImageRsp,
             data=DownloadImageReq(file=url),
         )
@@ -1242,39 +1258,39 @@ class NanoKVMClient:
 
     # ── Extensions (Pro only) ──────────────────────────────────────────
 
+    @require_hardware(HWVersion.PRO)
     async def assistant_install(self) -> None:
-        """Install assistant dependencies. Pro only."""
-        await self._require_pro("assistant_install")
+        """Install assistant dependencies."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/assistant/install")
 
+    @require_hardware(HWVersion.PRO)
     async def assistant_start(self) -> None:
-        """Start assistant. Pro only."""
-        await self._require_pro("assistant_start")
+        """Start assistant."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/assistant/start")
 
+    @require_hardware(HWVersion.PRO)
     async def kvmadmin_install(self) -> None:
-        """Install kvmadmin. Pro only."""
-        await self._require_pro("kvmadmin_install")
+        """Install kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/install")
 
+    @require_hardware(HWVersion.PRO)
     async def kvmadmin_uninstall(self) -> None:
-        """Uninstall kvmadmin. Pro only."""
-        await self._require_pro("kvmadmin_uninstall")
+        """Uninstall kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/uninstall")
 
+    @require_hardware(HWVersion.PRO)
     async def kvmadmin_start(self) -> None:
-        """Start kvmadmin. Pro only."""
-        await self._require_pro("kvmadmin_start")
+        """Start kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/start")
 
+    @require_hardware(HWVersion.PRO)
     async def kvmadmin_stop(self) -> None:
-        """Stop kvmadmin. Pro only."""
-        await self._require_pro("kvmadmin_stop")
+        """Stop kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/stop")
 
+    @require_hardware(HWVersion.PRO)
     async def kvmadmin_status(self) -> GetKvmadminStatusRsp:
-        """Get kvmadmin status. Pro only."""
-        await self._require_pro("kvmadmin_status")
+        """Get kvmadmin status."""
         return await self._api_request_json(
             hdrs.METH_GET,
             "/extensions/kvmadmin/status",
