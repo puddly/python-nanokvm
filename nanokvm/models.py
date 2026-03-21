@@ -174,7 +174,7 @@ class GetInfoRsp(BaseModel):
     image: str
     application: str
     device_key: str = Field(alias="deviceKey")
-    pn: str = ""  # Pro only
+    part_number: str = Field("", alias="pn")  # Pro only
     arch: str = ""  # Pro only
 
 
@@ -440,9 +440,11 @@ class SetMenuBarConfigReq(BaseModel):
 class SetLedStripReq(BaseModel):
     """Pro only."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     on: bool
-    hor: int
-    ver: int
+    horizontal_count: int = Field(alias="hor")
+    vertical_count: int = Field(alias="ver")
     brightness: int
 
 
@@ -450,8 +452,8 @@ class GetLedStripRsp(BaseModel):
     """Pro only."""
 
     on: bool
-    hor: int
-    ver: int
+    horizontal_count: int = Field(alias="hor")
+    vertical_count: int = Field(alias="ver")
     brightness: int
 
 

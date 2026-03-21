@@ -838,14 +838,24 @@ class NanoKVMClient:
         )
 
     async def set_led_strip(
-        self, *, on: bool, hor: int, ver: int, brightness: int
+        self,
+        *,
+        on: bool,
+        horizontal_count: int,
+        vertical_count: int,
+        brightness: int,
     ) -> None:
         """Set LED strip configuration. Pro only."""
         await self._require_pro("set_led_strip")
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/ledstrip/set",
-            data=SetLedStripReq(on=on, hor=hor, ver=ver, brightness=brightness),
+            data=SetLedStripReq(
+                on=on,
+                horizontal_count=horizontal_count,
+                vertical_count=vertical_count,
+                brightness=brightness,
+            ),
         )
 
     async def get_timezone(self) -> GetTimeZoneRsp:
