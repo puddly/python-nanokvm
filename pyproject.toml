@@ -82,6 +82,7 @@ skip = ["./.*", "tests/*", "pyproject.toml"]
 quiet-level = 2
 
 [tool.mypy]
+plugins = ["pydantic.mypy"]
 strict = true
 install_types = true
 non_interactive = true
