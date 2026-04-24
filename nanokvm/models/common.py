@@ -103,6 +103,13 @@ class MouseButton(IntEnum):
     MIDDLE = 4
 
 
+class OledType(StrEnum):
+    """OLED variants used by NanoKVM Pro."""
+
+    ATX = "ATX"
+    DESK = "DESK"
+
+
 # Generic Response Wrapper
 class ApiResponse(BaseModel, Generic[T]):
     """Generic API response structure."""
@@ -204,8 +211,15 @@ class UpdateVirtualDeviceReq(BaseModel):
 
 class GetOLEDRsp(BaseModel):
     exist: bool
-    type: str = ""  # Pro only
+    type: OledType | None = None  # Pro only
     sleep: int  # Sleep timeout in seconds
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _normalize_oled_type(cls, value: Any) -> Any:
+        if value == "":
+            return None
+        return value
 
 
 class SetOledReq(BaseModel):

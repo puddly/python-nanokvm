@@ -84,6 +84,7 @@ from .models.non_pro import (
 from .models.pro import (
     DeleteEdidReq,
     DiskType,
+    EdidValue,
     GetCustomEdidListRsp,
     GetEdidRsp,
     GetHdmiCaptureRsp,
@@ -96,6 +97,7 @@ from .models.pro import (
     GetStaticIPRsp,
     GetTimeStatusRsp,
     GetTimeZoneRsp,
+    LcdTimeFormat,
     RateControlMode,
     RefreshVirtualDeviceReq,
     ScanWifiRsp,
@@ -112,6 +114,7 @@ from .models.pro import (
     SetStreamModeReq,
     SetStreamQualityReq,
     SetTimeZoneReq,
+    StreamMode,
     SwitchEdidReq,
 )
 from .utils import obfuscate_password
@@ -757,7 +760,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
-    async def set_lcd_time_format(self, fmt: str) -> None:
+    async def set_lcd_time_format(self, fmt: LcdTimeFormat | str) -> None:
         """Set the LCD time format (12h/24h)."""
         await self._api_request_json(
             hdrs.METH_POST,
@@ -811,7 +814,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
-    async def switch_edid(self, edid: str) -> None:
+    async def switch_edid(self, edid: EdidValue) -> None:
         """Switch EDID."""
         await self._api_request_json(
             hdrs.METH_POST,
@@ -1098,7 +1101,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
-    async def set_stream_mode(self, mode: str) -> None:
+    async def set_stream_mode(self, mode: StreamMode) -> None:
         """Set the stream mode."""
         await self._api_request_json(
             hdrs.METH_POST,
