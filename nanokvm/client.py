@@ -445,12 +445,14 @@ class NanoKVMClient:
             _LOGGER.debug("Auto-detecting password mode")
             try:
                 await self._do_authenticate(username, obfuscate_password(password))
+                self._use_password_obfuscation = True
                 _LOGGER.info("Auto-detected obfuscated password mode")
             except NanoKVMAuthenticationFailure:
                 _LOGGER.debug(
                     "Obfuscated authentication failed, trying plain text password"
                 )
                 await self._do_authenticate(username, password)
+                self._use_password_obfuscation = False
                 _LOGGER.info("Auto-detected plain text password mode")
 
         await self.detect_hardware()
@@ -467,12 +469,24 @@ class NanoKVMClient:
 
     async def change_password(self, username: str, new_password: str) -> None:
         """Change the KVM password."""
+        if self._use_password_obfuscation is None:
+            raise ValueError(
+                "Password mode is unknown. Authenticate first or set "
+                "use_password_obfuscation explicitly before changing the password."
+            )
+
+        password_to_send = (
+            obfuscate_password(new_password)
+            if self._use_password_obfuscation
+            else new_password
+        )
+
         await self._api_request_json(
             hdrs.METH_POST,
             "/auth/password",
             data=ChangePasswordReq(
                 username=username,
-                password=obfuscate_password(new_password),
+                password=password_to_send,
             ),
         )
 
