@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import IntEnum, StrEnum
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 T = TypeVar("T")
 
@@ -159,8 +159,16 @@ class GetInfoRsp(BaseModel):
     image: str
     application: str
     device_key: str = Field(alias="deviceKey")
-    part_number: str = Field("", alias="pn")  # Pro only
-    arch: str = ""  # Pro only
+    part_number: str | None = Field(default=None, alias="pn")  # Pro only
+    arch: str | None = None  # Pro only
+
+    @field_validator("part_number", "arch", mode="before")
+    @classmethod
+    def _normalize_optional_strings(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
 
 
 class GetHostnameRsp(BaseModel):
@@ -361,6 +369,19 @@ class GetWifiRsp(BaseModel):
     connected: bool
     ssid: str = ""  # Non-Pro only
     wifi: WiFiInfo | None = None  # Pro only
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_wifi_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(value)
+        wifi = data.get("wifi")
+        if data.get("ssid") in (None, "") and isinstance(wifi, dict):
+            data["ssid"] = wifi.get("ssid", "")
+
+        return data
 
 
 class ConnectWifiReq(BaseModel):

@@ -123,6 +123,11 @@ class GetCustomEdidListRsp(BaseModel):
 
     edid_list: list[str] = Field(default_factory=list, alias="edidList")
 
+    @field_validator("edid_list", mode="before")
+    @classmethod
+    def _normalize_edid_list(cls, value: Any) -> Any:
+        return [] if value is None else value
+
 
 class DeleteEdidReq(BaseModel):
     edid: str
@@ -200,6 +205,11 @@ class ScanWifiRsp(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     wifi_list: list[WiFiInfo] = Field(default_factory=list, alias="wifiList")
+
+    @field_validator("wifi_list", mode="before")
+    @classmethod
+    def _normalize_wifi_list(cls, value: Any) -> Any:
+        return [] if value is None else value
 
 
 class GetStaticIPRsp(BaseModel):
