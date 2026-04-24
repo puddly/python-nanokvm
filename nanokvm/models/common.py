@@ -1,11 +1,11 @@
-"""Models for NanoKVM API."""
+"""Shared models for NanoKVM API (both Pro and non-Pro)."""
 
 from __future__ import annotations
 
 from enum import IntEnum, StrEnum
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 T = TypeVar("T")
 
@@ -32,14 +32,6 @@ class GpioType(StrEnum):
     POWER = "power"
 
 
-class ScreenSettingType(StrEnum):
-    """Screen Setting types."""
-
-    RESOLUTION = "resolution"
-    FPS = "fps"
-    QUALITY = "quality"
-
-
 class RunScriptType(StrEnum):
     """Script Execution types."""
 
@@ -52,6 +44,7 @@ class VirtualDevice(StrEnum):
 
     NETWORK = "network"
     DISK = "disk"
+    MIC = "mic"  # Pro only
 
 
 class TailscaleState(StrEnum):
@@ -127,6 +120,7 @@ class LoginReq(BaseModel):
 
 class LoginRsp(BaseModel):
     token: str
+    count: int | None = None  # Pro only
 
 
 class GetAccountRsp(BaseModel):
@@ -158,6 +152,8 @@ class GetInfoRsp(BaseModel):
     image: str
     application: str
     device_key: str = Field(alias="deviceKey")
+    part_number: str = Field("", alias="pn")  # Pro only
+    arch: str = ""  # Pro only
 
 
 class GetHostnameRsp(BaseModel):
@@ -182,36 +178,33 @@ class GetGpioRsp(BaseModel):
     hdd: bool  # HDD LED state (only valid for Alpha hardware)
 
 
-class SetScreenReq(BaseModel):
-    type: ScreenSettingType
-    value: int
+class GetScriptsRsp(BaseModel):
+    files: list[str]
 
 
-class GetVirtualDeviceRsp(BaseModel):
-    network: bool
-    disk: bool
+class RunScriptReq(BaseModel):
+    name: str
+    type: RunScriptType
+
+
+class RunScriptRsp(BaseModel):
+    log: str
+
+
+class DeleteScriptReq(BaseModel):
+    name: str
 
 
 class UpdateVirtualDeviceReq(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     device: VirtualDevice
-
-
-class UpdateVirtualDeviceRsp(BaseModel):
-    on: bool
-
-
-class GetMemoryLimitRsp(BaseModel):
-    enabled: bool
-    limit: int  # In MB
-
-
-class SetMemoryLimitReq(BaseModel):
-    enabled: bool
-    limit: int  # In MB
+    type: str | None = None  # Pro only (sdcard/emmc for disk device)
 
 
 class GetOLEDRsp(BaseModel):
     exist: bool
+    type: str = ""  # Pro only
     sleep: int  # Sleep timeout in seconds
 
 
@@ -223,16 +216,26 @@ class GetSSHStateRsp(BaseModel):
     enabled: bool
 
 
-class GetSwapSizeRsp(BaseModel):
-    size: int
-
-
-class SetSwapSizeReq(BaseModel):
-    size: int
-
-
 class GetMdnsStateRsp(BaseModel):
     enabled: bool
+
+
+class GetMouseJigglerRsp(BaseModel):
+    enabled: bool
+    mode: MouseJigglerMode
+
+
+class SetMouseJigglerReq(BaseModel):
+    enabled: bool
+    mode: MouseJigglerMode
+
+
+class GetWebTitleRsp(BaseModel):
+    title: str
+
+
+class SetWebTitleReq(BaseModel):
+    title: str
 
 
 # HID Models
@@ -248,22 +251,64 @@ class PasteReq(BaseModel):
     content: str
 
 
+class ShortcutKey(BaseModel):
+    code: str
+    label: str
+
+
+class Shortcut(BaseModel):
+    id: str
+    keys: list[ShortcutKey]
+
+
+class GetShortcutsRsp(BaseModel):
+    shortcuts: list[Shortcut]
+
+
+class AddShortcutReq(BaseModel):
+    keys: list[ShortcutKey]
+
+
+class DeleteShortcutReq(BaseModel):
+    id: str
+
+
+class GetLeaderKeyRsp(BaseModel):
+    key: str
+
+
+class SetLeaderKeyReq(BaseModel):
+    key: str
+
+
 # Storage Models
 class GetImagesRsp(BaseModel):
-    files: list[str]
+    files: list[str] = Field(default_factory=list)
+
+    @field_validator("files", mode="before")
+    @classmethod
+    def _normalize_files(cls, value: Any) -> list[str]:
+        return [] if value is None else value
 
 
 class MountImageReq(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     file: str | None = None
     cdrom: bool | None = None
+    read_only: bool | None = Field(None, alias="readOnly")  # Pro only
 
 
 class GetMountedImageRsp(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     file: str  # Path to the mounted file, empty if none or default
+    cdrom: bool = False  # Pro only
+    read_only: bool = Field(False, alias="readOnly")  # Pro only
 
 
-class GetCdRomRsp(BaseModel):
-    cdrom: int
+class DeleteImageReq(BaseModel):
+    file: str
 
 
 # Network Models
@@ -279,14 +324,34 @@ class DeleteMacReq(BaseModel):
     mac: str
 
 
+class SetMacNameReq(BaseModel):
+    mac: str
+    name: str
+
+
+class WiFiInfo(BaseModel):
+    """WiFi connection details."""
+
+    ssid: str
+    bssid: str
+    signal: int
+    frequency: int
+    security: str
+
+
 class GetWifiRsp(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     supported: bool
+    ap_mode: bool = Field(False, alias="apMode")
     connected: bool
+    ssid: str = ""  # Non-Pro only
+    wifi: WiFiInfo | None = None  # Pro only
 
 
 class ConnectWifiReq(BaseModel):
     ssid: str
-    password: str  # Plain text password
+    password: str
 
 
 class GetTailscaleStatusRsp(BaseModel):
@@ -294,6 +359,10 @@ class GetTailscaleStatusRsp(BaseModel):
     name: str
     ip: str
     account: str
+
+
+class LoginTailscaleRsp(BaseModel):
+    url: str
 
 
 # Application Models
@@ -323,18 +392,3 @@ class StatusImageRsp(BaseModel):
 
 class DownloadImageReq(BaseModel):
     file: str  # URL of the image to download
-    # cdrom field is ignored for downloads
-
-
-class SetMouseJigglerReq(BaseModel):
-    enabled: bool
-    mode: MouseJigglerMode
-
-
-class GetMouseJigglerRsp(BaseModel):
-    enabled: bool
-    mode: MouseJigglerMode
-
-
-class GetHdmiStateRsp(BaseModel):
-    enabled: bool

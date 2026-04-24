@@ -10,6 +10,13 @@ import yarl
 
 from nanokvm.client import NanoKVMAuthenticationFailure, NanoKVMClient
 
+_HARDWARE_PAYLOAD = {
+    "code": 0,
+    "msg": "success",
+    "data": {"version": "Alpha"},
+}
+_HARDWARE_URL = "https://kvm.local/api/vm/hardware"
+
 
 async def test_default_ssl_verification_enabled() -> None:
     """Test that SSL verification is enabled by default."""
@@ -93,6 +100,7 @@ async def test_authenticate_with_plain_text_password() -> None:
                 "https://kvm.local/api/auth/login",
                 payload={"code": 0, "msg": "success", "data": {"token": "abc123"}},
             )
+            m.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
             await client.authenticate("root", "password123")
 
@@ -113,6 +121,7 @@ async def test_authenticate_with_obfuscated_password() -> None:
                 "https://kvm.local/api/auth/login",
                 payload={"code": 0, "msg": "success", "data": {"token": "abc123"}},
             )
+            m.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
             await client.authenticate("root", "password123")
 
@@ -136,6 +145,7 @@ async def test_auto_detect_obfuscation_succeeds() -> None:
                     "data": {"token": "abc123"},
                 },
             )
+            m.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
             await client.authenticate("root", "password123")
 
@@ -168,6 +178,7 @@ async def test_auto_detect_fallback_to_plain_text() -> None:
                     "data": {"token": "abc123"},
                 },
             )
+            m.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
             await client.authenticate("root", "password123")
 

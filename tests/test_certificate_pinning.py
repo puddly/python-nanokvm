@@ -89,6 +89,13 @@ def generate_nanokvm_cert() -> tuple[bytes, bytes]:
     return cert_pem, key_pem
 
 
+async def _handle_hardware(_request: web.Request) -> web.Response:
+    return web.Response(
+        text=json.dumps({"code": 0, "msg": "success", "data": {"version": "Alpha"}}),
+        content_type="application/json",
+    )
+
+
 async def _handle_login(request: web.Request) -> web.Response:
     body = await request.json()
 
@@ -131,6 +138,7 @@ async def nanokvm_https_server(tmp_path: pathlib.Path) -> AsyncGenerator[str, No
 
     app = web.Application()
     app.router.add_post("/api/auth/login", _handle_login)
+    app.router.add_get("/api/vm/hardware", _handle_hardware)
 
     runner = web.AppRunner(app)
     await runner.setup()
