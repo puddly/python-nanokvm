@@ -9,6 +9,8 @@ import functools
 import io
 import json
 import logging
+from os import PathLike
+from pathlib import Path
 import ssl
 from typing import Any, TypeVar, overload
 
@@ -26,11 +28,15 @@ from pydantic import BaseModel, ValidationError
 import yarl
 
 from .models.common import (
+    AddShortcutReq,
     ApiResponse,
     ApiResponseCode,
     ChangePasswordReq,
     ConnectWifiReq,
     DeleteImageReq,
+    DeleteMacReq,
+    DeleteScriptReq,
+    DeleteShortcutReq,
     DownloadImageReq,
     GetAccountRsp,
     GetGpioRsp,
@@ -39,11 +45,15 @@ from .models.common import (
     GetHostnameRsp,
     GetImagesRsp,
     GetInfoRsp,
+    GetLeaderKeyRsp,
+    GetMacRsp,
     GetMdnsStateRsp,
     GetMountedImageRsp,
     GetMouseJigglerRsp,
     GetOLEDRsp,
     GetPreviewRsp,
+    GetScriptsRsp,
+    GetShortcutsRsp,
     GetSSHStateRsp,
     GetTailscaleStatusRsp,
     GetVersionRsp,
@@ -56,19 +66,27 @@ from .models.common import (
     IsPasswordUpdatedRsp,
     LoginReq,
     LoginRsp,
+    LoginTailscaleRsp,
     MountImageReq,
     MouseButton,
     MouseJigglerMode,
     PasteReq,
+    RunScriptReq,
+    RunScriptRsp,
+    RunScriptType,
     SetGpioReq,
     SetHidModeReq,
     SetHostnameReq,
+    SetLeaderKeyReq,
+    SetMacNameReq,
     SetMouseJigglerReq,
     SetOledReq,
     SetPreviewReq,
     SetWebTitleReq,
+    ShortcutKey,
     StatusImageRsp,
     UpdateVirtualDeviceReq,
+    UploadScriptRsp,
     VirtualDevice,
     WakeOnLANReq,
 )
@@ -78,7 +96,9 @@ from .models.non_pro import (
     GetMemoryLimitRsp,
     GetSwapSizeRsp,
     GetVirtualDeviceRsp,
+    ScreenSettingType,
     SetMemoryLimitReq,
+    SetScreenReq,
     SetSwapSizeReq,
 )
 from .models.pro import (
@@ -116,6 +136,7 @@ from .models.pro import (
     SetTimeZoneReq,
     StreamMode,
     SwitchEdidReq,
+    UploadEdidRsp,
 )
 from .utils import obfuscate_password
 
@@ -325,12 +346,15 @@ class NanoKVMClient:
         assert self._session is not None
         assert self._ssl_config is not None
 
+        request_headers = {
+            hdrs.ACCEPT: "application/json",
+            **kwargs.pop("headers", {}),
+        }
+
         async with self._session.request(
             method,
             self.url / path.lstrip("/"),
-            headers={
-                hdrs.ACCEPT: "application/json",
-            },
+            headers=request_headers,
             cookies=cookies,
             timeout=aiohttp.ClientTimeout(total=self._request_timeout),
             raise_for_status=True,
@@ -383,12 +407,72 @@ class NanoKVMClient:
             try:
                 raw_response = await response.json(content_type=None)
                 _LOGGER.debug("Raw JSON response data: %s", raw_response)
-                # Parse the outer ApiResponse structure
-                api_response = ApiResponse[response_model].model_validate(raw_response)  # type: ignore
             except (json.JSONDecodeError, ValidationError) as err:
                 raise NanoKVMInvalidResponseError(
                     f"Invalid JSON response received: {err}"
                 ) from err
+
+        return self._validate_api_response(raw_response, response_model)
+
+    @overload
+    async def _api_request_form(
+        self,
+        method: str,
+        path: str,
+        response_model: type[T],
+        data: aiohttp.FormData,
+        **kwargs: Any,
+    ) -> T: ...
+
+    @overload
+    async def _api_request_form(
+        self,
+        method: str,
+        path: str,
+        response_model: None = None,
+        data: aiohttp.FormData | None = None,
+        **kwargs: Any,
+    ) -> None: ...
+
+    async def _api_request_form(
+        self,
+        method: str,
+        path: str,
+        response_model: type[T] | None = None,
+        data: aiohttp.FormData | None = None,
+        **kwargs: Any,
+    ) -> T | None:
+        """Make API request with multipart/form data and parse JSON response."""
+        _LOGGER.debug("Making API form request: %s %s", method, path)
+
+        async with self._request(
+            method,
+            path,
+            data=data,
+            **kwargs,
+        ) as response:
+            try:
+                raw_response = await response.json(content_type=None)
+                _LOGGER.debug("Raw JSON response data: %s", raw_response)
+            except (json.JSONDecodeError, ValidationError) as err:
+                raise NanoKVMInvalidResponseError(
+                    f"Invalid JSON response received: {err}"
+                ) from err
+
+        return self._validate_api_response(raw_response, response_model)
+
+    def _validate_api_response(
+        self,
+        raw_response: Any,
+        response_model: type[T] | None = None,
+    ) -> T | None:
+        """Validate the shared NanoKVM response envelope."""
+        try:
+            api_response = ApiResponse[response_model].model_validate(raw_response)  # type: ignore
+        except ValidationError as err:
+            raise NanoKVMInvalidResponseError(
+                f"Invalid JSON response received: {err}"
+            ) from err
 
         _LOGGER.debug("Got API response: %s", api_response)
 
@@ -401,6 +485,27 @@ class NanoKVMClient:
             )
 
         return api_response.data
+
+    async def _upload_file(
+        self,
+        path: str,
+        file_path: str | PathLike[str],
+        response_model: type[T] | None = None,
+        **kwargs: Any,
+    ) -> T | None:
+        """Upload a file using the NanoKVM multipart API."""
+        upload_path = Path(file_path)
+        form = aiohttp.FormData()
+
+        with upload_path.open("rb") as file_obj:
+            form.add_field("file", file_obj, filename=upload_path.name)
+            return await self._api_request_form(
+                hdrs.METH_POST,
+                path,
+                response_model=response_model,
+                data=form,
+                **kwargs,
+            )
 
     # ── Authentication ──────────────────────────────────────────────────
 
@@ -550,6 +655,43 @@ class NanoKVMClient:
             response_model=GetGpioRsp,
         )
 
+    async def get_scripts(self) -> GetScriptsRsp:
+        """Get the list of uploaded scripts."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/vm/script",
+            response_model=GetScriptsRsp,
+        )
+
+    async def upload_script(
+        self, file_path: str | PathLike[str]
+    ) -> UploadScriptRsp:
+        """Upload a script file."""
+        return await self._upload_file(
+            "/vm/script/upload",
+            file_path,
+            response_model=UploadScriptRsp,
+        )
+
+    async def run_script(
+        self, name: str, script_type: RunScriptType
+    ) -> RunScriptRsp:
+        """Run an uploaded script."""
+        return await self._api_request_json(
+            hdrs.METH_POST,
+            "/vm/script/run",
+            response_model=RunScriptRsp,
+            data=RunScriptReq(name=name, type=script_type),
+        )
+
+    async def delete_script(self, name: str) -> None:
+        """Delete an uploaded script."""
+        await self._api_request_json(
+            hdrs.METH_DELETE,
+            "/vm/script",
+            data=DeleteScriptReq(name=name),
+        )
+
     async def push_button(self, button: GpioType, duration_ms: int) -> None:
         """Simulate pushing a hardware button."""
         await self._api_request_json(
@@ -668,7 +810,21 @@ class NanoKVMClient:
         """Reboot the KVM device."""
         await self._api_request_json(hdrs.METH_POST, "/vm/system/reboot")
 
+    @require_hardware(HWVersion.PRO)
+    async def switch_to_pikvm(self) -> None:
+        """Switch the system image to PiKVM."""
+        await self._api_request_json(hdrs.METH_POST, "/vm/system/pikvm")
+
     # ── VM (non-Pro only) ──────────────────────────────────────────────
+
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    async def set_screen(self, setting: ScreenSettingType, value: int) -> None:
+        """Set a legacy NanoKVM screen setting."""
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/vm/screen",
+            data=SetScreenReq(type=setting, value=value),
+        )
 
     @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def get_swap_size(self) -> int:
@@ -832,6 +988,15 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    async def upload_edid(self, file_path: str | PathLike[str]) -> UploadEdidRsp:
+        """Upload a custom EDID."""
+        return await self._upload_file(
+            "/vm/edid/upload",
+            file_path,
+            response_model=UploadEdidRsp,
+        )
+
+    @require_hardware(HWVersion.PRO)
     async def delete_edid(self, edid: str) -> None:
         """Delete a custom EDID."""
         await self._api_request_json(
@@ -871,12 +1036,18 @@ class NanoKVMClient:
     async def set_led_strip(
         self,
         *,
-        on: bool,
-        horizontal_count: int,
-        vertical_count: int,
-        brightness: int,
+        on: bool | None = None,
+        horizontal_count: int | None = None,
+        vertical_count: int | None = None,
+        brightness: int | None = None,
     ) -> None:
         """Set LED strip configuration."""
+        if all(
+            value is None
+            for value in (on, horizontal_count, vertical_count, brightness)
+        ):
+            raise ValueError("At least one LED strip setting must be provided")
+
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/ledstrip/set",
@@ -946,6 +1117,46 @@ class NanoKVMClient:
             hdrs.METH_GET,
             "/hid/mode",
             response_model=GetHidModeRsp,
+        )
+
+    async def get_shortcuts(self) -> GetShortcutsRsp:
+        """Get configured custom HID shortcuts."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/hid/shortcuts",
+            response_model=GetShortcutsRsp,
+        )
+
+    async def add_shortcut(self, keys: list[ShortcutKey]) -> None:
+        """Add a custom HID shortcut."""
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/hid/shortcut",
+            data=AddShortcutReq(keys=keys),
+        )
+
+    async def delete_shortcut(self, shortcut_id: str) -> None:
+        """Delete a custom HID shortcut."""
+        await self._api_request_json(
+            hdrs.METH_DELETE,
+            "/hid/shortcut",
+            data=DeleteShortcutReq(id=shortcut_id),
+        )
+
+    async def get_leader_key(self) -> GetLeaderKeyRsp:
+        """Get the configured shortcut leader key."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/hid/shortcut/leader-key",
+            response_model=GetLeaderKeyRsp,
+        )
+
+    async def set_leader_key(self, key: str = "") -> None:
+        """Set or clear the shortcut leader key."""
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/hid/shortcut/leader-key",
+            data=SetLeaderKeyReq(key=key),
         )
 
     async def set_hid_mode(self, mode: HidMode) -> None:
@@ -1042,6 +1253,31 @@ class NanoKVMClient:
             data=ConnectWifiReq(ssid=ssid, password=password),
         )
 
+    async def connect_wifi_no_auth(
+        self,
+        ssid: str,
+        password: str = "",
+        ap_password: str | None = None,
+    ) -> None:
+        """Connect to WiFi while the device is in AP-mode setup flow."""
+        headers = {"X-AP-Key": ap_password} if ap_password is not None else {}
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/network/wifi",
+            authenticate=False,
+            headers=headers,
+            data=ConnectWifiReq(ssid=ssid, password=password),
+        )
+
+    async def verify_ap_login(self, ap_password: str) -> None:
+        """Verify AP-mode setup credentials."""
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/network/wifi/verify",
+            authenticate=False,
+            headers={"X-AP-Key": ap_password},
+        )
+
     async def disconnect_wifi(self) -> None:
         """Disconnect from the current WiFi network."""
         await self._api_request_json(hdrs.METH_POST, "/network/wifi/disconnect")
@@ -1050,6 +1286,30 @@ class NanoKVMClient:
         """Send a Wake-on-LAN packet."""
         await self._api_request_json(
             hdrs.METH_POST, "/network/wol", data=WakeOnLANReq(mac=mac)
+        )
+
+    async def get_wol_macs(self) -> GetMacRsp:
+        """Get saved Wake-on-LAN MAC entries."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/network/wol/mac",
+            response_model=GetMacRsp,
+        )
+
+    async def delete_wol_mac(self, mac: str) -> None:
+        """Delete a saved Wake-on-LAN MAC entry."""
+        await self._api_request_json(
+            hdrs.METH_DELETE,
+            "/network/wol/mac",
+            data=DeleteMacReq(mac=mac),
+        )
+
+    async def set_wol_mac_name(self, mac: str, name: str) -> None:
+        """Set the display name for a saved Wake-on-LAN MAC entry."""
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/network/wol/mac/name",
+            data=SetMacNameReq(mac=mac, name=name),
         )
 
     async def get_tailscale_status(self) -> GetTailscaleStatusRsp:
@@ -1245,9 +1505,13 @@ class NanoKVMClient:
         """Bring Tailscale down."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/down")
 
-    async def tailscale_login(self) -> None:
+    async def tailscale_login(self) -> LoginTailscaleRsp:
         """Log in to Tailscale."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/login")
+        return await self._api_request_json(
+            hdrs.METH_POST,
+            "/extensions/tailscale/login",
+            response_model=LoginTailscaleRsp,
+        )
 
     async def tailscale_logout(self) -> None:
         """Log out of Tailscale."""

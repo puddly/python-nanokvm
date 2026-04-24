@@ -194,7 +194,16 @@ class GetGpioRsp(BaseModel):
 
 
 class GetScriptsRsp(BaseModel):
-    files: list[str]
+    files: list[str] = Field(default_factory=list)
+
+    @field_validator("files", mode="before")
+    @classmethod
+    def _normalize_files(cls, value: Any) -> Any:
+        return [] if value is None else value
+
+
+class UploadScriptRsp(BaseModel):
+    file: str
 
 
 class RunScriptReq(BaseModel):
@@ -284,7 +293,12 @@ class Shortcut(BaseModel):
 
 
 class GetShortcutsRsp(BaseModel):
-    shortcuts: list[Shortcut]
+    shortcuts: list[Shortcut] = Field(default_factory=list)
+
+    @field_validator("shortcuts", mode="before")
+    @classmethod
+    def _normalize_shortcuts(cls, value: Any) -> Any:
+        return [] if value is None else value
 
 
 class AddShortcutReq(BaseModel):
@@ -339,7 +353,12 @@ class WakeOnLANReq(BaseModel):
 
 
 class GetMacRsp(BaseModel):
-    macs: list[str]
+    macs: list[str] = Field(default_factory=list)
+
+    @field_validator("macs", mode="before")
+    @classmethod
+    def _normalize_macs(cls, value: Any) -> Any:
+        return [] if value is None else value
 
 
 class DeleteMacReq(BaseModel):
@@ -386,7 +405,7 @@ class GetWifiRsp(BaseModel):
 
 class ConnectWifiReq(BaseModel):
     ssid: str
-    password: str
+    password: str = ""
 
 
 class GetTailscaleStatusRsp(BaseModel):
@@ -397,7 +416,7 @@ class GetTailscaleStatusRsp(BaseModel):
 
 
 class LoginTailscaleRsp(BaseModel):
-    url: str
+    url: str = ""
 
 
 # Application Models

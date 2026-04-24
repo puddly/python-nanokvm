@@ -133,6 +133,10 @@ class DeleteEdidReq(BaseModel):
     edid: str
 
 
+class UploadEdidRsp(BaseModel):
+    file: str
+
+
 class GetHdmiCaptureRsp(BaseModel):
     enabled: bool
 
@@ -187,10 +191,10 @@ class SetMenuBarConfigReq(BaseModel):
 class SetLedStripReq(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    on: bool
-    horizontal_count: int = Field(alias="hor")
-    vertical_count: int = Field(alias="ver")
-    brightness: int
+    on: bool | None = None
+    horizontal_count: int | None = Field(default=None, alias="hor")
+    vertical_count: int | None = Field(default=None, alias="ver")
+    brightness: int | None = None
 
 
 class GetLedStripRsp(BaseModel):
