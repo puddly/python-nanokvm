@@ -96,7 +96,6 @@ from .models.pro import (
     GetStaticIPRsp,
     GetTimeStatusRsp,
     GetTimeZoneRsp,
-    GetVirtualDeviceProRsp,
     RateControlMode,
     RefreshVirtualDeviceReq,
     ScanWifiRsp,
@@ -604,19 +603,12 @@ class NanoKVMClient:
             data=SetOledReq(sleep=sleep_seconds),
         )
 
-    async def get_virtual_device_status(
-        self,
-    ) -> GetVirtualDeviceRsp | GetVirtualDeviceProRsp:
+    async def get_virtual_device_status(self) -> GetVirtualDeviceRsp:
         """Get the status of virtual devices."""
-        model = (
-            GetVirtualDeviceProRsp
-            if self._hw_version == HWVersion.PRO
-            else GetVirtualDeviceRsp
-        )
         return await self._api_request_json(
             hdrs.METH_GET,
             "/vm/device/virtual",
-            response_model=model,
+            response_model=GetVirtualDeviceRsp,
         )
 
     async def update_virtual_device(
