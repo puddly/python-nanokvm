@@ -688,9 +688,7 @@ class NanoKVMClient:
             response_model=GetScriptsRsp,
         )
 
-    async def upload_script(
-        self, file_path: str | PathLike[str]
-    ) -> UploadScriptRsp:
+    async def upload_script(self, file_path: str | PathLike[str]) -> UploadScriptRsp:
         """Upload a script file."""
         return await self._upload_file(
             "/vm/script/upload",
@@ -698,9 +696,7 @@ class NanoKVMClient:
             response_model=UploadScriptRsp,
         )
 
-    async def run_script(
-        self, name: str, script_type: RunScriptType
-    ) -> RunScriptRsp:
+    async def run_script(self, name: str, script_type: RunScriptType) -> RunScriptRsp:
         """Run an uploaded script."""
         return await self._api_request_json(
             hdrs.METH_POST,
