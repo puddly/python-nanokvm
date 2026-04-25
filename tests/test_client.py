@@ -1,9 +1,10 @@
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 import pytest
+import yarl
 
 from nanokvm.client import NanoKVMApiError, NanoKVMClient
-from nanokvm.models import ApiResponseCode
+from nanokvm.models import ApiResponseCode, VirtualDevice
 
 
 async def test_get_images_success() -> None:
@@ -67,6 +68,25 @@ async def test_get_images_api_error() -> None:
 
             assert exc_info.value.code == ApiResponseCode.FAILURE
             assert "failed to list images" in exc_info.value.msg
+
+
+async def test_update_virtual_device_ignores_success_data() -> None:
+    """Test update_virtual_device handles non-Pro success payloads."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        with aioresponses() as m:
+            m.post(
+                "http://localhost:8888/api/vm/device/virtual",
+                payload={"code": 0, "msg": "success", "data": {"on": True}},
+            )
+
+            await client.update_virtual_device(VirtualDevice.DISK)
+
+            calls = m.requests[
+                ("POST", yarl.URL("http://localhost:8888/api/vm/device/virtual"))
+            ]
+            assert calls[0].kwargs.get("json") == {"device": "disk"}
 
 
 async def test_client_context_manager() -> None:

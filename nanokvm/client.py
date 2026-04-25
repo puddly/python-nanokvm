@@ -468,7 +468,10 @@ class NanoKVMClient:
     ) -> T | None:
         """Validate the shared NanoKVM response envelope."""
         try:
-            api_response = ApiResponse[response_model].model_validate(raw_response)  # type: ignore
+            if response_model is None:
+                api_response = ApiResponse[Any].model_validate(raw_response)
+            else:
+                api_response = ApiResponse[response_model].model_validate(raw_response)  # type: ignore[valid-type]
         except ValidationError as err:
             raise NanoKVMInvalidResponseError(
                 f"Invalid JSON response received: {err}"
@@ -484,7 +487,28 @@ class NanoKVMClient:
                 data=api_response.data,
             )
 
+        if response_model is None:
+            return None
+
         return api_response.data
+
+    @overload
+    async def _upload_file(
+        self,
+        path: str,
+        file_path: str | PathLike[str],
+        response_model: type[T],
+        **kwargs: Any,
+    ) -> T: ...
+
+    @overload
+    async def _upload_file(
+        self,
+        path: str,
+        file_path: str | PathLike[str],
+        response_model: None = None,
+        **kwargs: Any,
+    ) -> None: ...
 
     async def _upload_file(
         self,
@@ -1398,11 +1422,11 @@ class NanoKVMClient:
 
     # ── Stream (shared) ────────────────────────────────────────────────
 
-    def _parse_jpeg_from_bytes(self, data: bytes) -> Image:
+    def _parse_jpeg_from_bytes(self, data: bytes) -> Image.Image:
         """Parse JPEG image from bytes."""
         return Image.open(io.BytesIO(data), formats=["JPEG"])
 
-    async def mjpeg_stream(self) -> AsyncIterator[Image]:
+    async def mjpeg_stream(self) -> AsyncIterator[Image.Image]:
         """Stream MJPEG frames."""
         async with self._request(hdrs.METH_GET, "/stream/mjpeg") as response:
             reader = MultipartReader.from_response(response)
