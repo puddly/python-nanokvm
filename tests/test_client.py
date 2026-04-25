@@ -7,6 +7,8 @@ from nanokvm.client import NanoKVMApiError, NanoKVMClient
 from nanokvm.models import (
     ApiResponseCode,
     HWVersion,
+    MouseJigglerMode,
+    OledType,
     VirtualDevice,
 )
 
@@ -72,6 +74,111 @@ async def test_get_images_api_error() -> None:
 
             assert exc_info.value.code == ApiResponseCode.FAILURE
             assert "failed to list images" in exc_info.value.msg
+
+
+async def test_api_error_allows_endpoint_specific_codes() -> None:
+    """Test endpoint-specific API error codes are surfaced as API errors."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        with aioresponses() as m:
+            m.post(
+                "http://localhost:8888/api/storage/image/mount",
+                payload={"code": -6, "msg": "mount image failed", "data": None},
+            )
+
+            with pytest.raises(NanoKVMApiError) as exc_info:
+                await client.mount_image("/data/missing.iso", read_only=True)
+
+            assert exc_info.value.code == ApiResponseCode.ENDPOINT_ERROR_6
+            assert "mount image failed" in exc_info.value.msg
+
+
+async def test_mount_image_sends_pro_read_only_flag() -> None:
+    """Test mount_image sends the Pro readOnly field."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        with aioresponses() as m:
+            m.post(
+                "http://localhost:8888/api/storage/image/mount",
+                payload={"code": 0, "msg": "success", "data": None},
+            )
+
+            await client.mount_image("/data/test.img", read_only=True)
+
+            calls = m.requests[
+                ("POST", yarl.URL("http://localhost:8888/api/storage/image/mount"))
+            ]
+            assert calls[0].kwargs.get("json") == {
+                "file": "/data/test.img",
+                "cdrom": False,
+                "readOnly": True,
+            }
+
+
+async def test_get_oled_info_falls_back_for_pro_invalid_file_content() -> None:
+    """Test Pro OLED fallback for firmware that rejects lower-case desk IDs."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        client._hw_version = HWVersion.PRO
+
+        with aioresponses() as m:
+            m.get(
+                "http://localhost:8888/api/vm/oled",
+                payload={
+                    "code": -2,
+                    "msg": "invalid file content",
+                    "data": None,
+                },
+            )
+            m.get(
+                "http://localhost:8888/api/vm/info",
+                payload={
+                    "code": 0,
+                    "msg": "success",
+                    "data": {
+                        "ips": [],
+                        "mdns": "kvm-test.local",
+                        "image": "v1.0.14",
+                        "application": "1.2.14",
+                        "deviceKey": "test-device",
+                        "pn": "unknown",
+                        "arch": "aarch64",
+                    },
+                },
+            )
+
+            response = await client.get_oled_info()
+
+            assert response.exist is True
+            assert response.type == OledType.DESK
+            assert response.sleep == 0
+
+
+async def test_set_mouse_jiggler_state_noops_when_already_disabled() -> None:
+    """Test disabling mouse jiggler is idempotent."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        with aioresponses() as m:
+            m.get(
+                "http://localhost:8888/api/vm/mouse-jiggler",
+                payload={
+                    "code": 0,
+                    "msg": "success",
+                    "data": {"enabled": False, "mode": "relative"},
+                },
+            )
+
+            await client.set_mouse_jiggler_state(
+                enabled=False,
+                mode=MouseJigglerMode.RELATIVE,
+            )
+
+            post_url = yarl.URL("http://localhost:8888/api/vm/mouse-jiggler/")
+            assert ("POST", post_url) not in m.requests
 
 
 async def test_update_virtual_device_ignores_success_data() -> None:

@@ -70,6 +70,7 @@ from .models.common import (
     MountImageReq,
     MouseButton,
     MouseJigglerMode,
+    OledType,
     PasteReq,
     RunScriptReq,
     RunScriptRsp,
@@ -758,11 +759,28 @@ class NanoKVMClient:
 
     async def get_oled_info(self) -> GetOLEDRsp:
         """Get OLED information."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/vm/oled",
-            response_model=GetOLEDRsp,
-        )
+        try:
+            return await self._api_request_json(
+                hdrs.METH_GET,
+                "/vm/oled",
+                response_model=GetOLEDRsp,
+            )
+        except NanoKVMApiError as err:
+            if (
+                self._hw_version != HWVersion.PRO
+                or err.code != ApiResponseCode.ENDPOINT_ERROR_2
+                or err.msg != "invalid file content"
+            ):
+                raise
+
+            oled_type = OledType.DESK
+            with contextlib.suppress(NanoKVMError):
+                info = await self.get_info()
+                part_number = (info.part_number or "").casefold()
+                if "atx" in part_number:
+                    oled_type = OledType.ATX
+
+            return GetOLEDRsp(exist=True, type=oled_type, sleep=0)
 
     async def set_oled_sleep(self, sleep_seconds: int) -> None:
         """Set the OLED sleep timeout."""
@@ -808,6 +826,10 @@ class NanoKVMClient:
         self, enabled: bool, mode: MouseJigglerMode
     ) -> None:
         """Set the mouse jiggler state."""
+        current = await self.get_mouse_jiggler_state()
+        if current.enabled == enabled and (not enabled or current.mode == mode):
+            return
+
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/mouse-jiggler/",
