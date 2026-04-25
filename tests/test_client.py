@@ -4,7 +4,11 @@ import pytest
 import yarl
 
 from nanokvm.client import NanoKVMApiError, NanoKVMClient
-from nanokvm.models import ApiResponseCode, VirtualDevice
+from nanokvm.models import (
+    ApiResponseCode,
+    HWVersion,
+    VirtualDevice,
+)
 
 
 async def test_get_images_success() -> None:
@@ -87,6 +91,45 @@ async def test_update_virtual_device_ignores_success_data() -> None:
                 ("POST", yarl.URL("http://localhost:8888/api/vm/device/virtual"))
             ]
             assert calls[0].kwargs.get("json") == {"device": "disk"}
+
+
+async def test_set_led_strip_partial_preserves_current_config() -> None:
+    """Test partial LED updates post a complete Pro LED configuration."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        client._hw_version = HWVersion.PRO
+
+        with aioresponses() as m:
+            m.get(
+                "http://localhost:8888/api/vm/ledstrip/get",
+                payload={
+                    "code": 0,
+                    "msg": "success",
+                    "data": {
+                        "on": True,
+                        "hor": 8,
+                        "ver": 6,
+                        "brightness": 25,
+                    },
+                },
+            )
+            m.post(
+                "http://localhost:8888/api/vm/ledstrip/set",
+                payload={"code": 0, "msg": "success", "data": None},
+            )
+
+            await client.set_led_strip(brightness=50)
+
+            calls = m.requests[
+                ("POST", yarl.URL("http://localhost:8888/api/vm/ledstrip/set"))
+            ]
+            assert calls[0].kwargs.get("json") == {
+                "on": True,
+                "hor": 8,
+                "ver": 6,
+                "brightness": 50,
+            }
 
 
 async def test_client_context_manager() -> None:

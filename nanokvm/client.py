@@ -1072,6 +1072,27 @@ class NanoKVMClient:
         ):
             raise ValueError("At least one LED strip setting must be provided")
 
+        if any(
+            value is None
+            for value in (on, horizontal_count, vertical_count, brightness)
+        ):
+            current = await self.get_led_strip()
+            on = current.on if on is None else on
+            horizontal_count = (
+                current.horizontal_count
+                if horizontal_count is None
+                else horizontal_count
+            )
+            vertical_count = (
+                current.vertical_count if vertical_count is None else vertical_count
+            )
+            brightness = current.brightness if brightness is None else brightness
+
+        assert on is not None
+        assert horizontal_count is not None
+        assert vertical_count is not None
+        assert brightness is not None
+
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/ledstrip/set",
