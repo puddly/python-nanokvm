@@ -3,7 +3,7 @@ from aioresponses import aioresponses
 import pytest
 import yarl
 
-from nanokvm.client import NanoKVMApiError, NanoKVMClient
+from nanokvm.client import NanoKVMApiError, NanoKVMClient, NanoKVMNotSupportedError
 from nanokvm.models import (
     ApiResponseCode,
     HWVersion,
@@ -90,8 +90,26 @@ async def test_api_error_allows_endpoint_specific_codes() -> None:
             with pytest.raises(NanoKVMApiError) as exc_info:
                 await client.mount_image("/data/missing.iso", read_only=True)
 
-            assert exc_info.value.code == ApiResponseCode.ENDPOINT_ERROR_6
+            assert exc_info.value.code == -6
             assert "mount image failed" in exc_info.value.msg
+
+
+async def test_none_returning_endpoint_preserves_unknown_api_code() -> None:
+    """Test unknown API codes from None-returning endpoints remain API errors."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        with aioresponses() as m:
+            m.post(
+                "http://localhost:8888/api/vm/web-title",
+                payload={"code": -4, "msg": "failed to set title", "data": None},
+            )
+
+            with pytest.raises(NanoKVMApiError) as exc_info:
+                await client.set_web_title("NanoKVM")
+
+            assert exc_info.value.code == -4
+            assert "failed to set title" in exc_info.value.msg
 
 
 async def test_mount_image_sends_pro_read_only_flag() -> None:
@@ -237,6 +255,54 @@ async def test_set_led_strip_partial_preserves_current_config() -> None:
                 "ver": 6,
                 "brightness": 50,
             }
+
+
+async def test_get_wol_macs_returns_empty_list_for_missing_file() -> None:
+    """Test WOL getter normalizes the empty-file device state."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        with aioresponses() as m:
+            m.get(
+                "http://localhost:8888/api/network/wol/mac",
+                payload={"code": -2, "msg": "open file error", "data": None},
+            )
+
+            response = await client.get_wol_macs()
+
+            assert response.macs == []
+
+
+async def test_enable_swap_404_is_not_supported() -> None:
+    """Test legacy swap enable 404 becomes NanoKVMNotSupportedError."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        client._hw_version = HWVersion.PCIE
+
+        with aioresponses() as m:
+            m.post("http://localhost:8888/api/vm/swap/enable", status=404)
+
+            with pytest.raises(NanoKVMNotSupportedError) as exc_info:
+                await client.enable_swap()
+
+            assert "enable_swap is unavailable" in str(exc_info.value)
+
+
+async def test_disable_swap_404_is_not_supported() -> None:
+    """Test legacy swap disable 404 becomes NanoKVMNotSupportedError."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        client._hw_version = HWVersion.PCIE
+
+        with aioresponses() as m:
+            m.post("http://localhost:8888/api/vm/swap/disable", status=404)
+
+            with pytest.raises(NanoKVMNotSupportedError) as exc_info:
+                await client.disable_swap()
+
+            assert "disable_swap is unavailable" in str(exc_info.value)
 
 
 async def test_client_context_manager() -> None:

@@ -480,7 +480,7 @@ class NanoKVMClient:
 
         _LOGGER.debug("Got API response: %s", api_response)
 
-        if api_response.code != ApiResponseCode.SUCCESS:
+        if api_response.code != ApiResponseCode.SUCCESS.value:
             raise NanoKVMApiError(
                 f"API returned error: {api_response.msg} (Code: {api_response.code})",
                 code=api_response.code,
@@ -555,7 +555,7 @@ class NanoKVMClient:
 
             self._token = login_response.token
         except NanoKVMApiError as err:
-            if err.code == ApiResponseCode.INVALID_USERNAME_OR_PASSWORD:
+            if err.code == ApiResponseCode.INVALID_USERNAME_OR_PASSWORD.value:
                 raise NanoKVMAuthenticationFailure(
                     "Invalid username or password"
                 ) from err
@@ -764,7 +764,7 @@ class NanoKVMClient:
         except NanoKVMApiError as err:
             if (
                 self._hw_version != HWVersion.PRO
-                or err.code != ApiResponseCode.ENDPOINT_ERROR_2
+                or err.code != ApiResponseCode.INVALID_USERNAME_OR_PASSWORD.value
                 or err.msg != "invalid file content"
             ):
                 raise
@@ -888,12 +888,26 @@ class NanoKVMClient:
     @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def enable_swap(self) -> None:
         """Enable swap."""
-        await self._api_request_json(hdrs.METH_POST, "/vm/swap/enable")
+        try:
+            await self._api_request_json(hdrs.METH_POST, "/vm/swap/enable")
+        except aiohttp.ClientResponseError as err:
+            if err.status == 404:
+                raise NanoKVMNotSupportedError(
+                    "enable_swap is unavailable on this legacy hardware/firmware"
+                ) from err
+            raise
 
     @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def disable_swap(self) -> None:
         """Disable swap."""
-        await self._api_request_json(hdrs.METH_POST, "/vm/swap/disable")
+        try:
+            await self._api_request_json(hdrs.METH_POST, "/vm/swap/disable")
+        except aiohttp.ClientResponseError as err:
+            if err.status == 404:
+                raise NanoKVMNotSupportedError(
+                    "disable_swap is unavailable on this legacy hardware/firmware"
+                ) from err
+            raise
 
     @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def get_memory_limit(self) -> GetMemoryLimitRsp:
@@ -1353,11 +1367,19 @@ class NanoKVMClient:
 
     async def get_wol_macs(self) -> GetMacRsp:
         """Get saved Wake-on-LAN MAC entries."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/network/wol/mac",
-            response_model=GetMacRsp,
-        )
+        try:
+            return await self._api_request_json(
+                hdrs.METH_GET,
+                "/network/wol/mac",
+                response_model=GetMacRsp,
+            )
+        except NanoKVMApiError as err:
+            if (
+                err.code == ApiResponseCode.INVALID_USERNAME_OR_PASSWORD.value
+                and err.msg == "open file error"
+            ):
+                return GetMacRsp()
+            raise
 
     async def delete_wol_mac(self, mac: str) -> None:
         """Delete a saved Wake-on-LAN MAC entry."""

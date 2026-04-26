@@ -11,20 +11,11 @@ T = TypeVar("T")
 
 
 class ApiResponseCode(IntEnum):
-    """API response codes.
-
-    NanoKVM Pro reuses negative values from -3 through -6 with
-    endpoint-specific meanings. Inspect the response message for details.
-    """
+    """Documented shared API response codes."""
 
     SUCCESS = 0
     FAILURE = -1
     INVALID_USERNAME_OR_PASSWORD = -2
-    ENDPOINT_ERROR_2 = -2
-    ENDPOINT_ERROR_3 = -3
-    ENDPOINT_ERROR_4 = -4
-    ENDPOINT_ERROR_5 = -5
-    ENDPOINT_ERROR_6 = -6
 
 
 class HidMode(StrEnum):
@@ -123,7 +114,7 @@ class OledType(StrEnum):
 class ApiResponse(BaseModel, Generic[T]):
     """Generic API response structure."""
 
-    code: ApiResponseCode
+    code: int
     msg: str
     data: T | None = None
 
