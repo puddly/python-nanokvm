@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from enum import IntEnum, StrEnum
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Self, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 T = TypeVar("T")
 
 
 class ApiResponseCode(IntEnum):
-    """API Response Codes."""
+    """Documented shared API response codes."""
 
     SUCCESS = 0
     FAILURE = -1
@@ -103,11 +103,31 @@ class MouseButton(IntEnum):
     MIDDLE = 4
 
 
+class _CaseInsensitiveStrEnum(StrEnum):
+    """String enum with case-insensitive parsing."""
+
+    @classmethod
+    def _missing_(cls, value: object) -> Self | None:
+        if isinstance(value, str):
+            normalized = value.lower()
+            for member in cls:
+                if member.value.lower() == normalized:
+                    return member
+        return None
+
+
+class OledType(_CaseInsensitiveStrEnum):
+    """OLED variants used by NanoKVM Pro."""
+
+    ATX = "ATX"
+    DESK = "DESK"
+
+
 # Generic Response Wrapper
 class ApiResponse(BaseModel, Generic[T]):
     """Generic API response structure."""
 
-    code: ApiResponseCode
+    code: int
     msg: str
     data: T | None = None
 
@@ -152,8 +172,16 @@ class GetInfoRsp(BaseModel):
     image: str
     application: str
     device_key: str = Field(alias="deviceKey")
-    part_number: str = Field("", alias="pn")  # Pro only
-    arch: str = ""  # Pro only
+    part_number: str | None = Field(default=None, alias="pn")  # Pro only
+    arch: str | None = None  # Pro only
+
+    @field_validator("part_number", "arch", mode="before")
+    @classmethod
+    def _normalize_optional_strings(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
 
 
 class GetHostnameRsp(BaseModel):
@@ -179,7 +207,16 @@ class GetGpioRsp(BaseModel):
 
 
 class GetScriptsRsp(BaseModel):
-    files: list[str]
+    files: list[str] = Field(default_factory=list)
+
+    @field_validator("files", mode="before")
+    @classmethod
+    def _normalize_files(cls, value: Any) -> Any:
+        return [] if value is None else value
+
+
+class UploadScriptRsp(BaseModel):
+    file: str
 
 
 class RunScriptReq(BaseModel):
@@ -202,10 +239,54 @@ class UpdateVirtualDeviceReq(BaseModel):
     type: str | None = None  # Pro only (sdcard/emmc for disk device)
 
 
+class GetVirtualDeviceRsp(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    network: bool = False
+    media: bool | None = None
+    disk: bool | None = None
+    mic: bool | None = None
+    is_network_enabled: bool | None = Field(default=None, alias="isNetworkEnabled")
+    is_mic_enabled: bool | None = Field(default=None, alias="isMicEnabled")
+    mounted_disk: str | None = Field(default=None, alias="mountedDisk")
+    is_sd_card_exist: bool | None = Field(default=None, alias="isSdCardExist")
+    is_emmc_exist: bool | None = Field(default=None, alias="isEmmcExist")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_virtual_device_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(value)
+
+        if "network" not in data and "isNetworkEnabled" in data:
+            data["network"] = data["isNetworkEnabled"]
+
+        if "mic" not in data and "isMicEnabled" in data:
+            data["mic"] = data["isMicEnabled"]
+
+        return data
+
+    @field_validator("mounted_disk", mode="before")
+    @classmethod
+    def _normalize_mounted_disk(cls, value: Any) -> Any:
+        if value == "":
+            return None
+        return value
+
+
 class GetOLEDRsp(BaseModel):
     exist: bool
-    type: str = ""  # Pro only
+    type: OledType | None = None  # Pro only
     sleep: int  # Sleep timeout in seconds
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _normalize_oled_type(cls, value: Any) -> Any:
+        if value == "":
+            return None
+        return value
 
 
 class SetOledReq(BaseModel):
@@ -262,7 +343,12 @@ class Shortcut(BaseModel):
 
 
 class GetShortcutsRsp(BaseModel):
-    shortcuts: list[Shortcut]
+    shortcuts: list[Shortcut] = Field(default_factory=list)
+
+    @field_validator("shortcuts", mode="before")
+    @classmethod
+    def _normalize_shortcuts(cls, value: Any) -> Any:
+        return [] if value is None else value
 
 
 class AddShortcutReq(BaseModel):
@@ -317,7 +403,20 @@ class WakeOnLANReq(BaseModel):
 
 
 class GetMacRsp(BaseModel):
-    macs: list[str]
+    macs: list[str] = Field(default_factory=list)
+
+    @field_validator("macs", mode="before")
+    @classmethod
+    def _normalize_macs(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [
+                item
+                for item in value
+                if not isinstance(item, str) or item.strip()
+            ]
+        return value
 
 
 class DeleteMacReq(BaseModel):
@@ -348,10 +447,23 @@ class GetWifiRsp(BaseModel):
     ssid: str = ""  # Non-Pro only
     wifi: WiFiInfo | None = None  # Pro only
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_wifi_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(value)
+        wifi = data.get("wifi")
+        if data.get("ssid") in (None, "") and isinstance(wifi, dict):
+            data["ssid"] = wifi.get("ssid", "")
+
+        return data
+
 
 class ConnectWifiReq(BaseModel):
     ssid: str
-    password: str
+    password: str = ""
 
 
 class GetTailscaleStatusRsp(BaseModel):
@@ -362,7 +474,7 @@ class GetTailscaleStatusRsp(BaseModel):
 
 
 class LoginTailscaleRsp(BaseModel):
-    url: str
+    url: str = ""
 
 
 # Application Models

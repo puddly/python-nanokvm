@@ -22,12 +22,6 @@ class SetScreenReq(BaseModel):
     value: int
 
 
-class GetVirtualDeviceRsp(BaseModel):
-    network: bool
-    media: bool
-    disk: bool
-
-
 class GetMemoryLimitRsp(BaseModel):
     enabled: bool
     limit: int  # In MB
