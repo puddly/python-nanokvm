@@ -411,11 +411,7 @@ class GetMacRsp(BaseModel):
         if value is None:
             return []
         if isinstance(value, list):
-            return [
-                item
-                for item in value
-                if not isinstance(item, str) or item.strip()
-            ]
+            return [item for item in value if not isinstance(item, str) or item.strip()]
         return value
 
 

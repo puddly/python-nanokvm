@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import aiohttp
 from aiohttp import ClientSession
 from aioresponses import aioresponses
@@ -384,7 +386,7 @@ async def test_connect_wifi_no_auth_sends_ap_header() -> None:
             assert calls[0].kwargs.get("headers", {})["X-AP-Key"] == "setup-secret"
 
 
-async def test_upload_script_uses_multipart_form(tmp_path) -> None:
+async def test_upload_script_uses_multipart_form(tmp_path: Path) -> None:
     """Test script upload uses the shared multipart helper."""
     script = tmp_path / "test.sh"
     script.write_text("#!/bin/sh\ntrue\n")
