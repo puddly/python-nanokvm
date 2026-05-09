@@ -843,7 +843,7 @@ class NanoKVMClient:
 
     @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     async def set_screen(self, setting: ScreenSettingType, value: int) -> None:
-        """Set a legacy NanoKVM screen setting."""
+        """Set a non-Pro NanoKVM screen setting."""
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/screen",
@@ -875,7 +875,7 @@ class NanoKVMClient:
         except aiohttp.ClientResponseError as err:
             if err.status == 404:
                 raise NanoKVMNotSupportedError(
-                    "enable_swap is unavailable on this legacy hardware/firmware"
+                    "enable_swap is unavailable on this non-Pro hardware/firmware"
                 ) from err
             raise
 
@@ -887,7 +887,7 @@ class NanoKVMClient:
         except aiohttp.ClientResponseError as err:
             if err.status == 404:
                 raise NanoKVMNotSupportedError(
-                    "disable_swap is unavailable on this legacy hardware/firmware"
+                    "disable_swap is unavailable on this non-Pro hardware/firmware"
                 ) from err
             raise
 

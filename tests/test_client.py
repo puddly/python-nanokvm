@@ -212,8 +212,8 @@ async def test_update_virtual_device_ignores_success_data() -> None:
             assert calls[0].kwargs.get("json") == {"device": "disk"}
 
 
-async def test_get_virtual_device_status_handles_legacy_shape() -> None:
-    """Test virtual device status keeps legacy fields intact."""
+async def test_get_virtual_device_status_handles_non_pro_shape() -> None:
+    """Test virtual device status keeps non-Pro fields intact."""
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
@@ -236,7 +236,7 @@ async def test_get_virtual_device_status_handles_legacy_shape() -> None:
 
 
 async def test_get_virtual_device_status_handles_pro_shape() -> None:
-    """Test Pro virtual device status exposes Pro fields without fake legacy disk."""
+    """Test Pro virtual device status exposes Pro fields without fake non-Pro disk."""
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
@@ -498,7 +498,7 @@ async def test_set_stream_mode_accepts_existing_string_values() -> None:
 
 
 async def test_enable_swap_404_is_not_supported() -> None:
-    """Test legacy swap enable 404 becomes NanoKVMNotSupportedError."""
+    """Test non-Pro swap enable 404 becomes NanoKVMNotSupportedError."""
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
@@ -510,11 +510,11 @@ async def test_enable_swap_404_is_not_supported() -> None:
             with pytest.raises(NanoKVMNotSupportedError) as exc_info:
                 await client.enable_swap()
 
-            assert "enable_swap is unavailable" in str(exc_info.value)
+            assert "enable_swap is unavailable on this non-Pro" in str(exc_info.value)
 
 
 async def test_disable_swap_404_is_not_supported() -> None:
-    """Test legacy swap disable 404 becomes NanoKVMNotSupportedError."""
+    """Test non-Pro swap disable 404 becomes NanoKVMNotSupportedError."""
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
@@ -526,7 +526,7 @@ async def test_disable_swap_404_is_not_supported() -> None:
             with pytest.raises(NanoKVMNotSupportedError) as exc_info:
                 await client.disable_swap()
 
-            assert "disable_swap is unavailable" in str(exc_info.value)
+            assert "disable_swap is unavailable on this non-Pro" in str(exc_info.value)
 
 
 async def test_client_context_manager() -> None:
