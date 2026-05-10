@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .common import WiFiInfo
 
@@ -23,15 +24,57 @@ class RateControlMode(StrEnum):
     VBR = "vbr"
 
 
-# VM Models
-class GetVirtualDeviceProRsp(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+class _CaseInsensitiveStrEnum(StrEnum):
+    """String enum with case-insensitive parsing."""
 
-    is_network_enabled: bool = Field(alias="isNetworkEnabled")
-    is_mic_enabled: bool = Field(alias="isMicEnabled")
-    mounted_disk: str = Field(alias="mountedDisk")
-    is_sd_card_exist: bool = Field(alias="isSdCardExist")
-    is_emmc_exist: bool = Field(alias="isEmmcExist")
+    @classmethod
+    def _missing_(cls, value: object) -> Self | None:
+        if isinstance(value, str):
+            normalized = value.lower()
+            for member in cls:
+                if member.value.lower() == normalized:
+                    return member
+        return None
+
+
+class StreamMode(StrEnum):
+    """Video stream modes."""
+
+    MJPEG = "mjpeg"
+    H264_WEBRTC = "h264-webrtc"
+    H264_DIRECT = "h264-direct"
+    H265_WEBRTC = "h265-webrtc"
+    H265_DIRECT = "h265-direct"
+
+
+class LcdTimeFormat(_CaseInsensitiveStrEnum):
+    """LCD clock display formats."""
+
+    TWELVE_HOUR = "12h"
+    TWENTY_FOUR_HOUR = "24h"
+
+
+class EdidPreset(StrEnum):
+    """Built-in NanoKVM Pro EDID presets."""
+
+    UHD_4K_30HZ = "E18-4K30FPS"
+    UHD_4K_39HZ = "E48-4K39FPS"
+    QHD_1440P_60HZ = "E56-2K60FPS"
+    FHD_1080P_60HZ = "E54-1080P60FPS"
+    WQUXGA_3840X2400_30HZ = "E58-4K16-10"
+    ULTRAWIDE_3440X1440_60HZ = "E63-Ultrawide"
+
+
+EdidValue = EdidPreset | str
+
+
+def _normalize_edid_value(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return EdidPreset(value)
+        except ValueError:
+            return value
+    return value
 
 
 class RefreshVirtualDeviceReq(BaseModel):
@@ -47,11 +90,21 @@ class SetLowPowerReq(BaseModel):
 
 
 class GetEdidRsp(BaseModel):
-    edid: str
+    edid: EdidValue
+
+    @field_validator("edid", mode="before")
+    @classmethod
+    def _normalize_edid(cls, value: Any) -> Any:
+        return _normalize_edid_value(value)
 
 
 class SwitchEdidReq(BaseModel):
-    edid: str
+    edid: EdidValue
+
+    @field_validator("edid", mode="before")
+    @classmethod
+    def _normalize_edid(cls, value: Any) -> Any:
+        return _normalize_edid_value(value)
 
 
 class GetCustomEdidListRsp(BaseModel):
@@ -59,9 +112,18 @@ class GetCustomEdidListRsp(BaseModel):
 
     edid_list: list[str] = Field(default_factory=list, alias="edidList")
 
+    @field_validator("edid_list", mode="before")
+    @classmethod
+    def _normalize_edid_list(cls, value: Any) -> Any:
+        return [] if value is None else value
+
 
 class DeleteEdidReq(BaseModel):
     edid: str
+
+
+class UploadEdidRsp(BaseModel):
+    file: str
 
 
 class GetHdmiCaptureRsp(BaseModel):
@@ -96,11 +158,11 @@ class GetTimeStatusRsp(BaseModel):
 
 
 class GetLcdTimeFormatRsp(BaseModel):
-    format: str
+    format: LcdTimeFormat
 
 
 class SetLcdTimeFormatReq(BaseModel):
-    format: str
+    format: LcdTimeFormat
 
 
 class GetMenuBarConfigRsp(BaseModel):
@@ -137,6 +199,11 @@ class ScanWifiRsp(BaseModel):
 
     wifi_list: list[WiFiInfo] = Field(default_factory=list, alias="wifiList")
 
+    @field_validator("wifi_list", mode="before")
+    @classmethod
+    def _normalize_wifi_list(cls, value: Any) -> Any:
+        return [] if value is None else value
+
 
 class GetStaticIPRsp(BaseModel):
     enabled: bool
@@ -154,7 +221,7 @@ class SetRateControlModeReq(BaseModel):
 
 
 class SetStreamModeReq(BaseModel):
-    mode: str
+    mode: StreamMode
 
 
 class SetStreamQualityReq(BaseModel):
