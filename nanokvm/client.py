@@ -11,6 +11,7 @@ import json
 import logging
 from os import PathLike
 from pathlib import Path
+import re
 import ssl
 from typing import Any, TypeVar, overload
 
@@ -183,6 +184,29 @@ class NanoKVMNotSupportedError(NanoKVMError):
 
 F = TypeVar("F", bound=Callable[..., Coroutine[Any, Any, Any]])
 
+_VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$")
+
+
+def _parse_version(version: str) -> tuple[int, ...] | None:
+    """Parse simple semantic app versions; return None for custom/dev builds."""
+    match = _VERSION_RE.fullmatch(version.strip())
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def _version_at_least(version: str, minimum: str) -> bool:
+    """Return True when version is unknown or at least the requested version."""
+    parsed_version = _parse_version(version)
+    parsed_minimum = _parse_version(minimum)
+    if parsed_version is None or parsed_minimum is None:
+        return True
+
+    length = max(len(parsed_version), len(parsed_minimum))
+    normalized_version = parsed_version + (0,) * (length - len(parsed_version))
+    normalized_minimum = parsed_minimum + (0,) * (length - len(parsed_minimum))
+    return normalized_version >= normalized_minimum
+
 
 def require_hardware(*versions: HWVersion) -> Callable[[F], F]:
     """Decorator that restricts a method to specific hardware versions."""
@@ -201,6 +225,48 @@ def require_hardware(*versions: HWVersion) -> Callable[[F], F]:
                     f"{func.__name__} requires hardware: {allowed} "
                     f"(detected: {self._hw_version})"
                 )
+            return await func(self, *args, **kwargs)
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+
+def require_application_version(
+    *,
+    non_pro: str | None = None,
+    pro: str | None = None,
+) -> Callable[[F], F]:
+    """Decorator that restricts a method to minimum application versions."""
+
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        async def wrapper(self: NanoKVMClient, *args: Any, **kwargs: Any) -> Any:
+            if self._hw_version is None:
+                if self._token is None:
+                    return await func(self, *args, **kwargs)
+                await self.detect_hardware()
+
+            minimum = pro if self._hw_version == HWVersion.PRO else non_pro
+            if minimum is None:
+                return await func(self, *args, **kwargs)
+
+            if self._application_version is None:
+                if self._token is None:
+                    return await func(self, *args, **kwargs)
+                await self.detect_versions()
+
+            if self._application_version is not None and not _version_at_least(
+                self._application_version, minimum
+            ):
+                hardware_family = (
+                    "Pro" if self._hw_version == HWVersion.PRO else "non-Pro"
+                )
+                raise NanoKVMNotSupportedError(
+                    f"{func.__name__} requires {hardware_family} application "
+                    f"version >= {minimum} (detected: {self._application_version})"
+                )
+
             return await func(self, *args, **kwargs)
 
         return wrapper  # type: ignore[return-value]
@@ -256,6 +322,8 @@ class NanoKVMClient:
         self._use_password_obfuscation = use_password_obfuscation
         self._ssl_config: ssl.SSLContext | Fingerprint | bool | None = None
         self._hw_version: HWVersion | None = None
+        self._application_version: str | None = None
+        self._image_version: str | None = None
 
     def _create_ssl_context(self) -> ssl.SSLContext | Fingerprint | bool:
         """
@@ -301,11 +369,32 @@ class NanoKVMClient:
         """The detected hardware version. None if not yet detected."""
         return self._hw_version
 
+    @property
+    def application_version(self) -> str | None:
+        """The detected application version. None if not yet detected."""
+        return self._application_version
+
+    @property
+    def image_version(self) -> str | None:
+        """The detected image version. None if not yet detected."""
+        return self._image_version
+
     async def detect_hardware(self) -> None:
         """Detect and store the hardware version."""
         hw = await self.get_hardware()
         self._hw_version = hw.version
         _LOGGER.info("Detected hardware: %s", hw.version)
+
+    async def detect_versions(self) -> None:
+        """Detect and store image and application versions."""
+        info = await self.get_info()
+        self._application_version = info.application
+        self._image_version = info.image
+        _LOGGER.info(
+            "Detected versions: application=%s image=%s",
+            info.application,
+            info.image,
+        )
 
     async def __aenter__(self) -> NanoKVMClient:
         """Async context manager entry."""
@@ -655,6 +744,7 @@ class NanoKVMClient:
             response_model=GetHardwareRsp,
         )
 
+    @require_application_version(non_pro="2.2.6")
     async def get_hostname(self) -> GetHostnameRsp:
         """Get the configured hostname."""
         return await self._api_request_json(
@@ -663,6 +753,7 @@ class NanoKVMClient:
             response_model=GetHostnameRsp,
         )
 
+    @require_application_version(non_pro="2.2.6")
     async def set_hostname(self, hostname: str) -> None:
         """Set the device hostname (applies after reboot)."""
         await self._api_request_json(
@@ -736,6 +827,7 @@ class NanoKVMClient:
         """Disable SSH server."""
         await self._api_request_json(hdrs.METH_POST, "/vm/ssh/disable")
 
+    @require_application_version(non_pro="2.2.2")
     async def get_mdns_state(self) -> GetMdnsStateRsp:
         """Get mDNS enabled state."""
         return await self._api_request_json(
@@ -744,10 +836,12 @@ class NanoKVMClient:
             response_model=GetMdnsStateRsp,
         )
 
+    @require_application_version(non_pro="2.2.2")
     async def enable_mdns(self) -> None:
         """Enable mDNS."""
         await self._api_request_json(hdrs.METH_POST, "/vm/mdns/enable")
 
+    @require_application_version(non_pro="2.2.2")
     async def disable_mdns(self) -> None:
         """Disable mDNS."""
         await self._api_request_json(hdrs.METH_POST, "/vm/mdns/disable")
@@ -792,6 +886,7 @@ class NanoKVMClient:
             ),
         )
 
+    @require_application_version(non_pro="2.2.6")
     async def get_mouse_jiggler_state(self) -> GetMouseJigglerRsp:
         """Get the mouse jiggler state."""
         return await self._api_request_json(
@@ -800,6 +895,7 @@ class NanoKVMClient:
             response_model=GetMouseJigglerRsp,
         )
 
+    @require_application_version(non_pro="2.2.6")
     async def set_mouse_jiggler_state(
         self, enabled: bool, mode: MouseJigglerMode
     ) -> None:
@@ -814,6 +910,7 @@ class NanoKVMClient:
             data=SetMouseJigglerReq(enabled=enabled, mode=mode),
         )
 
+    @require_application_version(non_pro="2.2.6")
     async def get_web_title(self) -> GetWebTitleRsp:
         """Get the web page title."""
         return await self._api_request_json(
@@ -822,6 +919,7 @@ class NanoKVMClient:
             response_model=GetWebTitleRsp,
         )
 
+    @require_application_version(non_pro="2.2.6")
     async def set_web_title(self, title: str) -> None:
         """Set the web page title."""
         await self._api_request_json(
@@ -830,6 +928,7 @@ class NanoKVMClient:
             data=SetWebTitleReq(title=title),
         )
 
+    @require_application_version(non_pro="2.2.2")
     async def reboot_system(self) -> None:
         """Reboot the KVM device."""
         await self._api_request_json(hdrs.METH_POST, "/vm/system/reboot")
@@ -851,6 +950,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_application_version(non_pro="2.2.6")
     async def get_swap_size(self) -> int:
         """Get Swap size."""
         rsp = await self._api_request_json(
@@ -861,6 +961,7 @@ class NanoKVMClient:
         return rsp.size
 
     @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_application_version(non_pro="2.2.6")
     async def set_swap_size(self, size_mb: int) -> None:
         """Set the Swap size."""
         await self._api_request_json(
@@ -924,11 +1025,13 @@ class NanoKVMClient:
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/reset")
 
     @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_application_version(non_pro="2.2.8")
     async def enable_hdmi(self) -> None:
         """Enable the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/enable")
 
     @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_application_version(non_pro="2.2.8")
     async def disable_hdmi(self) -> None:
         """Disable the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/disable")
@@ -936,6 +1039,7 @@ class NanoKVMClient:
     # ── VM (Pro only) ──────────────────────────────────────────────────
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.7")
     async def refresh_virtual_device(self, device: str) -> None:
         """Refresh a virtual device (e.g. emmc)."""
         await self._api_request_json(
@@ -945,6 +1049,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.1.6")
     async def get_lcd_time_format(self) -> GetLcdTimeFormatRsp:
         """Get the LCD time format."""
         return await self._api_request_json(
@@ -954,6 +1059,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.1.6")
     async def set_lcd_time_format(self, fmt: LcdTimeFormat | str) -> None:
         """Set the LCD time format (12h/24h)."""
         await self._api_request_json(
@@ -1017,6 +1123,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.3")
     async def get_custom_edid_list(self) -> GetCustomEdidListRsp:
         """Get custom EDID list."""
         return await self._api_request_json(
@@ -1026,6 +1133,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.3")
     async def upload_edid(self, file_path: str | PathLike[str]) -> UploadEdidRsp:
         """Upload a custom EDID."""
         return await self._upload_file(
@@ -1035,6 +1143,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.3")
     async def delete_edid(self, edid: str) -> None:
         """Delete a custom EDID."""
         await self._api_request_json(
@@ -1044,6 +1153,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.7")
     async def get_low_power(self) -> GetLowPowerRsp:
         """Get low power status."""
         return await self._api_request_json(
@@ -1053,6 +1163,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.7")
     async def set_low_power(self, enable: bool) -> None:
         """Set low power mode."""
         await self._api_request_json(
@@ -1137,6 +1248,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.1.6")
     async def get_time_status(self) -> GetTimeStatusRsp:
         """Get time synchronization status."""
         return await self._api_request_json(
@@ -1146,11 +1258,13 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.1.6")
     async def sync_time(self) -> None:
         """Synchronize time."""
         await self._api_request_json(hdrs.METH_POST, "/vm/time/sync")
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.10")
     async def get_menubar_config(self) -> GetMenuBarConfigRsp:
         """Get menu bar configuration."""
         return await self._api_request_json(
@@ -1160,6 +1274,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.10")
     async def set_menubar_config(self, disabled_items: list[str]) -> None:
         """Set menu bar configuration."""
         await self._api_request_json(
@@ -1170,6 +1285,7 @@ class NanoKVMClient:
 
     # ── HID ─────────────────────────────────────────────────────────────
 
+    @require_application_version(non_pro="2.2.5")
     async def get_hid_mode(self) -> GetHidModeRsp:
         """Get the current HID mode."""
         return await self._api_request_json(
@@ -1178,6 +1294,7 @@ class NanoKVMClient:
             response_model=GetHidModeRsp,
         )
 
+    @require_application_version(non_pro="2.3.2", pro="1.2.8")
     async def get_shortcuts(self) -> GetShortcutsRsp:
         """Get configured custom HID shortcuts."""
         return await self._api_request_json(
@@ -1186,6 +1303,7 @@ class NanoKVMClient:
             response_model=GetShortcutsRsp,
         )
 
+    @require_application_version(non_pro="2.3.2", pro="1.2.8")
     async def add_shortcut(self, keys: list[ShortcutKey]) -> None:
         """Add a custom HID shortcut."""
         await self._api_request_json(
@@ -1194,6 +1312,7 @@ class NanoKVMClient:
             data=AddShortcutReq(keys=keys),
         )
 
+    @require_application_version(non_pro="2.3.2", pro="1.2.8")
     async def delete_shortcut(self, shortcut_id: str) -> None:
         """Delete a custom HID shortcut."""
         await self._api_request_json(
@@ -1202,6 +1321,7 @@ class NanoKVMClient:
             data=DeleteShortcutReq(id=shortcut_id),
         )
 
+    @require_application_version(non_pro="2.3.4", pro="1.2.12")
     async def get_leader_key(self) -> GetLeaderKeyRsp:
         """Get the configured shortcut leader key."""
         return await self._api_request_json(
@@ -1210,6 +1330,7 @@ class NanoKVMClient:
             response_model=GetLeaderKeyRsp,
         )
 
+    @require_application_version(non_pro="2.3.4", pro="1.2.12")
     async def set_leader_key(self, key: str = "") -> None:
         """Set or clear the shortcut leader key."""
         await self._api_request_json(
@@ -1218,6 +1339,7 @@ class NanoKVMClient:
             data=SetLeaderKeyReq(key=key),
         )
 
+    @require_application_version(non_pro="2.2.5")
     async def set_hid_mode(self, mode: HidMode) -> None:
         """Set the HID mode (requires reboot)."""
         await self._api_request_json(
@@ -1277,6 +1399,7 @@ class NanoKVMClient:
             ),
         )
 
+    @require_application_version(non_pro="2.3.0")
     async def delete_image(self, file: str) -> None:
         """Delete an image file."""
         await self._api_request_json(
@@ -1328,6 +1451,7 @@ class NanoKVMClient:
             data=ConnectWifiReq(ssid=ssid, password=password),
         )
 
+    @require_application_version(non_pro="2.3.6", pro="1.2.14")
     async def verify_ap_login(self, ap_password: str) -> None:
         """Verify AP-mode setup credentials."""
         await self._api_request_json(
@@ -1371,6 +1495,7 @@ class NanoKVMClient:
             data=DeleteMacReq(mac=mac),
         )
 
+    @require_application_version(non_pro="2.2.6")
     async def set_wol_mac_name(self, mac: str, name: str) -> None:
         """Set the display name for a saved Wake-on-LAN MAC entry."""
         await self._api_request_json(
@@ -1390,6 +1515,7 @@ class NanoKVMClient:
     # ── Network (Pro only) ─────────────────────────────────────────────
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.3")
     async def get_static_ip(self) -> GetStaticIPRsp:
         """Get static IP configuration."""
         return await self._api_request_json(
@@ -1399,6 +1525,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.3")
     async def set_static_ip(self, enabled: bool, ip: str) -> None:
         """Set static IP configuration."""
         await self._api_request_json(
@@ -1408,6 +1535,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.1.7")
     async def scan_wifi(self) -> ScanWifiRsp:
         """Scan for available WiFi networks."""
         return await self._api_request_json(
@@ -1419,6 +1547,7 @@ class NanoKVMClient:
     # ── Stream (Pro only) ──────────────────────────────────────────────
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.6")
     async def set_rate_control_mode(self, mode: RateControlMode) -> None:
         """Set the stream rate control mode (CBR/VBR)."""
         await self._api_request_json(
@@ -1456,6 +1585,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWVersion.PRO)
+    @require_application_version(pro="1.2.8")
     async def set_fps(self, fps: int) -> None:
         """Set the stream FPS."""
         await self._api_request_json(
@@ -1499,6 +1629,7 @@ class NanoKVMClient:
             response_model=GetVersionRsp,
         )
 
+    @require_application_version(non_pro="2.2.5")
     async def get_preview_status(self) -> GetPreviewRsp:
         """Check if preview updates are enabled."""
         return await self._api_request_json(
@@ -1507,6 +1638,7 @@ class NanoKVMClient:
             response_model=GetPreviewRsp,
         )
 
+    @require_application_version(non_pro="2.2.5")
     async def set_preview_state(self, enable: bool) -> None:
         """Enable or disable preview updates."""
         await self._api_request_json(
@@ -1521,6 +1653,7 @@ class NanoKVMClient:
 
     # ── Download ────────────────────────────────────────────────────────
 
+    @require_application_version(non_pro="2.1.6")
     async def is_image_download_enabled(self) -> ImageEnabledRsp:
         """Check if the /data partition allows downloads."""
         prefix = (
@@ -1532,6 +1665,7 @@ class NanoKVMClient:
             response_model=ImageEnabledRsp,
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def get_image_download_status(self) -> StatusImageRsp:
         """Get the status of an ongoing image download."""
         prefix = (
@@ -1543,6 +1677,7 @@ class NanoKVMClient:
             response_model=StatusImageRsp,
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def download_image(self, url: str) -> StatusImageRsp:
         """Start downloading an image from a URL."""
         prefix = (
@@ -1557,22 +1692,27 @@ class NanoKVMClient:
 
     # ── Extensions (shared) ────────────────────────────────────────────
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_install(self) -> None:
         """Install Tailscale."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/install")
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_uninstall(self) -> None:
         """Uninstall Tailscale."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/uninstall")
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_up(self) -> None:
         """Bring Tailscale up."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/up")
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_down(self) -> None:
         """Bring Tailscale down."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/down")
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_login(self) -> LoginTailscaleRsp:
         """Log in to Tailscale."""
         return await self._api_request_json(
@@ -1581,18 +1721,22 @@ class NanoKVMClient:
             response_model=LoginTailscaleRsp,
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_logout(self) -> None:
         """Log out of Tailscale."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/logout")
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_start(self) -> None:
         """Start Tailscale service."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/start")
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_stop(self) -> None:
         """Stop Tailscale service."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/stop")
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_restart(self) -> None:
         """Restart Tailscale service."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/restart")
