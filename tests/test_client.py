@@ -16,6 +16,7 @@ from nanokvm.client import (
 from nanokvm.models import (
     ApiResponseCode,
     DiskType,
+    DNSMode,
     GetMacRsp,
     GetOLEDRsp,
     HWVersion,
@@ -444,6 +445,171 @@ async def test_connect_wifi_no_auth_sends_ap_header() -> None:
             }
             assert calls[0].kwargs.get("cookies") == {}
             assert calls[0].kwargs.get("headers", {})["X-AP-Key"] == "setup-secret"
+
+
+async def test_get_dns_parses_configuration() -> None:
+    """Test DNS configuration response parsing."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        _mark_detected(client, application_version="2.4.1")
+
+        with aioresponses() as m:
+            m.get(
+                "http://localhost:8888/api/network/dns",
+                payload={
+                    "code": 0,
+                    "msg": "success",
+                    "data": {
+                        "mode": "manual",
+                        "servers": ["1.1.1.1", "2606:4700:4700::1111"],
+                        "effective": ["1.1.1.1"],
+                        "dhcp": ["192.168.1.1"],
+                        "info": {
+                            "interface": "eth0",
+                            "type": "Wired",
+                            "address": "192.168.1.20/24",
+                            "subnetMask": "255.255.255.0",
+                            "gateway": "192.168.1.1",
+                            "searchDomains": ["lan"],
+                        },
+                    },
+                },
+            )
+
+            response = await client.get_dns()
+
+            assert response.mode is DNSMode.MANUAL
+            assert response.servers == ["1.1.1.1", "2606:4700:4700::1111"]
+            assert response.effective == ["1.1.1.1"]
+            assert response.dhcp == ["192.168.1.1"]
+            assert response.info.interface == "eth0"
+            assert response.info.type == "Wired"
+            assert response.info.address == "192.168.1.20/24"
+            assert response.info.subnet_mask == "255.255.255.0"
+            assert response.info.gateway == "192.168.1.1"
+            assert response.info.search_domains == ["lan"]
+
+
+async def test_set_dns_manual_sends_servers() -> None:
+    """Test manual DNS mode sends the configured servers."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        _mark_detected(client, application_version="2.4.1")
+
+        with aioresponses() as m:
+            m.post(
+                "http://localhost:8888/api/network/dns",
+                payload={"code": 0, "msg": "success", "data": None},
+            )
+
+            await client.set_dns(
+                DNSMode.MANUAL,
+                ["1.1.1.1", "2606:4700:4700::1111"],
+            )
+
+            calls = m.requests[
+                ("POST", yarl.URL("http://localhost:8888/api/network/dns"))
+            ]
+            assert calls[0].kwargs.get("json") == {
+                "mode": "manual",
+                "servers": ["1.1.1.1", "2606:4700:4700::1111"],
+            }
+
+
+async def test_set_dns_dhcp_string_sends_empty_servers() -> None:
+    """Test DHCP DNS mode accepts string mode and sends empty servers."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        _mark_detected(client, application_version="2.4.1")
+
+        with aioresponses() as m:
+            m.post(
+                "http://localhost:8888/api/network/dns",
+                payload={"code": 0, "msg": "success", "data": None},
+            )
+
+            await client.set_dns("dhcp")
+
+            calls = m.requests[
+                ("POST", yarl.URL("http://localhost:8888/api/network/dns"))
+            ]
+            assert calls[0].kwargs.get("json") == {
+                "mode": "dhcp",
+                "servers": [],
+            }
+
+
+async def test_get_dns_pro_is_not_supported() -> None:
+    """Test DNS management is limited to non-Pro hardware."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        client._hw_version = HWVersion.PRO
+
+        with aioresponses() as m:
+            with pytest.raises(NanoKVMNotSupportedError) as exc_info:
+                await client.get_dns()
+
+            assert "get_dns requires hardware: Alpha, Beta, PCIE" in str(exc_info.value)
+            assert not m.requests
+
+
+async def test_get_dns_old_application_version_is_not_supported() -> None:
+    """Test old non-Pro application versions reject DNS before endpoint call."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        client._hw_version = HWVersion.PCIE
+
+        with aioresponses() as m:
+            m.get(
+                "http://localhost:8888/api/vm/info",
+                payload=_info_payload(application="2.4.0"),
+            )
+
+            with pytest.raises(NanoKVMNotSupportedError) as exc_info:
+                await client.get_dns()
+
+            assert "get_dns requires non-Pro application version >= 2.4.1" in str(
+                exc_info.value
+            )
+            dns_url = yarl.URL("http://localhost:8888/api/network/dns")
+            assert ("GET", dns_url) not in m.requests
+
+
+async def test_get_dns_exact_application_version_is_supported() -> None:
+    """Test DNS is allowed at the first upstream version that introduced it."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        client._hw_version = HWVersion.PCIE
+
+        with aioresponses() as m:
+            m.get(
+                "http://localhost:8888/api/vm/info",
+                payload=_info_payload(application="2.4.1"),
+            )
+            m.get(
+                "http://localhost:8888/api/network/dns",
+                payload={
+                    "code": 0,
+                    "msg": "success",
+                    "data": {
+                        "mode": "dhcp",
+                        "servers": [],
+                        "effective": [],
+                        "dhcp": [],
+                        "info": {},
+                    },
+                },
+            )
+
+            response = await client.get_dns()
+
+            assert response.mode is DNSMode.DHCP
 
 
 async def test_non_pro_application_version_gate_uses_non_pro_minimum() -> None:
