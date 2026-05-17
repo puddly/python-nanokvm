@@ -6,7 +6,13 @@ from aioresponses import aioresponses
 import pytest
 import yarl
 
-from nanokvm.client import NanoKVMApiError, NanoKVMClient, NanoKVMNotSupportedError
+from nanokvm.client import (
+    NanoKVMApiError,
+    NanoKVMClient,
+    NanoKVMNotSupportedError,
+    _parse_version,
+    _version_at_least,
+)
 from nanokvm.models import (
     ApiResponseCode,
     DiskType,
@@ -19,6 +25,39 @@ from nanokvm.models import (
     StreamMode,
     VirtualDevice,
 )
+
+
+def _mark_detected(
+    client: NanoKVMClient,
+    hw_version: HWVersion = HWVersion.PCIE,
+    application_version: str = "9.9.9",
+) -> None:
+    client._hw_version = hw_version
+    client._application_version = application_version
+
+
+def _info_payload(application: str, image: str = "1.4.0") -> dict[str, object]:
+    return {
+        "code": 0,
+        "msg": "success",
+        "data": {
+            "ips": [],
+            "mdns": "kvm.local",
+            "image": image,
+            "application": application,
+            "deviceKey": "device-key",
+        },
+    }
+
+
+def test_version_parser() -> None:
+    """Test internal application version parsing and comparison."""
+    assert _parse_version("v2.4.1") == (2, 4, 1)
+    assert _parse_version("dev") is None
+    assert _version_at_least("1.2.14", "1.2.9")
+    assert _version_at_least("2.4", "2.4.0")
+    assert not _version_at_least("2.4.0", "2.4.1")
+    assert _version_at_least("dev", "2.4.1")
 
 
 async def test_get_images_success() -> None:
@@ -84,6 +123,23 @@ async def test_get_images_api_error() -> None:
             assert "failed to list images" in exc_info.value.msg
 
 
+async def test_detect_versions_stores_application_and_image() -> None:
+    """Test detect_versions caches versions from /vm/info."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        with aioresponses() as m:
+            m.get(
+                "http://localhost:8888/api/vm/info",
+                payload=_info_payload(application="2.4.1", image="1.4.0"),
+            )
+
+            await client.detect_versions()
+
+            assert client.application_version == "2.4.1"
+            assert client.image_version == "1.4.0"
+
+
 async def test_api_error_allows_endpoint_specific_codes() -> None:
     """Test endpoint-specific API error codes are surfaced as API errors."""
     async with NanoKVMClient(
@@ -107,6 +163,8 @@ async def test_none_returning_endpoint_preserves_unknown_api_code() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
+        _mark_detected(client)
+
         with aioresponses() as m:
             m.post(
                 "http://localhost:8888/api/vm/web-title",
@@ -174,6 +232,8 @@ async def test_set_mouse_jiggler_state_noops_when_already_disabled() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
+        _mark_detected(client)
+
         with aioresponses() as m:
             m.get(
                 "http://localhost:8888/api/vm/mouse-jiggler",
@@ -386,6 +446,46 @@ async def test_connect_wifi_no_auth_sends_ap_header() -> None:
             assert calls[0].kwargs.get("headers", {})["X-AP-Key"] == "setup-secret"
 
 
+async def test_non_pro_application_version_gate_uses_non_pro_minimum() -> None:
+    """Test non-Pro devices use the non-Pro minimum application version."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        _mark_detected(client, application_version="2.3.1")
+
+        with aioresponses() as m:
+            with pytest.raises(NanoKVMNotSupportedError) as exc_info:
+                await client.get_shortcuts()
+
+            assert "get_shortcuts requires non-Pro application version >= 2.3.2" in str(
+                exc_info.value
+            )
+            shortcuts_url = yarl.URL("http://localhost:8888/api/hid/shortcuts")
+            assert ("GET", shortcuts_url) not in m.requests
+
+
+async def test_pro_application_version_gate_uses_pro_minimum() -> None:
+    """Test Pro devices use the Pro minimum application version."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        _mark_detected(
+            client,
+            hw_version=HWVersion.PRO,
+            application_version="1.2.7",
+        )
+
+        with aioresponses() as m:
+            with pytest.raises(NanoKVMNotSupportedError) as exc_info:
+                await client.get_shortcuts()
+
+            assert "get_shortcuts requires Pro application version >= 1.2.8" in str(
+                exc_info.value
+            )
+            shortcuts_url = yarl.URL("http://localhost:8888/api/hid/shortcuts")
+            assert ("GET", shortcuts_url) not in m.requests
+
+
 async def test_upload_script_uses_multipart_form(tmp_path: Path) -> None:
     """Test script upload uses the shared multipart helper."""
     script = tmp_path / "test.sh"
@@ -418,6 +518,8 @@ async def test_shortcut_methods_send_expected_payloads() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
+        _mark_detected(client, application_version="2.3.4")
+
         with aioresponses() as m:
             m.post(
                 "http://localhost:8888/api/hid/shortcut",
@@ -461,6 +563,8 @@ async def test_tailscale_login_returns_url() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
+        _mark_detected(client, application_version="2.1.6")
+
         with aioresponses() as m:
             m.post(
                 "http://localhost:8888/api/extensions/tailscale/login",
