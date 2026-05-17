@@ -93,11 +93,14 @@ from .models.common import (
     WakeOnLANReq,
 )
 from .models.non_pro import (
+    DNSMode,
     GetCdRomRsp,
+    GetDNSRsp,
     GetHdmiStateRsp,
     GetMemoryLimitRsp,
     GetSwapSizeRsp,
     ScreenSettingType,
+    SetDNSReq,
     SetMemoryLimitReq,
     SetScreenReq,
     SetSwapSizeReq,
@@ -1502,6 +1505,28 @@ class NanoKVMClient:
             hdrs.METH_POST,
             "/network/wol/mac/name",
             data=SetMacNameReq(mac=mac, name=name),
+        )
+
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_application_version(non_pro="2.4.1")
+    async def get_dns(self) -> GetDNSRsp:
+        """Get DNS configuration."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/network/dns",
+            response_model=GetDNSRsp,
+        )
+
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_application_version(non_pro="2.4.1")
+    async def set_dns(
+        self, mode: DNSMode | str, servers: list[str] | None = None
+    ) -> None:
+        """Set DNS configuration."""
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/network/dns",
+            data=SetDNSReq(mode=DNSMode(mode), servers=servers or []),
         )
 
     async def get_tailscale_status(self) -> GetTailscaleStatusRsp:
