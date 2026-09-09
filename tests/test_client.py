@@ -1,8 +1,11 @@
+import asyncio
+import io
 from pathlib import Path
 
 import aiohttp
-from aiohttp import ClientSession
+from aiohttp import ClientSession, web
 from aioresponses import aioresponses
+from PIL import Image
 import pytest
 import yarl
 
@@ -17,12 +20,14 @@ from nanokvm.models import (
     ApiResponseCode,
     DiskType,
     DNSMode,
+    DownloadStatus,
     GetMacRsp,
     GetOLEDRsp,
     HWVersion,
     MouseJigglerMode,
     OledType,
     ShortcutKey,
+    StatusImageRsp,
     StreamMode,
     VirtualDevice,
 )
@@ -59,6 +64,17 @@ def test_version_parser() -> None:
     assert _version_at_least("2.4", "2.4.0")
     assert not _version_at_least("2.4.0", "2.4.1")
     assert _version_at_least("dev", "2.4.1")
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["success", "failed", "checksum_failed"],
+)
+def test_download_status_accepts_terminal_states(status: str) -> None:
+    """Download status responses include terminal success and failure states."""
+    response = StatusImageRsp(status=status, file="image.iso", percentage="")
+
+    assert response.status is DownloadStatus(status)
 
 
 async def test_get_images_success() -> None:
@@ -104,6 +120,56 @@ async def test_get_images_empty() -> None:
 
             assert response is not None
             assert len(response.files) == 0
+
+
+async def test_mjpeg_stream_allows_frames_after_request_timeout() -> None:
+    """An MJPEG stream remains open beyond the normal request timeout."""
+    image_buffer = io.BytesIO()
+    Image.new("RGB", (2, 2)).save(image_buffer, format="JPEG")
+    image_data = image_buffer.getvalue()
+
+    async def stream_handler(
+        request: web.Request,
+    ) -> web.StreamResponse:
+        response = web.StreamResponse(
+            headers={"Content-Type": "multipart/x-mixed-replace; boundary=frame"}
+        )
+        await response.prepare(request)
+        for _ in range(2):
+            await response.write(
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                + f"Content-Length: {len(image_data)}\r\n\r\n".encode()
+                + image_data
+                + b"\r\n"
+            )
+            await asyncio.sleep(0.55)
+        await response.write(b"--frame--\r\n")
+        await response.write_eof()
+        return response
+
+    application = web.Application()
+    application.router.add_get("/api/stream/mjpeg", stream_handler)
+    runner = web.AppRunner(application)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    server_sockets = getattr(site._server, "sockets", None)
+    assert server_sockets
+    port = server_sockets[0].getsockname()[1]
+
+    frames = []
+    try:
+        async with NanoKVMClient(
+            f"http://127.0.0.1:{port}/api/", token="test-token", request_timeout=1
+        ) as client:
+            async with asyncio.timeout(3):
+                async for frame in client.mjpeg_stream():
+                    frames.append(frame)
+    finally:
+        await runner.cleanup()
+
+    assert len(frames) == 2
 
 
 async def test_get_images_api_error() -> None:

@@ -76,6 +76,9 @@ class DownloadStatus(StrEnum):
 
     IDLE = "idle"
     IN_PROGRESS = "in_progress"
+    SUCCESS = "success"
+    FAILED = "failed"
+    CHECKSUM_FAILED = "checksum_failed"
 
 
 class HWVersion(StrEnum):

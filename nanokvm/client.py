@@ -319,6 +319,9 @@ class NanoKVMClient:
         self._token = token
         self._request_timeout = request_timeout
         self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._mouse_buttons = 0
+        self._mouse_mode = "relative"
+        self._mouse_abs_position = (0, 0)
         self._verify_ssl = verify_ssl
         self._ssl_ca_cert = ssl_ca_cert
         self._ssl_fingerprint = ssl_fingerprint
@@ -426,6 +429,7 @@ class NanoKVMClient:
         path: str,
         *,
         authenticate: bool = True,
+        timeout: aiohttp.ClientTimeout | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[ClientResponse]:
         """Make an API request."""
@@ -448,7 +452,7 @@ class NanoKVMClient:
             self.url / path.lstrip("/"),
             headers=request_headers,
             cookies=cookies,
-            timeout=aiohttp.ClientTimeout(total=self._request_timeout),
+            timeout=timeout or aiohttp.ClientTimeout(total=self._request_timeout),
             raise_for_status=True,
             ssl=self._ssl_config,
             **kwargs,
@@ -484,7 +488,7 @@ class NanoKVMClient:
         **kwargs: Any,
     ) -> T | None:
         """Make API request and parse JSON response."""
-        _LOGGER.debug("Making API request: %s %s (%s)", method, path, data)
+        _LOGGER.debug("Making API request: %s %s", method, path)
 
         async with self._request(
             method,
@@ -498,7 +502,6 @@ class NanoKVMClient:
         ) as response:
             try:
                 raw_response = await response.json(content_type=None)
-                _LOGGER.debug("Raw JSON response data: %s", raw_response)
             except (json.JSONDecodeError, ValidationError) as err:
                 raise NanoKVMInvalidResponseError(
                     f"Invalid JSON response received: {err}"
@@ -569,7 +572,9 @@ class NanoKVMClient:
                 f"Invalid JSON response received: {err}"
             ) from err
 
-        _LOGGER.debug("Got API response: %s", api_response)
+        _LOGGER.debug(
+            "Got API response: code=%s msg=%s", api_response.code, api_response.msg
+        )
 
         if api_response.code != ApiResponseCode.SUCCESS.value:
             raise NanoKVMApiError(
@@ -1627,7 +1632,11 @@ class NanoKVMClient:
 
     async def mjpeg_stream(self) -> AsyncIterator[Image.Image]:
         """Stream MJPEG frames."""
-        async with self._request(hdrs.METH_GET, "/stream/mjpeg") as response:
+        async with self._request(
+            hdrs.METH_GET,
+            "/stream/mjpeg",
+            timeout=aiohttp.ClientTimeout(total=None, connect=self._request_timeout),
+        ) as response:
             reader = MultipartReader.from_response(response)
             loop = asyncio.get_running_loop()
 
@@ -1829,34 +1838,45 @@ class NanoKVMClient:
             )
         return self._ws
 
-    async def _send_mouse_event(
-        self, event_type: int, button_state: int, x: float, y: float
-    ) -> None:
-        """
-        Send a mouse event via WebSocket.
+    @staticmethod
+    def _clamp(value: int, minimum: int, maximum: int) -> int:
+        return max(minimum, min(maximum, value))
 
-        Args:
-            event_type: 0=mouse_up, 1=mouse_down, 2=move_abs, 3=move_rel, 4=scroll
-            button_state: Button state (0=no buttons, 1=left, 2=right, 4=middle)
-            x: X coordinate (0.0-1.0 for abs/rel/scroll) or 0.0 for button events
-            y: Y coordinate (0.0-1.0 for abs/rel/scroll) or 0.0 for button events
-        """
+    @classmethod
+    def _relative_value(cls, value: float) -> int:
+        return cls._clamp(round(value * 127), -127, 127)
+
+    @classmethod
+    def _absolute_value(cls, value: float) -> int:
+        return cls._clamp(round(max(0.0, min(1.0, value)) * 32767), 0, 32767)
+
+    def _absolute_report(self, wheel: int = 0) -> bytes:
+        x, y = self._mouse_abs_position
+        return bytes(
+            (
+                self._mouse_buttons,
+                x & 0xFF,
+                (x >> 8) & 0xFF,
+                y & 0xFF,
+                (y >> 8) & 0xFF,
+                self._clamp(wheel, -127, 127) & 0xFF,
+            )
+        )
+
+    def _relative_report(self, dx: int = 0, dy: int = 0, wheel: int = 0) -> bytes:
+        return bytes(
+            (
+                self._mouse_buttons,
+                self._clamp(dx, -127, 127) & 0xFF,
+                self._clamp(dy, -127, 127) & 0xFF,
+                self._clamp(wheel, -127, 127) & 0xFF,
+            )
+        )
+
+    async def _send_mouse_report(self, report: bytes) -> None:
+        """Send a binary NanoKVM mouse event and HID report."""
         ws = await self._get_ws()
-
-        # Scale coordinates for absolute/relative movements and scroll
-        if event_type in (2, 3, 4):  # move_abs, move_rel, or scroll
-            x_val = int(x * 32768)
-            y_val = int(y * 32768)
-        else:
-            x_val = int(x)
-            y_val = int(y)
-
-        # Message format: [2, event_type, button_state, x_val, y_val]
-        # where 2 indicates mouse event
-        message = [2, event_type, button_state, x_val, y_val]
-
-        _LOGGER.debug("Sending mouse event: %s", message)
-        await ws.send_json(message)
+        await ws.send_bytes(bytes((2,)) + report)
 
     async def mouse_move_abs(self, x: float, y: float) -> None:
         """
@@ -1866,7 +1886,9 @@ class NanoKVMClient:
             x: X coordinate (0.0 to 1.0, left to right)
             y: Y coordinate (0.0 to 1.0, top to bottom)
         """
-        await self._send_mouse_event(2, 0, x, y)
+        self._mouse_mode = "absolute"
+        self._mouse_abs_position = (self._absolute_value(x), self._absolute_value(y))
+        await self._send_mouse_report(self._absolute_report())
 
     async def mouse_move_rel(self, dx: float, dy: float) -> None:
         """
@@ -1876,7 +1898,10 @@ class NanoKVMClient:
             dx: Horizontal movement (-1.0 to 1.0)
             dy: Vertical movement (-1.0 to 1.0)
         """
-        await self._send_mouse_event(3, 0, dx, dy)
+        self._mouse_mode = "relative"
+        await self._send_mouse_report(
+            self._relative_report(self._relative_value(dx), self._relative_value(dy))
+        )
 
     async def mouse_down(self, button: MouseButton = MouseButton.LEFT) -> None:
         """
@@ -1886,15 +1911,25 @@ class NanoKVMClient:
             button: Mouse button to press (MouseButton.LEFT, MouseButton.RIGHT,
                 MouseButton.MIDDLE)
         """
-        await self._send_mouse_event(1, int(button), 0.0, 0.0)
+        self._mouse_buttons |= int(button)
+        if self._mouse_mode == "absolute":
+            report = self._absolute_report()
+        else:
+            report = self._relative_report()
+        await self._send_mouse_report(report)
 
     async def mouse_up(self) -> None:
         """
         Release a mouse button.
 
-        Note: Mouse up event always uses button_state=0 per the NanoKVM protocol.
+        The report releases all currently held buttons.
         """
-        await self._send_mouse_event(0, 0, 0.0, 0.0)
+        self._mouse_buttons = 0
+        if self._mouse_mode == "absolute":
+            report = self._absolute_report()
+        else:
+            report = self._relative_report()
+        await self._send_mouse_report(report)
 
     async def mouse_click(
         self,
@@ -1934,4 +1969,10 @@ class NanoKVMClient:
             dx: Horizontal scroll amount (-1.0 to 1.0)
             dy: Vertical scroll amount (-1.0 to 1.0) # positive=up, negative=down)
         """
-        await self._send_mouse_event(4, 0, dx, dy)
+        del dx  # NanoKVM's boot mouse report has a single vertical wheel byte.
+        wheel = self._relative_value(dy)
+        if self._mouse_mode == "absolute":
+            report = self._absolute_report(wheel)
+        else:
+            report = self._relative_report(wheel=wheel)
+        await self._send_mouse_report(report)
