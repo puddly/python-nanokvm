@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from nanokvm.client import NanoKVMClient
-from nanokvm.models import MouseButton
+from nanokvm.models import HWVersion, MouseButton
 
 
 @pytest.fixture
@@ -22,11 +22,36 @@ async def client_with_mock_ws() -> AsyncGenerator[tuple[NanoKVMClient, AsyncMock
         async with NanoKVMClient(
             "http://localhost:8888/api/", token="test-token"
         ) as client:
+            client._hw_version = HWVersion.PCIE
+            client._application_version = "2.3.2"
             yield client, mock_ws
 
 
 def _sent_reports(mock_ws: AsyncMock) -> list[bytes]:
     return [call.args[0] for call in mock_ws.send_bytes.call_args_list]
+
+
+@pytest.fixture
+async def legacy_client_with_mock_ws() -> AsyncGenerator[
+    tuple[NanoKVMClient, AsyncMock], Any
+]:
+    """Fixture that provides a pre-2.3.2 client and mocked WebSocket."""
+    mock_ws = AsyncMock()
+    mock_ws.closed = False
+
+    with patch(
+        "aiohttp.ClientSession.ws_connect", new_callable=AsyncMock, return_value=mock_ws
+    ):
+        async with NanoKVMClient(
+            "http://localhost:8888/api/", token="test-token"
+        ) as client:
+            client._hw_version = HWVersion.PCIE
+            client._application_version = "2.3.1"
+            yield client, mock_ws
+
+
+def _sent_events(mock_ws: AsyncMock) -> list[list[int]]:
+    return [call.args[0] for call in mock_ws.send_json.call_args_list]
 
 
 async def test_mouse_move_abs_sends_hid_report(
@@ -95,6 +120,63 @@ async def test_mouse_scroll_encodes_vertical_wheel(
     assert _sent_reports(mock_ws) == [bytes([2, 0, 0, 0, 231])]
 
 
+async def test_legacy_mouse_move_abs_sends_json_event(
+    legacy_client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
+) -> None:
+    """Non-Pro versions through 2.3.1 use the original JSON protocol."""
+    client, mock_ws = legacy_client_with_mock_ws
+
+    await client.mouse_move_abs(0.5, 0.5)
+
+    assert _sent_events(mock_ws) == [[2, 2, 0, 16384, 16384]]
+    mock_ws.send_bytes.assert_not_called()
+
+
+async def test_legacy_mouse_move_and_scroll_preserve_json_values(
+    legacy_client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
+) -> None:
+    """Legacy relative movement and scrolling retain their integer payloads."""
+    client, mock_ws = legacy_client_with_mock_ws
+
+    await client.mouse_move_rel(0.1, -0.1)
+    await client.mouse_scroll(0.1, -0.2)
+
+    assert _sent_events(mock_ws) == [
+        [2, 3, 0, 3276, -3276],
+        [2, 4, 0, 3276, -6553],
+    ]
+
+
+async def test_legacy_mouse_buttons_use_original_event_shape(
+    legacy_client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
+) -> None:
+    """Legacy button events carry one button value rather than a HID bitmask."""
+    client, mock_ws = legacy_client_with_mock_ws
+
+    await client.mouse_down(MouseButton.LEFT)
+    await client.mouse_down(MouseButton.RIGHT)
+    await client.mouse_up()
+
+    assert _sent_events(mock_ws) == [
+        [2, 1, 1, 0, 0],
+        [2, 1, 2, 0, 0],
+        [2, 0, 0, 0, 0],
+    ]
+
+
+async def test_pro_mouse_uses_binary_protocol(
+    client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
+) -> None:
+    """The Pro hardware family uses binary HID reports regardless of version."""
+    client, mock_ws = client_with_mock_ws
+    client._hw_version = HWVersion.PRO
+    client._application_version = "1.0.0"
+
+    await client.mouse_move_abs(0.5, 0.5)
+
+    assert _sent_reports(mock_ws) == [bytes([2, 0, 0, 64, 0, 64, 0])]
+
+
 async def test_context_manager_cleanup() -> None:
     """Test that context manager properly closes WebSocket and session."""
     mock_ws = AsyncMock()
@@ -106,6 +188,8 @@ async def test_context_manager_cleanup() -> None:
         async with NanoKVMClient(
             "http://localhost:8888/api/", token="test-token"
         ) as client:
+            client._hw_version = HWVersion.PCIE
+            client._application_version = "2.3.2"
             await client.mouse_move_abs(0.0, 0.0)
             assert client._ws is not None
             assert client._session is not None

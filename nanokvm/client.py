@@ -188,6 +188,7 @@ class NanoKVMNotSupportedError(NanoKVMError):
 F = TypeVar("F", bound=Callable[..., Coroutine[Any, Any, Any]])
 
 _VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$")
+_BINARY_MOUSE_MIN_VERSION = "2.3.2"
 
 
 def _parse_version(version: str) -> tuple[int, ...] | None:
@@ -1838,6 +1839,35 @@ class NanoKVMClient:
             )
         return self._ws
 
+    async def _uses_binary_mouse_protocol(self) -> bool:
+        """Select the mouse wire format supported by the connected device.
+
+        NanoKVM changed mouse events from JSON to raw HID reports in 2.3.2.
+        The Pro firmware uses the raw HID protocol on its separate version
+        line. This has to be a dispatcher rather than a version requirement:
+        application versions before 2.3.2 still support mouse control through
+        the legacy JSON format.
+        """
+        if self._hw_version is None:
+            if self._token is None:
+                # The WebSocket will report the authentication error below.
+                # Keep the current protocol as the safe default when version
+                # detection is not possible.
+                return True
+            await self.detect_hardware()
+
+        if self._hw_version == HWVersion.PRO:
+            return True
+
+        if self._application_version is None:
+            if self._token is None:
+                return True
+            await self.detect_versions()
+
+        return self._application_version is None or _version_at_least(
+            self._application_version, _BINARY_MOUSE_MIN_VERSION
+        )
+
     @staticmethod
     def _clamp(value: int, minimum: int, maximum: int) -> int:
         return max(minimum, min(maximum, value))
@@ -1878,6 +1908,23 @@ class NanoKVMClient:
         ws = await self._get_ws()
         await ws.send_bytes(bytes((2,)) + report)
 
+    async def _send_legacy_mouse_event(
+        self, event_type: int, button_state: int, x: float, y: float
+    ) -> None:
+        """Send a mouse event using the pre-2.3.2 JSON wire format."""
+        ws = await self._get_ws()
+
+        if event_type in (2, 3, 4):
+            x_value = int(x * 32768)
+            y_value = int(y * 32768)
+        else:
+            x_value = int(x)
+            y_value = int(y)
+
+        message = [2, event_type, button_state, x_value, y_value]
+        _LOGGER.debug("Sending legacy mouse event: %s", message)
+        await ws.send_json(message)
+
     async def mouse_move_abs(self, x: float, y: float) -> None:
         """
         Move mouse to absolute position.
@@ -1886,6 +1933,10 @@ class NanoKVMClient:
             x: X coordinate (0.0 to 1.0, left to right)
             y: Y coordinate (0.0 to 1.0, top to bottom)
         """
+        if not await self._uses_binary_mouse_protocol():
+            await self._send_legacy_mouse_event(2, 0, x, y)
+            return
+
         self._mouse_mode = "absolute"
         self._mouse_abs_position = (self._absolute_value(x), self._absolute_value(y))
         await self._send_mouse_report(self._absolute_report())
@@ -1898,6 +1949,10 @@ class NanoKVMClient:
             dx: Horizontal movement (-1.0 to 1.0)
             dy: Vertical movement (-1.0 to 1.0)
         """
+        if not await self._uses_binary_mouse_protocol():
+            await self._send_legacy_mouse_event(3, 0, dx, dy)
+            return
+
         self._mouse_mode = "relative"
         await self._send_mouse_report(
             self._relative_report(self._relative_value(dx), self._relative_value(dy))
@@ -1911,6 +1966,10 @@ class NanoKVMClient:
             button: Mouse button to press (MouseButton.LEFT, MouseButton.RIGHT,
                 MouseButton.MIDDLE)
         """
+        if not await self._uses_binary_mouse_protocol():
+            await self._send_legacy_mouse_event(1, int(button), 0.0, 0.0)
+            return
+
         self._mouse_buttons |= int(button)
         if self._mouse_mode == "absolute":
             report = self._absolute_report()
@@ -1924,6 +1983,10 @@ class NanoKVMClient:
 
         The report releases all currently held buttons.
         """
+        if not await self._uses_binary_mouse_protocol():
+            await self._send_legacy_mouse_event(0, 0, 0.0, 0.0)
+            return
+
         self._mouse_buttons = 0
         if self._mouse_mode == "absolute":
             report = self._absolute_report()
@@ -1969,6 +2032,10 @@ class NanoKVMClient:
             dx: Horizontal scroll amount (-1.0 to 1.0)
             dy: Vertical scroll amount (-1.0 to 1.0) # positive=up, negative=down)
         """
+        if not await self._uses_binary_mouse_protocol():
+            await self._send_legacy_mouse_event(4, 0, dx, dy)
+            return
+
         del dx  # NanoKVM's boot mouse report has a single vertical wheel byte.
         wheel = self._relative_value(dy)
         if self._mouse_mode == "absolute":
