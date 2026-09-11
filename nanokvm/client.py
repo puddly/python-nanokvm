@@ -154,6 +154,8 @@ PASTE_CHAR_MAP = set(
     "[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 )
 
+_SESSION_COOKIE_NAME = "nano-kvm-token"
+
 
 class NanoKVMError(Exception):
     """Base exception for NanoKVM client errors."""
@@ -633,23 +635,56 @@ class NanoKVMClient:
     async def _do_authenticate(self, username: str, password_to_send: str) -> None:
         """Perform a single authentication attempt with the given password."""
         try:
-            login_response = await self._api_request_json(
+            # NanoKVM 2.5.1 moved the session token from the JSON payload to a
+            # HttpOnly Set-Cookie header.  Read the envelope and response cookie
+            # while the response context is still open; the cookie jar is not a
+            # reliable source because callers may provide a DummyCookieJar or a
+            # session shared with other services.
+            async with self._request(
                 hdrs.METH_POST,
                 "/auth/login",
-                response_model=LoginRsp,
                 authenticate=False,
-                data=LoginReq(
-                    username=username,
-                    password=password_to_send,
+                json=LoginReq(username=username, password=password_to_send).model_dump(
+                    by_alias=True,
+                    exclude_none=True,
                 ),
-            )
+            ) as response:
+                try:
+                    raw_response = await response.json(content_type=None)
+                except (json.JSONDecodeError, ValidationError) as err:
+                    raise NanoKVMInvalidResponseError(
+                        f"Invalid JSON response received: {err}"
+                    ) from err
 
-            if not login_response.token:
+                response_cookie = response.cookies.get(_SESSION_COOKIE_NAME)
+                cookie_token = (
+                    response_cookie.value.strip() if response_cookie is not None else ""
+                )
+
+            # Validate the API code before accepting a token from either source.
+            self._validate_api_response(raw_response)
+
+            body_token = ""
+            if isinstance(raw_response, dict) and raw_response.get("data") is not None:
+                try:
+                    body_token = LoginRsp.model_validate(
+                        raw_response["data"]
+                    ).token.strip()
+                except ValidationError as err:
+                    raise NanoKVMInvalidResponseError(
+                        "Invalid authentication response data"
+                    ) from err
+
+            token = cookie_token or body_token
+            if not token:
                 raise NanoKVMInvalidResponseError(
                     "Authentication response missing token."
                 )
 
-            self._token = login_response.token
+            if self._token != token:
+                await self._close_ws()
+                self._mouse_buttons = 0
+            self._token = token
         except NanoKVMApiError as err:
             if err.code == ApiResponseCode.INVALID_USERNAME_OR_PASSWORD.value:
                 raise NanoKVMAuthenticationFailure(
@@ -691,9 +726,13 @@ class NanoKVMClient:
             if self._token and self._token != "disabled":
                 await self._api_request_json(hdrs.METH_POST, "/auth/logout")
         finally:
-            self._token = None
-            self._mouse_buttons = 0
-            await self._close_ws()
+            await self._clear_local_session()
+
+    async def _clear_local_session(self) -> None:
+        """Clear local authentication and transport state without closing HTTP."""
+        self._token = None
+        self._mouse_buttons = 0
+        await self._close_ws()
 
     async def change_password(self, username: str, new_password: str) -> None:
         """Change the KVM password."""
