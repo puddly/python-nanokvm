@@ -1,5 +1,6 @@
 """Tests for SSL/TLS configuration and password obfuscation."""
 
+import logging
 from pathlib import Path
 import ssl
 from unittest.mock import MagicMock, patch
@@ -109,6 +110,30 @@ async def test_authenticate_with_plain_text_password() -> None:
             request_json = calls[0].kwargs.get("json")
             assert request_json["username"] == "root"
             assert request_json["password"] == "password123"
+
+
+async def test_authentication_debug_logs_redact_credentials(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Authentication logs must not contain passwords or returned tokens."""
+    password = "password-must-not-be-logged"
+    token = "token-must-not-be-logged"
+    caplog.set_level(logging.DEBUG, logger="nanokvm.client")
+
+    async with NanoKVMClient(
+        "https://kvm.local/api/", use_password_obfuscation=False
+    ) as client:
+        with aioresponses() as m:
+            m.post(
+                "https://kvm.local/api/auth/login",
+                payload={"code": 0, "msg": "success", "data": {"token": token}},
+            )
+            m.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+
+            await client.authenticate("root", password)
+
+    assert password not in caplog.text
+    assert token not in caplog.text
 
 
 async def test_authenticate_with_obfuscated_password() -> None:
