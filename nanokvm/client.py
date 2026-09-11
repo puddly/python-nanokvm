@@ -165,6 +165,23 @@ class NanoKVMNotAuthenticatedError(NanoKVMError):
     """Exception for authentication errors."""
 
 
+class NanoKVMPermissionError(NanoKVMError):
+    """Exception for an authenticated request forbidden by the device."""
+
+    def __init__(
+        self,
+        message: str = "NanoKVM permission denied",
+        *,
+        status: int = 403,
+        method: str,
+        path: str,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.method = method.upper()
+        self.path = path
+
+
 class NanoKVMApiError(NanoKVMError):
     """Exception for API-level errors reported by the device."""
 
@@ -455,10 +472,22 @@ class NanoKVMClient:
             headers=request_headers,
             cookies=cookies,
             timeout=timeout or aiohttp.ClientTimeout(total=self._request_timeout),
-            raise_for_status=True,
+            raise_for_status=False,
             ssl=self._ssl_config,
             **kwargs,
         ) as response:
+            if authenticate and response.status == 401:
+                await self._clear_local_session()
+                raise NanoKVMNotAuthenticatedError(
+                    "NanoKVM session is no longer authenticated"
+                )
+            if authenticate and response.status == 403:
+                raise NanoKVMPermissionError(
+                    status=response.status,
+                    method=response.method,
+                    path=f"/{path.lstrip('/')}",
+                )
+            response.raise_for_status()
             yield response
 
     @overload
@@ -1877,30 +1906,47 @@ class NanoKVMClient:
 
     async def _get_ws(self) -> aiohttp.ClientWebSocketResponse:
         """Get or create WebSocket connection for mouse events."""
-        async with self._ws_lock:
-            if self._ws is not None and not self._ws.closed:
+        try:
+            async with self._ws_lock:
+                if self._ws is not None and not self._ws.closed:
+                    return self._ws
+
+                if self._ws is not None:
+                    await self._ws.close()
+                    self._ws = None
+
+                if not self._token:
+                    raise NanoKVMNotAuthenticatedError("Client is not authenticated")
+
+                # WebSocket URL uses ws:// or wss:// scheme
+                scheme = "ws" if self.url.scheme == "http" else "wss"
+                ws_url = self.url.with_scheme(scheme) / "ws"
+
+                assert self._session is not None
+                assert self._ssl_config is not None
+
+                self._ws = await self._session.ws_connect(
+                    str(ws_url),
+                    headers={"Cookie": f"nano-kvm-token={self._token}"},
+                    ssl=self._ssl_config,
+                )
                 return self._ws
-
-            if self._ws is not None:
-                await self._ws.close()
-                self._ws = None
-
-            if not self._token:
-                raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-
-            # WebSocket URL uses ws:// or wss:// scheme
-            scheme = "ws" if self.url.scheme == "http" else "wss"
-            ws_url = self.url.with_scheme(scheme) / "ws"
-
-            assert self._session is not None
-            assert self._ssl_config is not None
-
-            self._ws = await self._session.ws_connect(
-                str(ws_url),
-                headers={"Cookie": f"nano-kvm-token={self._token}"},
-                ssl=self._ssl_config,
-            )
-            return self._ws
+        except aiohttp.ClientResponseError as err:
+            method = getattr(err.request_info, "method", hdrs.METH_GET)
+            if err.status == 401:
+                # _clear_local_session acquires _ws_lock, so do this after the
+                # lock above has been released to avoid a self-deadlock.
+                await self._clear_local_session()
+                raise NanoKVMNotAuthenticatedError(
+                    "NanoKVM session is no longer authenticated"
+                ) from err
+            if err.status == 403:
+                raise NanoKVMPermissionError(
+                    status=err.status,
+                    method=method,
+                    path="/ws",
+                ) from err
+            raise
 
     async def _uses_binary_mouse_protocol(self) -> bool:
         """Select the mouse wire format supported by the connected device.

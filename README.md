@@ -36,6 +36,26 @@ async with NanoKVMClient("https://kvm.local/api/") as client:
     await client.push_button(GpioType.POWER, duration_ms=1000)
 ```
 
+### Account roles and permissions
+
+`get_account()` exposes the optional `role` returned by newer firmware. The
+value is a string so unknown future roles remain readable; older firmware may
+return `None`. A logged-in account can receive `NanoKVMPermissionError` when a
+specific endpoint requires a different role. The exception includes `status`,
+`method`, and the relative endpoint `path`:
+
+```python
+from nanokvm.client import NanoKVMPermissionError
+
+account = await client.get_account()
+print(account.username, account.role)
+
+try:
+    await client.get_images()
+except NanoKVMPermissionError as error:
+    print(error.status, error.method, error.path)
+```
+
 ## SSH Usage
 
 ```python
