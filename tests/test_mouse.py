@@ -1,12 +1,13 @@
 """Tests for mouse control functionality."""
 
+import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nanokvm.client import NanoKVMClient
+from nanokvm.client import NanoKVMClient, NanoKVMNotAuthenticatedError
 from nanokvm.models import HWVersion, MouseButton
 
 
@@ -162,6 +163,79 @@ async def test_legacy_mouse_buttons_use_original_event_shape(
         [2, 1, 2, 0, 0],
         [2, 0, 0, 0, 0],
     ]
+
+
+async def test_concurrent_first_mouse_use_creates_one_websocket() -> None:
+    """Concurrent first use shares one lazily-created WebSocket."""
+    mock_ws = AsyncMock()
+    mock_ws.closed = False
+    connect_started = asyncio.Event()
+    allow_connect = asyncio.Event()
+    connect_count = 0
+
+    async def connect(*_args: Any, **_kwargs: Any) -> AsyncMock:
+        nonlocal connect_count
+        connect_count += 1
+        connect_started.set()
+        await allow_connect.wait()
+        return mock_ws
+
+    with patch("aiohttp.ClientSession.ws_connect", new=connect):
+        async with NanoKVMClient(
+            "http://localhost:8888/api/", token="test-token"
+        ) as client:
+            client._hw_version = HWVersion.PCIE
+            client._application_version = "2.3.2"
+            first = asyncio.create_task(client.mouse_move_rel(0.1, 0.0))
+            await connect_started.wait()
+            second = asyncio.create_task(client.mouse_move_rel(0.0, 0.1))
+            allow_connect.set()
+            await asyncio.gather(first, second)
+
+    assert connect_count == 1
+    assert mock_ws.send_bytes.await_count == 2
+
+
+async def test_mouse_send_reconnects_after_transport_failure() -> None:
+    """A failed send invalidates the cached WebSocket for the next operation."""
+    first_ws = AsyncMock()
+    first_ws.closed = False
+    first_ws.send_bytes.side_effect = ConnectionResetError()
+    second_ws = AsyncMock()
+    second_ws.closed = False
+    connect = AsyncMock(side_effect=[first_ws, second_ws])
+
+    with patch("aiohttp.ClientSession.ws_connect", new=connect):
+        async with NanoKVMClient(
+            "http://localhost:8888/api/", token="test-token"
+        ) as client:
+            client._hw_version = HWVersion.PCIE
+            client._application_version = "2.3.2"
+            with pytest.raises(ConnectionResetError):
+                await client.mouse_move_rel(0.1, 0.0)
+            await client.mouse_move_rel(0.1, 0.0)
+
+    assert connect.await_count == 2
+    first_ws.close.assert_awaited_once()
+
+
+async def test_logout_closes_websocket_and_prevents_further_mouse_input(
+    client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
+) -> None:
+    """Logout invalidates the transport and local pressed-button state."""
+    client, mock_ws = client_with_mock_ws
+    await client.mouse_move_rel(0.1, 0.0)
+    client._mouse_buttons = int(MouseButton.LEFT)
+
+    with patch.object(client, "_api_request_json", new_callable=AsyncMock):
+        await client.logout()
+
+    assert client.token is None
+    assert client._mouse_buttons == 0
+    mock_ws.close.assert_awaited_once()
+    assert client._ws is None
+    with pytest.raises(NanoKVMNotAuthenticatedError, match="not authenticated"):
+        await client.mouse_move_rel(0.1, 0.0)
 
 
 async def test_pro_mouse_uses_binary_protocol(

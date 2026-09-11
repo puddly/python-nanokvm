@@ -321,6 +321,7 @@ class NanoKVMClient:
         self._token = token
         self._request_timeout = request_timeout
         self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._ws_lock = asyncio.Lock()
         self._mouse_buttons = 0
         self._mouse_mode = "relative"
         self._mouse_abs_position = (0, 0)
@@ -415,9 +416,7 @@ class NanoKVMClient:
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit - cleanup resources."""
         # Close WebSocket connection
-        if self._ws is not None and not self._ws.closed:
-            await self._ws.close()
-            self._ws = None
+        await self._close_ws()
 
         # Close HTTP session
         if self._session is not None and not self._external_session_provided:
@@ -689,13 +688,13 @@ class NanoKVMClient:
 
     async def logout(self) -> None:
         """Log out and clear the session token."""
-        if not self._token or self._token == "disabled":
-            return
-
         try:
-            await self._api_request_json(hdrs.METH_POST, "/auth/logout")
+            if self._token and self._token != "disabled":
+                await self._api_request_json(hdrs.METH_POST, "/auth/logout")
         finally:
             self._token = None
+            self._mouse_buttons = 0
+            await self._close_ws()
 
     async def change_password(self, username: str, new_password: str) -> None:
         """Change the KVM password."""
@@ -1820,9 +1819,32 @@ class NanoKVMClient:
 
     # ── Mouse (WebSocket) ──────────────────────────────────────────────
 
+    async def _close_ws(self) -> None:
+        """Close and forget the current WebSocket connection."""
+        async with self._ws_lock:
+            ws = self._ws
+            self._ws = None
+            if ws is not None and not ws.closed:
+                await ws.close()
+
+    async def _invalidate_ws(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        """Forget a failed WebSocket without closing a replacement connection."""
+        async with self._ws_lock:
+            if self._ws is ws:
+                self._ws = None
+            if not ws.closed:
+                await ws.close()
+
     async def _get_ws(self) -> aiohttp.ClientWebSocketResponse:
         """Get or create WebSocket connection for mouse events."""
-        if self._ws is None or self._ws.closed:
+        async with self._ws_lock:
+            if self._ws is not None and not self._ws.closed:
+                return self._ws
+
+            if self._ws is not None:
+                await self._ws.close()
+                self._ws = None
+
             if not self._token:
                 raise NanoKVMNotAuthenticatedError("Client is not authenticated")
 
@@ -1838,7 +1860,7 @@ class NanoKVMClient:
                 headers={"Cookie": f"nano-kvm-token={self._token}"},
                 ssl=self._ssl_config,
             )
-        return self._ws
+            return self._ws
 
     async def _uses_binary_mouse_protocol(self) -> bool:
         """Select the mouse wire format supported by the connected device.
@@ -1909,7 +1931,11 @@ class NanoKVMClient:
     async def _send_mouse_report(self, report: bytes) -> None:
         """Send a binary NanoKVM mouse event and HID report."""
         ws = await self._get_ws()
-        await ws.send_bytes(bytes((2,)) + report)
+        try:
+            await ws.send_bytes(bytes((2,)) + report)
+        except (aiohttp.ClientConnectionError, ConnectionError, RuntimeError):
+            await self._invalidate_ws(ws)
+            raise
 
     async def _send_legacy_mouse_event(
         self, event_type: int, button_state: int, x: float, y: float
@@ -1926,7 +1952,11 @@ class NanoKVMClient:
 
         message = [2, event_type, button_state, x_value, y_value]
         _LOGGER.debug("Sending legacy mouse event: %s", message)
-        await ws.send_json(message)
+        try:
+            await ws.send_json(message)
+        except (aiohttp.ClientConnectionError, ConnectionError, RuntimeError):
+            await self._invalidate_ws(ws)
+            raise
 
     async def mouse_move_abs(self, x: float, y: float) -> None:
         """
