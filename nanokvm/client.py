@@ -1917,9 +1917,15 @@ class NanoKVMClient:
         """Send a mouse event using the pre-2.3.2 JSON wire format."""
         ws = await self._get_ws()
 
-        if event_type in (2, 3, 4):
+        if event_type == 2:
             x_value = int(x * 32768)
             y_value = int(y * 32768)
+        elif event_type == 3:
+            x_value = self._relative_value(x)
+            y_value = self._relative_value(y)
+        elif event_type == 4:
+            x_value = 0
+            y_value = 1 if y > 0 else -1 if y < 0 else 0
         else:
             x_value = int(x)
             y_value = int(y)
@@ -2020,12 +2026,17 @@ class NanoKVMClient:
             # Small delay to ensure position update
             await asyncio.sleep(0.05)
 
-        # Send mouse down
-        await self.mouse_down(button)
-        # Small delay between down and up
-        await asyncio.sleep(0.05)
-        # Send mouse up
-        await self.mouse_up()
+        pressed = False
+        try:
+            # Send mouse down
+            await self.mouse_down(button)
+            pressed = True
+            # Small delay between down and up
+            await asyncio.sleep(0.05)
+        finally:
+            if pressed:
+                # Always release after a successful press, including cancellation.
+                await self.mouse_up()
 
     async def mouse_scroll(self, dx: float, dy: float) -> None:
         """

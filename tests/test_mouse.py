@@ -1,5 +1,6 @@
 """Tests for mouse control functionality."""
 
+import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -132,19 +133,44 @@ async def test_legacy_mouse_move_abs_sends_json_event(
     mock_ws.send_bytes.assert_not_called()
 
 
-async def test_legacy_mouse_move_and_scroll_preserve_json_values(
+async def test_legacy_mouse_move_and_scroll_use_legacy_ranges(
     legacy_client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
 ) -> None:
-    """Legacy relative movement and scrolling retain their integer payloads."""
+    """Legacy relative movement and scrolling use the signed HID ranges."""
     client, mock_ws = legacy_client_with_mock_ws
 
     await client.mouse_move_rel(0.1, -0.1)
     await client.mouse_scroll(0.1, -0.2)
 
     assert _sent_events(mock_ws) == [
-        [2, 3, 0, 3276, -3276],
-        [2, 4, 0, 3276, -6553],
+        [2, 3, 0, 13, -13],
+        [2, 4, 0, 0, -1],
     ]
+
+
+async def test_mouse_click_releases_button_when_cancelled(
+    client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
+) -> None:
+    """Cancelling the delay between mouse down and up still releases the button."""
+    client, mock_ws = client_with_mock_ws
+    sleep_started = asyncio.Event()
+
+    async def block_sleep(_delay: float) -> None:
+        sleep_started.set()
+        await asyncio.Event().wait()
+
+    with patch("nanokvm.client.asyncio.sleep", side_effect=block_sleep):
+        task = asyncio.create_task(client.mouse_click())
+        await sleep_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert _sent_reports(mock_ws) == [
+        bytes([2, 1, 0, 0, 0]),
+        bytes([2, 0, 0, 0, 0]),
+    ]
+    assert client._mouse_buttons == 0
 
 
 async def test_legacy_mouse_buttons_use_original_event_shape(
