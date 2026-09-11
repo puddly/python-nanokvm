@@ -18,7 +18,7 @@ dependencies = [
     "cryptography",
     "yarl",
     "pillow",
-    "pydantic",
+    "pydantic>=2.0",
     "paramiko",
 ]
 

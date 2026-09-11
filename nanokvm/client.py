@@ -144,7 +144,7 @@ from .models.pro import (
 )
 from .utils import obfuscate_password
 
-T = TypeVar("T")
+T = TypeVar("T", bound=BaseModel)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -407,10 +407,9 @@ class NanoKVMClient:
 
     async def __aenter__(self) -> NanoKVMClient:
         """Async context manager entry."""
+        self._ssl_config = await asyncio.to_thread(self._create_ssl_context)
         if self._session is None and not self._external_session_provided:
             self._session = ClientSession()
-
-        self._ssl_config = await asyncio.to_thread(self._create_ssl_context)
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -549,7 +548,6 @@ class NanoKVMClient:
         ) as response:
             try:
                 raw_response = await response.json(content_type=None)
-                _LOGGER.debug("Raw JSON response data: %s", raw_response)
             except (json.JSONDecodeError, ValidationError) as err:
                 raise NanoKVMInvalidResponseError(
                     f"Invalid JSON response received: {err}"
@@ -564,14 +562,9 @@ class NanoKVMClient:
     ) -> T | None:
         """Validate the shared NanoKVM response envelope."""
         try:
-            if response_model is None:
-                api_response = ApiResponse[Any].model_validate(raw_response)
-            else:
-                api_response = ApiResponse[response_model].model_validate(raw_response)  # type: ignore[valid-type]
+            api_response = ApiResponse[Any].model_validate(raw_response)
         except ValidationError as err:
-            raise NanoKVMInvalidResponseError(
-                f"Invalid JSON response received: {err}"
-            ) from err
+            raise NanoKVMInvalidResponseError("Invalid API response envelope") from err
 
         _LOGGER.debug(
             "Got API response: code=%s msg=%s", api_response.code, api_response.msg
@@ -588,7 +581,13 @@ class NanoKVMClient:
         if response_model is None:
             return None
 
-        return api_response.data
+        if api_response.data is None:
+            raise NanoKVMInvalidResponseError("Successful API response is missing data")
+
+        try:
+            return response_model.model_validate(api_response.data)
+        except ValidationError as err:
+            raise NanoKVMInvalidResponseError("Invalid data in API response") from err
 
     @overload
     async def _upload_file(
@@ -1629,7 +1628,9 @@ class NanoKVMClient:
 
     def _parse_jpeg_from_bytes(self, data: bytes) -> Image.Image:
         """Parse JPEG image from bytes."""
-        return Image.open(io.BytesIO(data), formats=["JPEG"])
+        with Image.open(io.BytesIO(data), formats=["JPEG"]) as image:
+            image.load()
+            return image.copy()
 
     async def mjpeg_stream(self) -> AsyncIterator[Image.Image]:
         """Stream MJPEG frames."""
