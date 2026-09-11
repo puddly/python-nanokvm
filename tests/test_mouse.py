@@ -167,14 +167,28 @@ async def test_legacy_mouse_buttons_use_original_event_shape(
 async def test_pro_mouse_uses_binary_protocol(
     client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
 ) -> None:
-    """The Pro hardware family uses binary HID reports regardless of version."""
+    """Pro application versions from 1.2.6 use binary HID reports."""
     client, mock_ws = client_with_mock_ws
     client._hw_version = HWVersion.PRO
-    client._application_version = "1.0.0"
+    client._application_version = "1.2.6"
 
     await client.mouse_move_abs(0.5, 0.5)
 
     assert _sent_reports(mock_ws) == [bytes([2, 0, 0, 64, 0, 64, 0])]
+
+
+async def test_legacy_pro_mouse_uses_json_protocol(
+    legacy_client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
+) -> None:
+    """Pro application versions before 1.2.6 use the legacy JSON protocol."""
+    client, mock_ws = legacy_client_with_mock_ws
+    client._hw_version = HWVersion.PRO
+    client._application_version = "1.2.5"
+
+    await client.mouse_move_abs(0.5, 0.5)
+
+    assert _sent_events(mock_ws) == [[2, 2, 0, 16384, 16384]]
+    mock_ws.send_bytes.assert_not_called()
 
 
 async def test_context_manager_cleanup() -> None:

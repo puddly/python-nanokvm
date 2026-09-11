@@ -188,7 +188,8 @@ class NanoKVMNotSupportedError(NanoKVMError):
 F = TypeVar("F", bound=Callable[..., Coroutine[Any, Any, Any]])
 
 _VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$")
-_BINARY_MOUSE_MIN_VERSION = "2.3.2"
+_BINARY_MOUSE_MIN_NON_PRO_VERSION = "2.3.2"
+_BINARY_MOUSE_MIN_PRO_VERSION = "1.2.6"
 
 
 def _parse_version(version: str) -> tuple[int, ...] | None:
@@ -1842,11 +1843,11 @@ class NanoKVMClient:
     async def _uses_binary_mouse_protocol(self) -> bool:
         """Select the mouse wire format supported by the connected device.
 
-        NanoKVM changed mouse events from JSON to raw HID reports in 2.3.2.
-        The Pro firmware uses the raw HID protocol on its separate version
-        line. This has to be a dispatcher rather than a version requirement:
-        application versions before 2.3.2 still support mouse control through
-        the legacy JSON format.
+        NanoKVM changed mouse events from JSON to raw HID reports in 2.3.2;
+        the Pro firmware made the same change in application version 1.2.6.
+        This has to be a dispatcher rather than a version requirement:
+        earlier application versions still support mouse control through the
+        legacy JSON format.
         """
         if self._hw_version is None:
             if self._token is None:
@@ -1856,16 +1857,18 @@ class NanoKVMClient:
                 return True
             await self.detect_hardware()
 
-        if self._hw_version == HWVersion.PRO:
-            return True
-
         if self._application_version is None:
             if self._token is None:
                 return True
             await self.detect_versions()
 
+        minimum_version = (
+            _BINARY_MOUSE_MIN_PRO_VERSION
+            if self._hw_version == HWVersion.PRO
+            else _BINARY_MOUSE_MIN_NON_PRO_VERSION
+        )
         return self._application_version is None or _version_at_least(
-            self._application_version, _BINARY_MOUSE_MIN_VERSION
+            self._application_version, minimum_version
         )
 
     @staticmethod
