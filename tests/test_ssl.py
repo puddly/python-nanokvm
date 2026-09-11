@@ -62,6 +62,22 @@ async def test_nonexistent_ca_cert_raises_error() -> None:
         client._create_ssl_context()
 
 
+async def test_context_manager_closes_session_when_ssl_setup_fails() -> None:
+    """A failed context entry does not leak the internally-created session."""
+    client = NanoKVMClient(
+        "https://kvm.local/api/", ssl_ca_cert="/path/that/does/not/exist.pem"
+    )
+
+    try:
+        with pytest.raises(FileNotFoundError):
+            await client.__aenter__()
+
+        assert client._session is None or client._session.closed
+    finally:
+        if client._session is not None and not client._session.closed:
+            await client._session.close()
+
+
 async def test_http_url_works_regardless_of_ssl_config() -> None:
     """Test that HTTP URL (not HTTPS) works regardless of SSL config."""
     client = NanoKVMClient("http://kvm.local/api/", verify_ssl=False)

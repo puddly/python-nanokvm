@@ -1,5 +1,6 @@
 import asyncio
 import io
+import logging
 from pathlib import Path
 
 import aiohttp
@@ -12,6 +13,7 @@ import yarl
 from nanokvm.client import (
     NanoKVMApiError,
     NanoKVMClient,
+    NanoKVMInvalidResponseError,
     NanoKVMNotSupportedError,
     _parse_version,
     _version_at_least,
@@ -120,6 +122,94 @@ async def test_get_images_empty() -> None:
 
             assert response is not None
             assert len(response.files) == 0
+
+
+async def test_typed_success_response_requires_data() -> None:
+    """A typed endpoint rejects a successful response without its payload."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        with aioresponses() as m:
+            m.get(
+                "http://localhost:8888/api/storage/image",
+                payload={"code": 0, "msg": "success", "data": None},
+            )
+
+            with pytest.raises(NanoKVMInvalidResponseError, match="missing data"):
+                await client.get_images()
+
+
+async def test_api_error_data_is_not_validated_as_success_model() -> None:
+    """An error envelope is classified before its endpoint data is parsed."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        with aioresponses() as m:
+            m.get(
+                "http://localhost:8888/api/storage/image",
+                payload={
+                    "code": -1,
+                    "msg": "failed to list images",
+                    "data": {"synthetic": "unexpected"},
+                },
+            )
+
+            with pytest.raises(NanoKVMApiError) as exc_info:
+                await client.get_images()
+
+            assert exc_info.value.code == -1
+
+
+def test_invalid_response_error_does_not_echo_payload() -> None:
+    """Malformed response errors do not include arbitrary response values."""
+    client = NanoKVMClient("http://localhost:8888/api/")
+    secret = "SYNTHETIC_SECRET_VALUE"
+
+    with pytest.raises(NanoKVMInvalidResponseError) as exc_info:
+        client._validate_api_response(
+            {"msg": "invalid", "data": {"token": secret}},
+        )
+
+    assert secret not in str(exc_info.value)
+
+
+async def test_form_response_is_not_logged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Multipart responses are not emitted verbatim to debug logs."""
+    script = tmp_path / "test.sh"
+    script.write_text("#!/bin/sh\ntrue\n")
+    secret = "SYNTHETIC_FORM_VALUE"
+    caplog.set_level(logging.DEBUG, logger="nanokvm.client")
+
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        with aioresponses() as m:
+            m.post(
+                "http://localhost:8888/api/vm/script/upload",
+                payload={
+                    "code": 0,
+                    "msg": "success",
+                    "data": {"file": secret},
+                },
+            )
+
+            await client.upload_script(script)
+
+    assert secret not in caplog.text
+
+
+def test_parse_jpeg_returns_fully_loaded_image() -> None:
+    """JPEG parsing returns an image detached from the source stream."""
+    image_buffer = io.BytesIO()
+    Image.new("RGB", (2, 2), color=(1, 2, 3)).save(image_buffer, format="JPEG")
+    client = NanoKVMClient("http://localhost:8888/api/")
+
+    image = client._parse_jpeg_from_bytes(image_buffer.getvalue())
+
+    assert image.getpixel((0, 0))
+    assert getattr(image, "fp", None) is None
 
 
 async def test_mjpeg_stream_allows_frames_after_request_timeout() -> None:
