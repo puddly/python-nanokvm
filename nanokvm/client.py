@@ -33,6 +33,7 @@ from .models.common import (
     ApiResponse,
     ApiResponseCode,
     ChangePasswordReq,
+    ChangePasswordV251Req,
     ConnectWifiReq,
     DeleteImageReq,
     DeleteMacReq,
@@ -209,6 +210,7 @@ F = TypeVar("F", bound=Callable[..., Coroutine[Any, Any, Any]])
 _VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$")
 _BINARY_MOUSE_MIN_NON_PRO_VERSION = "2.3.2"
 _BINARY_MOUSE_MIN_PRO_VERSION = "1.2.6"
+_CURRENT_PASSWORD_MIN_NON_PRO_VERSION = "2.5.1"
 
 
 def _parse_version(version: str) -> tuple[int, ...] | None:
@@ -763,8 +765,66 @@ class NanoKVMClient:
         self._mouse_buttons = 0
         await self._close_ws()
 
-    async def change_password(self, username: str, new_password: str) -> None:
-        """Change the KVM password."""
+    async def _uses_current_password_contract(self) -> bool:
+        """Determine whether this device uses the 2.5.1 password contract."""
+        if self._hw_version is None:
+            if self._token is None:
+                raise NanoKVMNotAuthenticatedError("Client is not authenticated")
+            await self.detect_hardware()
+
+        if self._hw_version == HWVersion.PRO:
+            return False
+
+        if self._application_version is None:
+            if self._token is None:
+                raise NanoKVMNotAuthenticatedError("Client is not authenticated")
+            await self.detect_versions()
+
+        if self._application_version is None:
+            raise NanoKVMError(
+                "Application version must be identified before changing the password"
+            )
+
+        parsed_version = _parse_version(self._application_version)
+        minimum_version = _parse_version(_CURRENT_PASSWORD_MIN_NON_PRO_VERSION)
+        if parsed_version is None or minimum_version is None:
+            raise NanoKVMError(
+                "Application version must be identified before changing the password"
+            )
+
+        return parsed_version >= minimum_version
+
+    async def change_password(
+        self,
+        username: str,
+        new_password: str,
+        *,
+        current_password: str | None = None,
+    ) -> None:
+        """Change the KVM password for the authenticated account."""
+        if await self._uses_current_password_contract():
+            if not current_password or not current_password.strip():
+                raise ValueError(
+                    "current_password is required for NanoKVM 2.5.1 and newer"
+                )
+
+            account = await self.get_account()
+            if account.username != username:
+                raise ValueError(
+                    "username must match the authenticated account on NanoKVM 2.5.1"
+                )
+
+            await self._api_request_json(
+                hdrs.METH_POST,
+                "/auth/password",
+                data=ChangePasswordV251Req(
+                    current_password=obfuscate_password(current_password),
+                    password=obfuscate_password(new_password),
+                ),
+            )
+            await self._clear_local_session()
+            return
+
         if self._use_password_obfuscation is None:
             raise ValueError(
                 "Password mode is unknown. Authenticate first or set "

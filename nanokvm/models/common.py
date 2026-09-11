@@ -156,6 +156,13 @@ class ChangePasswordReq(BaseModel):
     password: str
 
 
+class ChangePasswordV251Req(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    current_password: str = Field(alias="currentPassword")
+    password: str
+
+
 class IsPasswordUpdatedRsp(BaseModel):
     is_updated: bool = Field(alias="isUpdated")
 

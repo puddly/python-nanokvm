@@ -56,6 +56,23 @@ except NanoKVMPermissionError as error:
     print(error.status, error.method, error.path)
 ```
 
+### Changing a password
+
+The password method keeps its two positional arguments and accepts the current
+password as a keyword-only argument:
+
+```python
+await client.change_password(
+    "synthetic-user",
+    "new-password",
+    current_password="current-password",
+)
+```
+
+On non-Pro firmware version 2.5.1 and newer, the current password is required
+and the username must be the authenticated account. A successful change clears
+the local session, so authenticate again before making another request.
+
 ## SSH Usage
 
 ```python
