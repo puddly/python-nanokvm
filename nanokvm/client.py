@@ -542,10 +542,10 @@ class NanoKVMClient:
         ) as response:
             try:
                 raw_response = await response.json(content_type=None)
-            except (json.JSONDecodeError, ValidationError) as err:
+            except (json.JSONDecodeError, ValidationError):
                 raise NanoKVMInvalidResponseError(
-                    f"Invalid JSON response received: {err}"
-                ) from err
+                    "Invalid JSON response received"
+                ) from None
 
         return self._validate_api_response(raw_response, response_model)
 
@@ -588,10 +588,10 @@ class NanoKVMClient:
         ) as response:
             try:
                 raw_response = await response.json(content_type=None)
-            except (json.JSONDecodeError, ValidationError) as err:
+            except (json.JSONDecodeError, ValidationError):
                 raise NanoKVMInvalidResponseError(
-                    f"Invalid JSON response received: {err}"
-                ) from err
+                    "Invalid JSON response received"
+                ) from None
 
         return self._validate_api_response(raw_response, response_model)
 
@@ -603,16 +603,14 @@ class NanoKVMClient:
         """Validate the shared NanoKVM response envelope."""
         try:
             api_response = ApiResponse[Any].model_validate(raw_response)
-        except ValidationError as err:
-            raise NanoKVMInvalidResponseError("Invalid API response envelope") from err
+        except ValidationError:
+            raise NanoKVMInvalidResponseError("Invalid API response envelope") from None
 
-        _LOGGER.debug(
-            "Got API response: code=%s msg=%s", api_response.code, api_response.msg
-        )
+        _LOGGER.debug("Got API response: code=%s", api_response.code)
 
         if api_response.code != ApiResponseCode.SUCCESS.value:
             raise NanoKVMApiError(
-                f"API returned error: {api_response.msg} (Code: {api_response.code})",
+                f"API returned error (Code: {api_response.code})",
                 code=api_response.code,
                 msg=api_response.msg,
                 data=api_response.data,
@@ -626,8 +624,8 @@ class NanoKVMClient:
 
         try:
             return response_model.model_validate(api_response.data)
-        except ValidationError as err:
-            raise NanoKVMInvalidResponseError("Invalid data in API response") from err
+        except ValidationError:
+            raise NanoKVMInvalidResponseError("Invalid data in API response") from None
 
     @overload
     async def _upload_file(
@@ -689,10 +687,10 @@ class NanoKVMClient:
             ) as response:
                 try:
                     raw_response = await response.json(content_type=None)
-                except (json.JSONDecodeError, ValidationError) as err:
+                except (json.JSONDecodeError, ValidationError):
                     raise NanoKVMInvalidResponseError(
-                        f"Invalid JSON response received: {err}"
-                    ) from err
+                        "Invalid JSON response received"
+                    ) from None
 
                 response_cookie = response.cookies.get(_SESSION_COOKIE_NAME)
                 cookie_token = (
@@ -708,10 +706,10 @@ class NanoKVMClient:
                     body_token = LoginRsp.model_validate(
                         raw_response["data"]
                     ).token.strip()
-                except ValidationError as err:
+                except ValidationError:
                     raise NanoKVMInvalidResponseError(
                         "Invalid authentication response data"
-                    ) from err
+                    ) from None
 
             token = cookie_token or body_token
             if not token:

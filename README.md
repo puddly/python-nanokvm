@@ -59,6 +59,11 @@ except NanoKVMPermissionError as error:
     print(error.status, error.method, error.path)
 ```
 
+API errors include the numeric `code` in their printable message. The original
+firmware `msg` and `data` remain available on `NanoKVMApiError` for explicit
+inspection, but are omitted from automatic diagnostics because they can contain
+sensitive response values.
+
 ### Changing a password
 
 The password method keeps its two positional arguments and accepts the current
