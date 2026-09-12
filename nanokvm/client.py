@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable, Coroutine
 import contextlib
 import functools
+from http.cookies import Morsel
 import io
 import json
 import logging
@@ -463,6 +464,7 @@ class NanoKVMClient:
         assert self._session is not None
         assert self._ssl_config is not None
 
+        self._clear_session_cookies()
         request_headers = {
             hdrs.ACCEPT: "application/json",
             **kwargs.pop("headers", {}),
@@ -478,6 +480,9 @@ class NanoKVMClient:
             ssl=self._ssl_config,
             **kwargs,
         ) as response:
+            # The explicit token owns the session. Do not leave response cookies
+            # available to another client sharing this HTTP session.
+            self._clear_session_cookies()
             if authenticate and response.status == 401:
                 await self._clear_local_session()
                 raise NanoKVMNotAuthenticatedError(
@@ -763,7 +768,30 @@ class NanoKVMClient:
         """Clear local authentication and transport state without closing HTTP."""
         self._token = None
         self._mouse_buttons = 0
+        self._clear_session_cookies()
         await self._close_ws()
+
+    def _clear_session_cookies(self) -> None:
+        """Remove only session cookies whose scope overlaps this device's API."""
+        if self._session is None:
+            return
+        host = self.url.raw_host or ""
+        base_path = self.url.path.rstrip("/")
+
+        def is_device_session(cookie: Morsel[str]) -> bool:
+            if cookie.key != _SESSION_COOKIE_NAME:
+                return False
+            domain = cookie["domain"].lstrip(".")
+            if domain and host != domain and not host.endswith(f".{domain}"):
+                return False
+            path = cookie["path"].rstrip("/")
+            return (
+                base_path == path
+                or base_path.startswith(f"{path}/")
+                or path.startswith(f"{base_path}/")
+            )
+
+        self._session.cookie_jar.clear(is_device_session)
 
     async def _uses_current_password_contract(self) -> bool:
         """Determine whether this device uses the 2.5.1 password contract."""
@@ -1985,11 +2013,15 @@ class NanoKVMClient:
                 assert self._session is not None
                 assert self._ssl_config is not None
 
+                # ws_connect has no per-request cookies argument, and aiohttp's
+                # jar would otherwise override the explicit Cookie header.
+                self._clear_session_cookies()
                 self._ws = await self._session.ws_connect(
                     str(ws_url),
                     headers={"Cookie": f"nano-kvm-token={self._token}"},
                     ssl=self._ssl_config,
                 )
+                self._clear_session_cookies()
                 return self._ws
         except aiohttp.ClientResponseError as err:
             method = getattr(err.request_info, "method", hdrs.METH_GET)
