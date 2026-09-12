@@ -717,9 +717,6 @@ class NanoKVMClient:
                     "Authentication response missing token."
                 )
 
-            if self._token != token:
-                await self._close_ws()
-                self._mouse_buttons = 0
             self._token = token
         except NanoKVMApiError as err:
             if err.code == ApiResponseCode.INVALID_USERNAME_OR_PASSWORD.value:
@@ -731,6 +728,8 @@ class NanoKVMClient:
 
     async def authenticate(self, username: str, password: str) -> None:
         """Authenticate and store the session token."""
+        # A failed identity switch must never leave the previous account usable.
+        await self._clear_local_session()
         _LOGGER.debug("Attempting authentication for user: %s", username)
 
         if self._use_password_obfuscation is True:

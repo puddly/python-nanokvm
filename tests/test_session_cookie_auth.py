@@ -15,6 +15,7 @@ from nanokvm.client import (
     NanoKVMAuthenticationFailure,
     NanoKVMClient,
     NanoKVMInvalidResponseError,
+    NanoKVMNotAuthenticatedError,
 )
 from nanokvm.models import HWVersion
 
@@ -170,7 +171,63 @@ async def test_empty_login_response_is_not_authentication_disabled() -> None:
             with pytest.raises(NanoKVMInvalidResponseError, match="missing token"):
                 await client.authenticate("synthetic-user", "synthetic-password")
 
-            assert client.token == "disabled"
+            assert client.token is None
+
+
+@pytest.mark.parametrize("failure", ["credentials", "forbidden", "format", "network"])
+async def test_failed_reauthentication_cannot_keep_previous_identity(
+    failure: str,
+) -> None:
+    """A failed identity switch must not retain an old privileged session."""
+    old_ws = AsyncMock()
+    old_ws.closed = False
+    async with NanoKVMClient(
+        _BASE_URL, token="previous-admin", use_password_obfuscation=True
+    ) as client:
+        client._ws = old_ws
+        client._mouse_buttons = 1
+        with aioresponses() as mocked:
+            if failure == "credentials":
+                mocked.post(
+                    _LOGIN_URL, payload={"code": -2, "msg": "invalid", "data": None}
+                )
+                error: type[Exception] = NanoKVMAuthenticationFailure
+            elif failure == "forbidden":
+                mocked.post(_LOGIN_URL, status=403, body='"forbidden"')
+                error = aiohttp.ClientResponseError
+            elif failure == "network":
+                mocked.post(_LOGIN_URL, exception=aiohttp.ClientConnectionError())
+                error = aiohttp.ClientConnectionError
+            else:
+                mocked.post(_LOGIN_URL, payload=_login_payload())
+                error = NanoKVMInvalidResponseError
+            with pytest.raises(error):
+                await client.authenticate("other-user", "synthetic-password")
+            assert client.token is None
+            assert client._mouse_buttons == 0
+            old_ws.close.assert_awaited_once()
+            with pytest.raises(NanoKVMNotAuthenticatedError):
+                await client.get_account()
+            with pytest.raises(NanoKVMNotAuthenticatedError):
+                await client._get_ws()
+            assert len(mocked.requests[("POST", yarl.URL(_LOGIN_URL))]) == 1
+
+
+async def test_reauthentication_clears_transport_even_when_token_is_reissued() -> None:
+    """Transport state belongs to an authentication attempt, not a token string."""
+    old_ws = AsyncMock()
+    old_ws.closed = False
+    async with NanoKVMClient(_BASE_URL, token="same-token") as client:
+        client._ws = old_ws
+        client._mouse_buttons = 1
+        with aioresponses() as mocked:
+            mocked.post(_LOGIN_URL, payload=_login_payload({"token": "same-token"}))
+            mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+            await client.authenticate("synthetic-user", "synthetic-password")
+        assert client.token == "same-token"
+        assert client._ws is None
+        assert client._mouse_buttons == 0
+        old_ws.close.assert_awaited_once()
 
 
 async def test_authentication_uses_received_token_for_http_requests() -> None:
