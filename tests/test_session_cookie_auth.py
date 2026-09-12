@@ -83,6 +83,49 @@ async def test_cookie_token_has_priority_over_legacy_body_token() -> None:
             assert client.token == "cookie-token"
 
 
+@pytest.mark.parametrize("data", [{}, {"count": 0}, {"token": ["invalid"]}, "unused"])
+async def test_cookie_login_ignores_unused_legacy_body(data: object) -> None:
+    """A valid fresh cookie must not depend on the obsolete body token schema."""
+    async with NanoKVMClient(_BASE_URL) as client:
+        with aioresponses() as mocked:
+            mocked.post(
+                _LOGIN_URL,
+                payload=_login_payload(data),
+                headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/"},
+            )
+            mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+            await client.authenticate("synthetic-user", "synthetic-password")
+            assert client.token == "cookie-token"
+
+
+async def test_empty_cookie_falls_back_to_legacy_body_token() -> None:
+    """An empty Set-Cookie does not hide a valid legacy token."""
+    async with NanoKVMClient(_BASE_URL) as client:
+        with aioresponses() as mocked:
+            mocked.post(
+                _LOGIN_URL,
+                payload=_login_payload({"token": "body-token"}),
+                headers={"Set-Cookie": "nano-kvm-token=; Path=/"},
+            )
+            mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+            await client.authenticate("synthetic-user", "synthetic-password")
+            assert client.token == "body-token"
+
+
+async def test_cookie_does_not_bypass_envelope_validation() -> None:
+    """Cookie precedence only applies after the API envelope is validated."""
+    async with NanoKVMClient(_BASE_URL) as client:
+        with aioresponses() as mocked:
+            mocked.post(
+                _LOGIN_URL,
+                payload={"data": {"token": "body-token"}},
+                headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/"},
+            )
+            with pytest.raises(NanoKVMInvalidResponseError):
+                await client.authenticate("synthetic-user", "synthetic-password")
+            assert client.token is None
+
+
 async def test_legacy_body_token_login_remains_supported() -> None:
     """Older firmware continues to authenticate with a token in response data."""
     async with NanoKVMClient(_BASE_URL) as client:

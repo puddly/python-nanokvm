@@ -700,18 +700,15 @@ class NanoKVMClient:
             # Validate the API code before accepting a token from either source.
             self._validate_api_response(raw_response)
 
-            body_token = ""
-            if isinstance(raw_response, dict) and raw_response.get("data") is not None:
+            token = cookie_token
+            if not token and raw_response.get("data") is not None:
                 try:
-                    body_token = LoginRsp.model_validate(
-                        raw_response["data"]
-                    ).token.strip()
+                    token = LoginRsp.model_validate(raw_response["data"]).token.strip()
                 except ValidationError:
                     raise NanoKVMInvalidResponseError(
                         "Invalid authentication response data"
                     ) from None
 
-            token = cookie_token or body_token
             if not token:
                 raise NanoKVMInvalidResponseError(
                     "Authentication response missing token."
