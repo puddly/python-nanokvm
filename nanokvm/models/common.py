@@ -148,6 +148,7 @@ class LoginRsp(BaseModel):
 
 class GetAccountRsp(BaseModel):
     username: str
+    role: str | None = None
 
 
 class ChangePasswordReq(BaseModel):
