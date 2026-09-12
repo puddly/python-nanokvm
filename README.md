@@ -38,6 +38,9 @@ async with NanoKVMClient("https://kvm.local/api/") as client:
 
 ### Account roles and permissions
 
+Calling `authenticate()` clears the previous local session and input state before
+attempting a new login. If that login fails, the client stays unauthenticated.
+
 `get_account()` exposes the optional `role` returned by newer firmware. The
 value is a string so unknown future roles remain readable; older firmware may
 return `None`. A logged-in account can receive `NanoKVMPermissionError` when a
