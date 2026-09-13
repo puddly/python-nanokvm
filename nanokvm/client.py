@@ -341,6 +341,7 @@ class NanoKVMClient:
         self._session: ClientSession | None = session
         self._external_session_provided = session is not None
         self._token = token
+        self._session_generation = 0
         self._request_timeout = request_timeout
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ws_lock = asyncio.Lock()
@@ -455,6 +456,7 @@ class NanoKVMClient:
         **kwargs: Any,
     ) -> AsyncIterator[ClientResponse]:
         """Make an API request."""
+        generation = self._session_generation
         cookies = {}
         if authenticate:
             if not self._token:
@@ -484,7 +486,7 @@ class NanoKVMClient:
             # available to another client sharing this HTTP session.
             self._clear_session_cookies()
             if authenticate and response.status == 401:
-                await self._clear_local_session()
+                await self._clear_local_session(expected_generation=generation)
                 raise NanoKVMNotAuthenticatedError(
                     "NanoKVM session is no longer authenticated"
                 )
@@ -757,18 +759,33 @@ class NanoKVMClient:
 
     async def logout(self) -> None:
         """Log out and clear the session token."""
+        generation = self._session_generation
         try:
             if self._token and self._token != "disabled":
                 await self._api_request_json(hdrs.METH_POST, "/auth/logout")
         finally:
-            await self._clear_local_session()
+            await self._clear_local_session(expected_generation=generation)
 
-    async def _clear_local_session(self) -> None:
+    async def _clear_local_session(
+        self, *, expected_generation: int | None = None
+    ) -> None:
         """Clear local authentication and transport state without closing HTTP."""
-        self._token = None
-        self._mouse_buttons = 0
-        self._clear_session_cookies()
-        await self._close_ws()
+        async with self._ws_lock:
+            if (
+                expected_generation is not None
+                and expected_generation != self._session_generation
+            ):
+                return
+            self._session_generation += 1
+            self._token = None
+            self._mouse_buttons = 0
+            self._clear_session_cookies()
+            ws = self._ws
+            self._ws = None
+        # Detach state atomically, then close only the old transport. Network I/O
+        # must not block a new login or close its replacement WebSocket.
+        if ws is not None and not ws.closed:
+            await ws.close()
 
     def _clear_session_cookies(self) -> None:
         """Remove only session cookies whose scope overlaps this device's API."""
@@ -841,6 +858,7 @@ class NanoKVMClient:
                     "username must match the authenticated account on NanoKVM 2.5.1"
                 )
 
+            generation = self._session_generation
             await self._api_request_json(
                 hdrs.METH_POST,
                 "/auth/password",
@@ -849,7 +867,7 @@ class NanoKVMClient:
                     password=obfuscate_password(new_password),
                 ),
             )
-            await self._clear_local_session()
+            await self._clear_local_session(expected_generation=generation)
             return
 
         if self._use_password_obfuscation is None:
@@ -1993,6 +2011,7 @@ class NanoKVMClient:
 
     async def _get_ws(self) -> aiohttp.ClientWebSocketResponse:
         """Get or create WebSocket connection for mouse events."""
+        generation = self._session_generation
         try:
             async with self._ws_lock:
                 if self._ws is not None and not self._ws.closed:
@@ -2004,6 +2023,8 @@ class NanoKVMClient:
 
                 if not self._token:
                     raise NanoKVMNotAuthenticatedError("Client is not authenticated")
+
+                generation = self._session_generation
 
                 # WebSocket URL uses ws:// or wss:// scheme
                 scheme = "ws" if self.url.scheme == "http" else "wss"
@@ -2027,7 +2048,7 @@ class NanoKVMClient:
             if err.status == 401:
                 # _clear_local_session acquires _ws_lock, so do this after the
                 # lock above has been released to avoid a self-deadlock.
-                await self._clear_local_session()
+                await self._clear_local_session(expected_generation=generation)
                 raise NanoKVMNotAuthenticatedError(
                     "NanoKVM session is no longer authenticated"
                 ) from err
