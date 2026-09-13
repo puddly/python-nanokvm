@@ -1,7 +1,9 @@
 """Exercise session ownership against an actual HTTP/WebSocket server."""
 
+import asyncio
 from collections.abc import AsyncIterator
 import io
+from types import SimpleNamespace
 
 import aiohttp
 from aiohttp import web
@@ -40,6 +42,12 @@ async def session_server() -> AsyncIterator[str]:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         await ws.send_str(request.cookies.get("nano-kvm-token", "anonymous"))
+        await ws.send_json(
+            {
+                "proxy_header": request.headers.get("X-Proxy-Key"),
+                "proxy_cookie": request.cookies.get("proxy-session"),
+            }
+        )
         async for _ in ws:
             pass
         return ws
@@ -164,3 +172,88 @@ async def test_failed_logout_removes_only_device_session_cookies(
                 == "other-service"
             )
         assert not session.closed
+
+
+async def test_async_traces_cannot_replace_websocket_identity(
+    session_server: str,
+) -> None:
+    """Another login can update the jar while async request tracing is paused."""
+    ws_started, cookie_received, release = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+    trace = aiohttp.TraceConfig()
+
+    async def start(
+        session: aiohttp.ClientSession,
+        context: SimpleNamespace,
+        params: aiohttp.TraceRequestStartParams,
+    ) -> None:
+        if params.url.path.endswith("/ws"):
+            ws_started.set()
+            await cookie_received.wait()
+
+    async def end(
+        session: aiohttp.ClientSession,
+        context: SimpleNamespace,
+        params: aiohttp.TraceRequestEndParams,
+    ) -> None:
+        if params.url.path.endswith("/auth/login"):
+            cookie_received.set()
+            await release.wait()
+
+    trace.on_request_start.append(start)
+    trace.on_request_end.append(end)
+    async with aiohttp.ClientSession(trace_configs=[trace]) as session:
+        session.headers["X-Proxy-Key"] = "synthetic-proxy-key"
+        session.cookie_jar.update_cookies(
+            {"proxy-session": "synthetic-proxy-cookie"}, yarl.URL(session_server)
+        )
+        async with (
+            NanoKVMClient(session_server, session=session, token="reader") as reader,
+            NanoKVMClient(session_server, session=session) as admin,
+        ):
+            async with asyncio.timeout(2):
+                ws_pending = asyncio.create_task(reader._get_ws())
+                await ws_started.wait()
+                login_pending = asyncio.create_task(
+                    admin.authenticate("admin", "password")
+                )
+                try:
+                    ws = await ws_pending
+                    identity = await ws.receive_str()
+                    proxy_state = await ws.receive_json()
+                finally:
+                    release.set()
+                    await login_pending
+            assert identity == "reader"
+            assert proxy_state == {
+                "proxy_header": "synthetic-proxy-key",
+                "proxy_cookie": "synthetic-proxy-cookie",
+            }
+        assert not session.closed
+        assert session.connector is not None and not session.connector.closed
+        async with session.get(session_server + "vm/hardware") as response:
+            assert response.status == 200
+
+
+async def test_closed_external_session_cannot_open_websocket(
+    session_server: str,
+) -> None:
+    """A closed external connector must never be replaced by an unowned one."""
+    async with (
+        aiohttp.ClientSession() as session,
+        NanoKVMClient(session_server, session=session, token="reader") as client,
+    ):
+        await session.close()
+        try:
+            with pytest.raises(RuntimeError, match="Session is closed"):
+                await client._get_ws()
+        finally:
+            # Also clean up the accidental connector when testing a regression.
+            if (
+                client._ws_session is not None
+                and client._ws_session.connector is not None
+            ):
+                await client._ws_session.connector.close()

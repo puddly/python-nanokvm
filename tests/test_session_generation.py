@@ -85,11 +85,11 @@ async def test_websocket_401_waiting_for_cleanup_cannot_clear_new_login() -> Non
     async with NanoKVMClient(_URL, token="old-session") as client:
         original_clear = client._clear_local_session
 
-        async def delayed_clear(*args: Any, **kwargs: Any) -> None:
+        async def delayed_clear(*args: Any, **kwargs: Any) -> int:
             if asyncio.current_task() is pending:
                 cleanup_started.set()
                 await release.wait()
-            await original_clear(*args, **kwargs)
+            return await original_clear(*args, **kwargs)
 
         with (
             patch.object(client, "_clear_local_session", side_effect=delayed_clear),

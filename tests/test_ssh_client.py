@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from typing import Any
 from unittest.mock import Mock, patch
@@ -141,3 +142,90 @@ async def test_authenticate_can_explicitly_allow_unknown_host_key() -> None:
 
     policy = fake_client.set_missing_host_key_policy.call_args.args[0]
     assert isinstance(policy, paramiko.AutoAddPolicy)
+
+
+async def test_concurrent_command_timeout_closes_only_its_own_channel() -> None:
+    """Timeout cleanup cannot target the last channel opened by another call."""
+    first, second = _FakeChannel(), _FakeChannel()
+    first_started, second_started = threading.Event(), threading.Event()
+
+    class BlockingStream(_FakeStream):
+        def read(self) -> bytes:
+            started = first_started if self.channel is first else second_started
+            started.set()
+            self.channel.close_event.wait(2)
+            return b"done"
+
+    def execute(command: str) -> tuple[Mock, BlockingStream, BlockingStream]:
+        channel = first if command == "first" else second
+        return Mock(), BlockingStream(channel, b""), BlockingStream(channel, b"")
+
+    client = NanoKVMSSH("synthetic.local")
+    fake_client = Mock()
+    fake_client.exec_command.side_effect = execute
+    client.ssh_client = fake_client
+    pending1 = asyncio.create_task(client.run_command("first", timeout=0.2))
+    assert await asyncio.to_thread(first_started.wait, 1)
+    pending2 = asyncio.create_task(client.run_command("second", timeout=1))
+    assert await asyncio.to_thread(second_started.wait, 1)
+    try:
+        with pytest.raises(NanoKVMSSHCommandError, match="timed out"):
+            await pending1
+        assert first.closed
+        assert not second.closed
+        second.close()
+        assert await pending2 == "done"
+    finally:
+        first.close()
+        second.close()
+        await asyncio.gather(pending1, pending2, return_exceptions=True)
+
+
+async def test_channel_created_after_timeout_is_closed() -> None:
+    """A worker may finish opening its channel after the caller times out."""
+    opening, release = threading.Event(), threading.Event()
+    channel = _FakeChannel()
+
+    def execute(command: str) -> tuple[Mock, _FakeStream, _FakeStream]:
+        opening.set()
+        release.wait(2)
+        return Mock(), _FakeStream(channel, b""), _FakeStream(channel, b"")
+
+    client = NanoKVMSSH("synthetic.local")
+    fake_client = Mock()
+    fake_client.exec_command.side_effect = execute
+    client.ssh_client = fake_client
+    pending = asyncio.create_task(client.run_command("synthetic", timeout=0.1))
+    assert await asyncio.to_thread(opening.wait, 1)
+    try:
+        with pytest.raises(NanoKVMSSHCommandError, match="timed out"):
+            await pending
+    finally:
+        release.set()
+    assert await asyncio.to_thread(channel.close_event.wait, 1)
+
+
+async def test_cancelled_command_closes_its_channel() -> None:
+    """Cancelling the asyncio task must also clean up the worker's channel."""
+    started = threading.Event()
+    channel = _FakeChannel()
+
+    class BlockingStream(_FakeStream):
+        def read(self) -> bytes:
+            started.set()
+            self.channel.close_event.wait(2)
+            return b""
+
+    client = NanoKVMSSH("synthetic.local")
+    client.ssh_client = _fake_client(
+        BlockingStream(channel, b""), _FakeStream(channel, b"")
+    )
+    pending = asyncio.create_task(client.run_command("synthetic"))
+    assert await asyncio.to_thread(started.wait, 1)
+    try:
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        assert channel.closed
+    finally:
+        channel.close()

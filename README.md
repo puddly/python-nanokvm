@@ -40,6 +40,14 @@ async with NanoKVMClient("https://kvm.local/api/") as client:
 
 Calling `authenticate()` clears the previous local session and input state before
 attempting a new login. If that login fails, the client stays unauthenticated.
+An authentication attempt superseded by another login or logout raises
+`NanoKVMNotAuthenticatedError`. A password change also raises this error if the
+session changes before the request is sent, so it cannot target a different account.
+
+When using an external `aiohttp.ClientSession`, WebSockets use an isolated cookie
+jar and share its connector without closing it. Default headers, applicable proxy
+cookies, basic authentication, environment proxy settings, and tracing are retained.
+Custom session subclasses and session middleware apply to HTTP requests only.
 
 `get_account()` exposes the optional `role` returned by newer firmware. The
 value is a string so unknown future roles remain readable; older firmware may

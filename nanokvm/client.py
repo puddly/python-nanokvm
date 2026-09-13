@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable, Coroutine
 import contextlib
 import functools
-from http.cookies import Morsel
+from http.cookies import Morsel, SimpleCookie
 import io
 import json
 import logging
@@ -344,6 +344,7 @@ class NanoKVMClient:
         self._session_generation = 0
         self._request_timeout = request_timeout
         self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._ws_session: ClientSession | None = None
         self._ws_lock = asyncio.Lock()
         self._mouse_buttons = 0
         self._mouse_mode = "relative"
@@ -440,6 +441,10 @@ class NanoKVMClient:
         # Close WebSocket connection
         await self._close_ws()
 
+        if self._ws_session is not None:
+            await self._ws_session.close()
+            self._ws_session = None
+
         # Close HTTP session
         if self._session is not None and not self._external_session_provided:
             await self._session.close()
@@ -453,9 +458,12 @@ class NanoKVMClient:
         *,
         authenticate: bool = True,
         timeout: aiohttp.ClientTimeout | None = None,
+        expected_generation: int | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[ClientResponse]:
         """Make an API request."""
+        if expected_generation is not None:
+            self._check_session_generation(expected_generation)
         generation = self._session_generation
         cookies = {}
         if authenticate:
@@ -668,7 +676,9 @@ class NanoKVMClient:
 
     # ── Authentication ──────────────────────────────────────────────────
 
-    async def _do_authenticate(self, username: str, password_to_send: str) -> None:
+    async def _do_authenticate(
+        self, username: str, password_to_send: str, *, generation: int
+    ) -> None:
         """Perform a single authentication attempt with the given password."""
         try:
             # NanoKVM 2.5.1 moved the session token from the JSON payload to a
@@ -680,6 +690,7 @@ class NanoKVMClient:
                 hdrs.METH_POST,
                 "/auth/login",
                 authenticate=False,
+                expected_generation=generation,
                 json=LoginReq(username=username, password=password_to_send).model_dump(
                     by_alias=True,
                     exclude_none=True,
@@ -698,6 +709,7 @@ class NanoKVMClient:
                 )
 
             # Validate the API code before accepting a token from either source.
+            self._check_session_generation(generation)
             self._validate_api_response(raw_response)
 
             token = cookie_token
@@ -726,31 +738,43 @@ class NanoKVMClient:
     async def authenticate(self, username: str, password: str) -> None:
         """Authenticate and store the session token."""
         # A failed identity switch must never leave the previous account usable.
-        await self._clear_local_session()
+        generation = await self._clear_local_session()
         _LOGGER.debug("Attempting authentication for user: %s", username)
 
         if self._use_password_obfuscation is True:
             _LOGGER.debug("Using password obfuscation (forced)")
-            await self._do_authenticate(username, obfuscate_password(password))
+            await self._do_authenticate(
+                username, obfuscate_password(password), generation=generation
+            )
         elif self._use_password_obfuscation is False:
             _LOGGER.debug("Using plain text password (forced)")
-            await self._do_authenticate(username, password)
+            await self._do_authenticate(username, password, generation=generation)
         else:
             # Auto-detect: try obfuscated first, fall back to plain text
             _LOGGER.debug("Auto-detecting password mode")
             try:
-                await self._do_authenticate(username, obfuscate_password(password))
+                await self._do_authenticate(
+                    username, obfuscate_password(password), generation=generation
+                )
                 self._use_password_obfuscation = True
                 _LOGGER.info("Auto-detected obfuscated password mode")
             except NanoKVMAuthenticationFailure:
                 _LOGGER.debug(
                     "Obfuscated authentication failed, trying plain text password"
                 )
-                await self._do_authenticate(username, password)
+                await self._do_authenticate(username, password, generation=generation)
                 self._use_password_obfuscation = False
                 _LOGGER.info("Auto-detected plain text password mode")
 
         await self.detect_hardware()
+        self._check_session_generation(generation)
+
+    def _check_session_generation(self, generation: int) -> None:
+        """Reject an operation superseded by an authentication transition."""
+        if generation != self._session_generation:
+            raise NanoKVMNotAuthenticatedError(
+                "Session changed while the operation was in progress"
+            )
 
     async def logout(self) -> None:
         """Log out and clear the session token."""
@@ -763,15 +787,16 @@ class NanoKVMClient:
 
     async def _clear_local_session(
         self, *, expected_generation: int | None = None
-    ) -> None:
+    ) -> int:
         """Clear local authentication and transport state without closing HTTP."""
         async with self._ws_lock:
             if (
                 expected_generation is not None
                 and expected_generation != self._session_generation
             ):
-                return
+                return self._session_generation
             self._session_generation += 1
+            generation = self._session_generation
             self._token = None
             self._mouse_buttons = 0
             self._clear_session_cookies()
@@ -781,6 +806,7 @@ class NanoKVMClient:
         # must not block a new login or close its replacement WebSocket.
         if ws is not None and not ws.closed:
             await ws.close()
+        return generation
 
     def _clear_session_cookies(self) -> None:
         """Remove only session cookies whose scope overlaps this device's API."""
@@ -841,6 +867,7 @@ class NanoKVMClient:
         current_password: str | None = None,
     ) -> None:
         """Change the KVM password for the authenticated account."""
+        generation = self._session_generation
         if await self._uses_current_password_contract():
             if not current_password or not current_password.strip():
                 raise ValueError(
@@ -848,15 +875,16 @@ class NanoKVMClient:
                 )
 
             account = await self.get_account()
+            self._check_session_generation(generation)
             if account.username != username:
                 raise ValueError(
                     "username must match the authenticated account on NanoKVM 2.5.1"
                 )
 
-            generation = self._session_generation
             await self._api_request_json(
                 hdrs.METH_POST,
                 "/auth/password",
+                expected_generation=generation,
                 data=ChangePasswordV251Req(
                     current_password=obfuscate_password(current_password),
                     password=obfuscate_password(new_password),
@@ -880,6 +908,7 @@ class NanoKVMClient:
         await self._api_request_json(
             hdrs.METH_POST,
             "/auth/password",
+            expected_generation=generation,
             data=ChangePasswordReq(
                 username=username,
                 password=password_to_send,
@@ -2028,12 +2057,41 @@ class NanoKVMClient:
                 assert self._session is not None
                 assert self._ssl_config is not None
 
-                # ws_connect has no per-request cookies argument, and aiohttp's
-                # jar would otherwise override the explicit Cookie header.
+                # ws_connect cannot override cookies per request. An isolated
+                # jar prevents concurrent requests or async tracing callbacks
+                # from replacing this handshake's identity. Share the external
+                # connector without taking ownership of it.
+                if self._session.closed:
+                    raise RuntimeError("Session is closed")
+                if self._ws_session is None or self._ws_session.closed:
+                    self._ws_session = ClientSession(
+                        connector=self._session.connector,
+                        connector_owner=False,
+                        cookie_jar=aiohttp.DummyCookieJar(),
+                        auth=self._session.auth,
+                        trust_env=self._session.trust_env,
+                        trace_configs=self._session.trace_configs,
+                        skip_auto_headers=self._session.skip_auto_headers,
+                        timeout=aiohttp.ClientTimeout(total=self._request_timeout),
+                    )
+
+                headers = self._session.headers.copy()
+                cookies = SimpleCookie()
+                cookies.load(headers.get(hdrs.COOKIE, ""))
+                cookies.load(
+                    {
+                        name: cookie.value
+                        for name, cookie in self._session.cookie_jar.filter_cookies(
+                            ws_url
+                        ).items()
+                    }
+                )
+                cookies[_SESSION_COOKIE_NAME] = self._token
+                headers[hdrs.COOKIE] = cookies.output(header="", sep=";").strip()
                 self._clear_session_cookies()
-                self._ws = await self._session.ws_connect(
+                self._ws = await self._ws_session.ws_connect(
                     str(ws_url),
-                    headers={"Cookie": f"nano-kvm-token={self._token}"},
+                    headers=headers,
                     ssl=self._ssl_config,
                 )
                 self._clear_session_cookies()
@@ -2202,12 +2260,25 @@ class NanoKVMClient:
             await self._send_legacy_mouse_event(1, int(button), 0.0, 0.0)
             return
 
+        previous_buttons = self._mouse_buttons
+        generation = self._session_generation
         self._mouse_buttons |= int(button)
+        pressed_buttons = self._mouse_buttons
         if self._mouse_mode == "absolute":
             report = self._absolute_report()
         else:
             report = self._relative_report()
-        await self._send_mouse_report(report)
+        try:
+            await self._send_mouse_report(report)
+        except BaseException:
+            # Do not turn an unsent press into a drag on the next movement, or
+            # overwrite state changed by a newer session or another mouse call.
+            if (
+                self._session_generation == generation
+                and self._mouse_buttons == pressed_buttons
+            ):
+                self._mouse_buttons = previous_buttons
+            raise
 
     async def mouse_up(self) -> None:
         """

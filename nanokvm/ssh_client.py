@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from os import PathLike
+import threading
 
 import paramiko
 
@@ -29,6 +31,22 @@ class NanoKVMSSHCommandError(NanoKVMSSHError):
     """Exception for SSH command execution errors."""
 
 
+@dataclass
+class _CommandExecution:
+    """Channel and cancellation state shared with one executor worker."""
+
+    channel: paramiko.Channel | None = None
+    cancelled: threading.Event = field(default_factory=threading.Event)
+
+    def cancel(self) -> None:
+        # Publish cancellation first so a channel opened after this check is
+        # still closed by the worker, without affecting other executions.
+        self.cancelled.set()
+        channel = self.channel
+        if channel is not None:
+            channel.close()
+
+
 class NanoKVMSSH:
     """SSH client for NanoKVM terminal access."""
 
@@ -48,7 +66,6 @@ class NanoKVMSSH:
         self.known_hosts = known_hosts
         self.allow_unknown_host_key = allow_unknown_host_key
         self.ssh_client: paramiko.SSHClient | None = None
-        self._active_channel: paramiko.Channel | None = None
 
     async def authenticate(self, password: str) -> None:
         """Authenticate with SSH using password."""
@@ -97,7 +114,10 @@ class NanoKVMSSH:
                 "SSH not connected, call authenticate first"
             )
         loop = asyncio.get_running_loop()
-        command_future = loop.run_in_executor(None, self._exec_command_sync, command)
+        execution = _CommandExecution()
+        command_future = loop.run_in_executor(
+            None, self._exec_command_sync, self.ssh_client, command, execution
+        )
         try:
             output, error, exit_status = await asyncio.wait_for(
                 command_future,
@@ -111,20 +131,30 @@ class NanoKVMSSH:
                 )
             return output.strip()
         except asyncio.TimeoutError:
-            if self._active_channel is not None:
-                self._active_channel.close()
+            execution.cancel()
             raise NanoKVMSSHCommandError(
                 f"SSH command timed out after {timeout} seconds"
             ) from None
+        except asyncio.CancelledError:
+            execution.cancel()
+            raise
 
-    def _exec_command_sync(self, command: str) -> tuple[str, str, int]:
+    def _exec_command_sync(
+        self,
+        client: paramiko.SSHClient,
+        command: str,
+        execution: _CommandExecution,
+    ) -> tuple[str, str, int]:
         """Synchronous SSH command execution."""
-        assert self.ssh_client is not None  # Should be set after authenticate()
-        stdin, stdout, stderr = self.ssh_client.exec_command(command)
+        if execution.cancelled.is_set():
+            raise NanoKVMSSHCommandError("SSH command was cancelled")
+        stdin, stdout, stderr = client.exec_command(command)
         del stdin
         channel = stdout.channel
-        self._active_channel = channel
+        execution.channel = channel
         try:
+            if execution.cancelled.is_set():
+                raise NanoKVMSSHCommandError("SSH command was cancelled")
             with ThreadPoolExecutor(max_workers=2) as executor:
                 stdout_future = executor.submit(stdout.read)
                 stderr_future = executor.submit(stderr.read)
@@ -132,4 +162,4 @@ class NanoKVMSSH:
                 error = stderr_future.result().decode("utf-8")
             return output, error, channel.recv_exit_status()
         finally:
-            self._active_channel = None
+            channel.close()

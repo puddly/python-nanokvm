@@ -140,6 +140,16 @@ async def nanokvm_https_server(tmp_path: pathlib.Path) -> AsyncGenerator[str, No
     app.router.add_post("/api/auth/login", _handle_login)
     app.router.add_get("/api/vm/hardware", _handle_hardware)
 
+    async def websocket(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        await ws.send_str(request.cookies.get("nano-kvm-token", "anonymous"))
+        async for _ in ws:
+            pass
+        return ws
+
+    app.router.add_get("/api/ws", websocket)
+
     runner = web.AppRunner(app)
     await runner.setup()
 
@@ -211,3 +221,27 @@ async def test_certificate_pinning_wrong_hash(nanokvm_https_server: str) -> None
     ) as client:
         with pytest.raises(aiohttp.ServerFingerprintMismatch):
             await client.authenticate("admin", "test")
+
+
+@pytest.mark.parametrize("valid_pin", [True, False])
+async def test_websocket_preserves_certificate_pinning(
+    nanokvm_https_server: str, valid_pin: bool
+) -> None:
+    """The isolated WebSocket session must still enforce the client's TLS pin."""
+    fingerprint = await async_fetch_remote_fingerprint(nanokvm_https_server)
+    async with aiohttp.ClientSession() as session:
+        async with NanoKVMClient(
+            nanokvm_https_server,
+            session=session,
+            token="synthetic-token",
+            ssl_fingerprint=fingerprint if valid_pin else "AB" * 32,
+        ) as client:
+            if valid_pin:
+                ws = await client._get_ws()
+                assert await ws.receive_str() == "synthetic-token"
+            else:
+                with pytest.raises(aiohttp.ServerFingerprintMismatch):
+                    await client._get_ws()
+            transport = client._ws_session
+        assert transport is not None and transport.closed
+        assert session.connector is not None and not session.connector.closed
