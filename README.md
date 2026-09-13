@@ -15,6 +15,8 @@ async with NanoKVMClient("https://kvm.local/api/") as client:
     hardware = await client.get_hardware()
     gpio = await client.get_gpio()
     images = await client.get_images()
+    leds = await client.get_keyboard_led_status()
+    print(leds.num_lock, leds.caps_lock, leds.scroll_lock)
 
     await client.paste_text("Hello\nworld!")
     await client.mouse_click(MouseButton.LEFT, 0.5, 0.5)

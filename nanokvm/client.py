@@ -48,6 +48,7 @@ from .models.common import (
     GetHostnameRsp,
     GetImagesRsp,
     GetInfoRsp,
+    GetKeyboardLedStatusRsp,
     GetLeaderKeyRsp,
     GetMacRsp,
     GetMdnsStateRsp,
@@ -1497,6 +1498,15 @@ class NanoKVMClient:
             hdrs.METH_GET,
             "/hid/mode",
             response_model=GetHidModeRsp,
+        )
+
+    @require_application_version(non_pro="2.5.0")
+    async def get_keyboard_led_status(self) -> GetKeyboardLedStatusRsp:
+        """Get the keyboard lock LED state reported by the host computer."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/hid/leds",
+            response_model=GetKeyboardLedStatusRsp,
         )
 
     @require_application_version(non_pro="2.3.2", pro="1.2.8")

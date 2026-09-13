@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import IntEnum, StrEnum
 from typing import Any, Generic, Self, TypeVar
 
@@ -333,6 +334,18 @@ class SetWebTitleReq(BaseModel):
 # HID Models
 class GetHidModeRsp(BaseModel):
     mode: HidMode
+
+
+class GetKeyboardLedStatusRsp(BaseModel):
+    """Keyboard LED state reported by the host computer."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    num_lock: bool = Field(alias="numLock")
+    caps_lock: bool = Field(alias="capsLock")
+    scroll_lock: bool = Field(alias="scrollLock")
+    known: bool
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
 
 
 class SetHidModeReq(BaseModel):
