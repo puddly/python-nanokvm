@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import aiohttp
 import pytest
 
 from nanokvm.client import NanoKVMClient, NanoKVMNotAuthenticatedError
@@ -328,3 +329,38 @@ async def test_button_mapping(
     assert reports[0][1] == MouseButton.LEFT
     assert reports[2][1] == MouseButton.RIGHT
     assert reports[4][1] == MouseButton.MIDDLE
+
+
+@pytest.mark.parametrize("failure", ["forbidden", "connection", "cancelled"])
+async def test_failed_press_does_not_press_on_next_movement(failure: str) -> None:
+    """An unsent press must not turn later movement into a drag."""
+    from multidict import CIMultiDict, CIMultiDictProxy
+    import yarl
+
+    from nanokvm.client import NanoKVMPermissionError
+
+    info = aiohttp.RequestInfo(
+        yarl.URL("http://kvm.local/api/ws"), "GET", CIMultiDictProxy(CIMultiDict())
+    )
+    error: BaseException
+    expected: type[BaseException]
+    if failure == "forbidden":
+        error = aiohttp.WSServerHandshakeError(info, (), status=403)
+        expected = NanoKVMPermissionError
+    elif failure == "cancelled":
+        error = asyncio.CancelledError()
+        expected = asyncio.CancelledError
+    else:
+        error = aiohttp.ClientConnectionError("synthetic failure")
+        expected = aiohttp.ClientConnectionError
+    ws = AsyncMock(closed=False)
+    async with NanoKVMClient("http://kvm.local/api/", token="reader") as client:
+        client._hw_version = HWVersion.PCIE
+        client._application_version = "2.5.1"
+        with patch(
+            "aiohttp.ClientSession.ws_connect", AsyncMock(side_effect=[error, ws])
+        ):
+            with pytest.raises(expected):
+                await client.mouse_down()
+            await client.mouse_move_rel(0.1, 0)
+            assert ws.send_bytes.call_args.args[0] == bytes((2, 0, 13, 0, 0))

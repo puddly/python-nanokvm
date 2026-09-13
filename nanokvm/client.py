@@ -2260,12 +2260,25 @@ class NanoKVMClient:
             await self._send_legacy_mouse_event(1, int(button), 0.0, 0.0)
             return
 
+        previous_buttons = self._mouse_buttons
+        generation = self._session_generation
         self._mouse_buttons |= int(button)
+        pressed_buttons = self._mouse_buttons
         if self._mouse_mode == "absolute":
             report = self._absolute_report()
         else:
             report = self._relative_report()
-        await self._send_mouse_report(report)
+        try:
+            await self._send_mouse_report(report)
+        except BaseException:
+            # Do not turn an unsent press into a drag on the next movement, or
+            # overwrite state changed by a newer session or another mouse call.
+            if (
+                self._session_generation == generation
+                and self._mouse_buttons == pressed_buttons
+            ):
+                self._mouse_buttons = previous_buttons
+            raise
 
     async def mouse_up(self) -> None:
         """
