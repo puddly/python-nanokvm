@@ -2264,9 +2264,13 @@ class NanoKVMClient:
 
         Args:
             button: Mouse button to press (MouseButton.LEFT, MouseButton.RIGHT,
-                MouseButton.MIDDLE)
+                MouseButton.MIDDLE, MouseButton.BACK, MouseButton.FORWARD)
         """
         if not await self._uses_binary_mouse_protocol():
+            if button in (MouseButton.BACK, MouseButton.FORWARD):
+                raise NanoKVMNotSupportedError(
+                    "Back and Forward mouse buttons require the binary mouse protocol"
+                )
             await self._send_legacy_mouse_event(1, int(button), 0.0, 0.0)
             return
 
@@ -2318,7 +2322,7 @@ class NanoKVMClient:
 
         Args:
             button: Mouse button to click (MouseButton.LEFT, MouseButton.RIGHT,
-                MouseButton.MIDDLE)
+                MouseButton.MIDDLE, MouseButton.BACK, MouseButton.FORWARD)
             x: Optional X coordinate (0.0 to 1.0) for absolute positioning
                 before click
             y: Optional Y coordinate (0.0 to 1.0) for absolute positioning

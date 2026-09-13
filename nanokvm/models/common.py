@@ -105,6 +105,8 @@ class MouseButton(IntEnum):
     LEFT = 1
     RIGHT = 2
     MIDDLE = 4
+    BACK = 8
+    FORWARD = 16
 
 
 class _CaseInsensitiveStrEnum(StrEnum):

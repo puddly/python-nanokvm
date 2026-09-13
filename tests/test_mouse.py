@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock, patch
 import aiohttp
 import pytest
 
-from nanokvm.client import NanoKVMClient, NanoKVMNotAuthenticatedError
+from nanokvm.client import (
+    NanoKVMClient,
+    NanoKVMNotAuthenticatedError,
+    NanoKVMNotSupportedError,
+)
 from nanokvm.models import HWVersion, MouseButton
 
 
@@ -94,6 +98,46 @@ async def test_mouse_buttons_preserve_hid_state(
         bytes([2, 3, 0, 0, 0]),
         bytes([2, 0, 0, 0, 0]),
     ]
+
+
+@pytest.mark.parametrize(
+    ("button", "value"),
+    [(MouseButton.BACK, 8), (MouseButton.FORWARD, 16)],
+)
+def test_mouse_button_values_include_browser_navigation_buttons(
+    button: MouseButton, value: int
+) -> None:
+    """Back and Forward use the HID button bits introduced in 2.3.2."""
+    assert button.value == value
+
+
+@pytest.mark.parametrize("button", [MouseButton.BACK, MouseButton.FORWARD])
+async def test_mouse_navigation_buttons_use_binary_hid_reports(
+    client_with_mock_ws: tuple[NanoKVMClient, AsyncMock], button: MouseButton
+) -> None:
+    """Binary mouse reports expose Back and Forward button bits."""
+    client, mock_ws = client_with_mock_ws
+
+    await client.mouse_down(button)
+    await client.mouse_up()
+
+    assert _sent_reports(mock_ws) == [
+        bytes([2, button.value, 0, 0, 0]),
+        bytes([2, 0, 0, 0, 0]),
+    ]
+
+
+@pytest.mark.parametrize("button", [MouseButton.BACK, MouseButton.FORWARD])
+async def test_mouse_navigation_buttons_are_rejected_by_legacy_protocol(
+    legacy_client_with_mock_ws: tuple[NanoKVMClient, AsyncMock], button: MouseButton
+) -> None:
+    """Legacy JSON mouse protocol cannot represent Back or Forward."""
+    client, mock_ws = legacy_client_with_mock_ws
+
+    with pytest.raises(NanoKVMNotSupportedError, match="binary mouse protocol"):
+        await client.mouse_down(button)
+
+    mock_ws.send_json.assert_not_called()
 
 
 async def test_mouse_click_with_absolute_position(
