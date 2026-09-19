@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import aiohttp
 from aiohttp import ClientSession, web
@@ -33,6 +34,25 @@ from nanokvm.models import (
     StreamMode,
     VirtualDevice,
 )
+
+
+def test_client_initializes_internal_session_controller() -> None:
+    """HTTP, authentication, and session state have an internal owner."""
+    client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
+
+    assert hasattr(client, "_session_controller")
+
+
+async def test_authenticate_delegates_to_internal_session_controller() -> None:
+    """The public authentication method remains a compatibility wrapper."""
+    client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
+
+    with patch.object(
+        client._session_controller, "authenticate", new_callable=AsyncMock
+    ) as authenticate:
+        await client.authenticate("synthetic-user", "synthetic-password")
+
+    authenticate.assert_awaited_once_with("synthetic-user", "synthetic-password")
 
 
 def _mark_detected(
