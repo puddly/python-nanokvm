@@ -75,17 +75,33 @@ remain available as attributes but are omitted from automatic diagnostics.
 
 ## SSH
 
+SSH host-key verification is strict by default. Add the device key to the
+system known-hosts file or pass a separate file with `known_hosts`. Password
+authentication does not use an SSH agent or private-key discovery unless
+`allow_agent=True` or `look_for_keys=True` is set.
+Pass `connect_timeout`, `banner_timeout`, or `auth_timeout` to adjust the
+connection phases.
+
 ```python
+from pathlib import Path
+
 from nanokvm.ssh_client import NanoKVMSSH
 
-ssh = NanoKVMSSH("kvm.local")
-await ssh.authenticate("password")
+async with NanoKVMSSH(
+    "kvm.local",
+    known_hosts=Path.home() / ".ssh" / "known_hosts",
+) as ssh:
+    await ssh.authenticate("password")
 
-uptime = await ssh.run_command("cat /proc/uptime")
-disk = await ssh.run_command("df -h /")
-
-await ssh.disconnect()
+    uptime = await ssh.run_command("cat /proc/uptime")
+    disk = await ssh.run_command("df -h /")
 ```
+
+Set `allow_unknown_host_key=True` only for controlled testing; it disables
+host-key verification. Authentication failures raise
+`NanoKVMSSHAuthenticationError`, connection and host-key failures raise
+`NanoKVMSSHConnectionError`, and command failures raise
+`NanoKVMSSHCommandError`.
 
 ## HTTPS
 

@@ -10,7 +10,13 @@ from unittest.mock import Mock, patch
 import paramiko
 import pytest
 
-from nanokvm.ssh_client import NanoKVMSSH, NanoKVMSSHCommandError
+from nanokvm.ssh_client import (
+    NanoKVMSSH,
+    NanoKVMSSHAuthenticationError,
+    NanoKVMSSHCommandError,
+    NanoKVMSSHConnectionError,
+    NanoKVMSSHNotConnectedError,
+)
 
 
 class _FakeChannel:
@@ -229,3 +235,224 @@ async def test_cancelled_command_closes_its_channel() -> None:
         assert channel.closed
     finally:
         channel.close()
+
+
+@pytest.mark.asyncio
+async def test_reauthentication_closes_previous_connection_after_success() -> None:
+    previous_client = Mock()
+    replacement_client = Mock()
+    client = NanoKVMSSH("kvm.local")
+    client.ssh_client = previous_client
+
+    with patch(
+        "nanokvm.ssh_client.paramiko.SSHClient", return_value=replacement_client
+    ):
+        await client.authenticate("synthetic-password")
+
+    assert client.ssh_client is replacement_client
+    previous_client.close.assert_called_once_with()
+    replacement_client.close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_authentication_passes_banner_and_authentication_timeouts() -> None:
+    fake_client = Mock()
+    with patch("nanokvm.ssh_client.paramiko.SSHClient", return_value=fake_client):
+        await NanoKVMSSH("kvm.local").authenticate("synthetic-password")
+
+    fake_client.connect.assert_called_once_with(
+        "kvm.local",
+        port=22,
+        username="root",
+        password="synthetic-password",
+        timeout=10,
+        banner_timeout=10,
+        auth_timeout=10,
+        allow_agent=False,
+        look_for_keys=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_authentication_options_are_configurable() -> None:
+    fake_client = Mock()
+    client = NanoKVMSSH(
+        "kvm.local",
+        connect_timeout=3.5,
+        banner_timeout=4.5,
+        auth_timeout=5.5,
+        allow_agent=True,
+        look_for_keys=True,
+    )
+    with patch("nanokvm.ssh_client.paramiko.SSHClient", return_value=fake_client):
+        await client.authenticate("synthetic-password")
+
+    fake_client.connect.assert_called_once_with(
+        "kvm.local",
+        port=22,
+        username="root",
+        password="synthetic-password",
+        timeout=3.5,
+        banner_timeout=4.5,
+        auth_timeout=5.5,
+        allow_agent=True,
+        look_for_keys=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_connection_failure_has_different_error() -> None:
+    fake_client = Mock()
+    fake_client.connect.side_effect = OSError("connection refused")
+    client = NanoKVMSSH("kvm.local")
+
+    with (
+        patch("nanokvm.ssh_client.paramiko.SSHClient", return_value=fake_client),
+        pytest.raises(NanoKVMSSHConnectionError, match="connection refused"),
+    ):
+        await client.authenticate("synthetic-password")
+
+    fake_client.close.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_invalid_password_remains_an_authentication_error() -> None:
+    fake_client = Mock()
+    fake_client.connect.side_effect = paramiko.AuthenticationException(
+        "invalid password"
+    )
+    client = NanoKVMSSH("kvm.local")
+
+    with (
+        patch("nanokvm.ssh_client.paramiko.SSHClient", return_value=fake_client),
+        pytest.raises(NanoKVMSSHAuthenticationError, match="invalid password"),
+    ):
+        await client.authenticate("synthetic-password")
+
+    fake_client.close.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_authentication_closes_client_after_connect_finishes() -> None:
+    connect_started = threading.Event()
+    release_connect = threading.Event()
+    connect_finished = threading.Event()
+    closed_after_connect = threading.Event()
+    fake_client = Mock()
+
+    def connect(*_: Any, **__: Any) -> None:
+        connect_started.set()
+        release_connect.wait(1)
+        connect_finished.set()
+
+    close_calls = 0
+
+    def close() -> None:
+        nonlocal close_calls
+        close_calls += 1
+        if close_calls >= 2:
+            closed_after_connect.set()
+
+    fake_client.connect.side_effect = connect
+    fake_client.close.side_effect = close
+    client = NanoKVMSSH("kvm.local")
+    with patch("nanokvm.ssh_client.paramiko.SSHClient", return_value=fake_client):
+        pending = asyncio.create_task(client.authenticate("synthetic-password"))
+        assert await asyncio.to_thread(connect_started.wait, 1)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        release_connect.set()
+
+    assert await asyncio.to_thread(connect_finished.wait, 1)
+    assert await asyncio.to_thread(closed_after_connect.wait, 1)
+    assert fake_client.close.call_count >= 2
+    assert client.ssh_client is None
+
+
+@pytest.mark.asyncio
+async def test_transport_failure_is_reported_as_command_error_and_clears_client() -> (
+    None
+):
+    fake_client = Mock()
+    fake_client.exec_command.side_effect = paramiko.SSHException("transport dropped")
+    client = NanoKVMSSH("kvm.local")
+    client.ssh_client = fake_client
+
+    with pytest.raises(NanoKVMSSHCommandError, match="transport dropped"):
+        await client.run_command("synthetic")
+
+    assert client.ssh_client is None
+    fake_client.close.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_transport_failure_does_not_clear_replacement_client() -> None:
+    command_started = threading.Event()
+    release_command = threading.Event()
+    failed_client = Mock()
+
+    def execute_command(_: str) -> None:
+        command_started.set()
+        release_command.wait(1)
+        raise paramiko.SSHException("old transport dropped")
+
+    failed_client.exec_command.side_effect = execute_command
+    replacement_client = Mock()
+    client = NanoKVMSSH("kvm.local")
+    client.ssh_client = failed_client
+    pending = asyncio.create_task(client.run_command("synthetic"))
+    assert await asyncio.to_thread(command_started.wait, 1)
+    client.ssh_client = replacement_client
+    release_command.set()
+
+    with pytest.raises(NanoKVMSSHCommandError, match="old transport dropped"):
+        await pending
+
+    assert client.ssh_client is replacement_client
+    failed_client.close.assert_called_once_with()
+    replacement_client.close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_supersedes_in_flight_authentication() -> None:
+    connect_started = threading.Event()
+    release_connect = threading.Event()
+    previous_client = Mock()
+    replacement_client = Mock()
+
+    def connect(*_: Any, **__: Any) -> None:
+        connect_started.set()
+        release_connect.wait(1)
+
+    replacement_client.connect.side_effect = connect
+    client = NanoKVMSSH("kvm.local")
+    client.ssh_client = previous_client
+
+    with patch(
+        "nanokvm.ssh_client.paramiko.SSHClient", return_value=replacement_client
+    ):
+        pending = asyncio.create_task(client.authenticate("synthetic-password"))
+        assert await asyncio.to_thread(connect_started.wait, 1)
+        await client.disconnect()
+        release_connect.set()
+
+        with pytest.raises(NanoKVMSSHNotConnectedError, match="superseded"):
+            await pending
+
+    previous_client.close.assert_called_once_with()
+    replacement_client.close.assert_called_once_with()
+    assert client.ssh_client is None
+
+
+@pytest.mark.asyncio
+async def test_async_context_manager_disconnects_client() -> None:
+    fake_client = Mock()
+    client = NanoKVMSSH("kvm.local")
+    client.ssh_client = fake_client
+
+    async with client as entered:
+        assert entered is client
+
+    assert client.ssh_client is None
+    fake_client.close.assert_called_once_with()
