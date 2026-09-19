@@ -944,62 +944,10 @@ async def test_set_stream_mode_accepts_existing_string_values() -> None:
             assert calls[0].kwargs.get("json") == {"mode": "h264-direct"}
 
 
-async def test_enable_swap_404_is_not_supported() -> None:
-    """Test non-Pro swap enable 404 becomes NanoKVMNotSupportedError."""
-    async with NanoKVMClient(
-        "http://localhost:8888/api/", token="test-token"
-    ) as client:
-        client._hw_version = HWVersion.PCIE
-        client._application_version = "2.2.6"
-
-        with aioresponses() as m:
-            m.post("http://localhost:8888/api/vm/swap/enable", status=404)
-
-            with pytest.raises(NanoKVMNotSupportedError) as exc_info:
-                await client.enable_swap()
-
-            assert "enable_swap is unavailable on the detected non-Pro firmware" in str(
-                exc_info.value
-            )
-
-
-async def test_disable_swap_404_is_not_supported() -> None:
-    """Test non-Pro swap disable 404 becomes NanoKVMNotSupportedError."""
-    async with NanoKVMClient(
-        "http://localhost:8888/api/", token="test-token"
-    ) as client:
-        client._hw_version = HWVersion.PCIE
-        client._application_version = "2.2.6"
-
-        with aioresponses() as m:
-            m.post("http://localhost:8888/api/vm/swap/disable", status=404)
-
-            with pytest.raises(NanoKVMNotSupportedError) as exc_info:
-                await client.disable_swap()
-
-            expected_message = (
-                "disable_swap is unavailable on the detected non-Pro firmware"
-            )
-            assert expected_message in str(exc_info.value)
-
-
-@pytest.mark.parametrize("operation", ["enable_swap", "disable_swap"])
-async def test_swap_controls_reject_old_application_version(operation: str) -> None:
-    """Swap controls reject non-Pro firmware before requesting the endpoint."""
-    async with NanoKVMClient(
-        "http://localhost:8888/api/", token="test-token"
-    ) as client:
-        client._hw_version = HWVersion.PCIE
-        client._application_version = "2.2.5"
-
-        with aioresponses() as m:
-            with pytest.raises(NanoKVMNotSupportedError) as exc_info:
-                await getattr(client, operation)()
-
-            assert f"{operation} requires non-Pro application version >= 2.2.6" in str(
-                exc_info.value
-            )
-            assert not m.requests
+def test_legacy_swap_control_methods_are_not_exposed() -> None:
+    """The client does not expose routes removed from released firmware."""
+    assert not hasattr(NanoKVMClient, "enable_swap")
+    assert not hasattr(NanoKVMClient, "disable_swap")
 
 
 async def test_client_context_manager() -> None:

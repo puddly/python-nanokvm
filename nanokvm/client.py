@@ -1197,32 +1197,6 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.2.6")
-    async def enable_swap(self) -> None:
-        """Enable swap."""
-        try:
-            await self._api_request_json(hdrs.METH_POST, "/vm/swap/enable")
-        except aiohttp.ClientResponseError as err:
-            if err.status == 404:
-                raise NanoKVMNotSupportedError(
-                    "enable_swap is unavailable on the detected non-Pro firmware"
-                ) from err
-            raise
-
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.2.6")
-    async def disable_swap(self) -> None:
-        """Disable swap."""
-        try:
-            await self._api_request_json(hdrs.METH_POST, "/vm/swap/disable")
-        except aiohttp.ClientResponseError as err:
-            if err.status == 404:
-                raise NanoKVMNotSupportedError(
-                    "disable_swap is unavailable on the detected non-Pro firmware"
-                ) from err
-            raise
-
-    @require_hardware(HWFamily.NON_PRO)
     async def get_memory_limit(self) -> GetMemoryLimitRsp:
         """Get the configured Go memory limit."""
         return await self._api_request_json(
