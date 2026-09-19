@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 import contextlib
 import functools
 from http.cookies import Morsel, SimpleCookie
@@ -2191,21 +2191,26 @@ class NanoKVMClient:
             )
         )
 
-    async def _send_mouse_report(self, report: bytes) -> None:
-        """Send a binary NanoKVM mouse event and HID report."""
+    async def _send_ws(
+        self,
+        send: Callable[[aiohttp.ClientWebSocketResponse], Awaitable[None]],
+    ) -> None:
+        """Send one mouse message and invalidate the connection on failure."""
         ws = await self._get_ws()
         try:
-            await ws.send_bytes(bytes((2,)) + report)
+            await send(ws)
         except (aiohttp.ClientConnectionError, ConnectionError, RuntimeError):
             await self._invalidate_ws(ws)
             raise
+
+    async def _send_mouse_report(self, report: bytes) -> None:
+        """Send a binary NanoKVM mouse event and HID report."""
+        await self._send_ws(lambda ws: ws.send_bytes(bytes((2,)) + report))
 
     async def _send_legacy_mouse_event(
         self, event_type: int, button_state: int, x: float, y: float
     ) -> None:
         """Send a mouse event using the pre-2.3.2 JSON wire format."""
-        ws = await self._get_ws()
-
         if event_type == 2:
             x_value = int(x * 32768)
             y_value = int(y * 32768)
@@ -2221,11 +2226,7 @@ class NanoKVMClient:
 
         message = [2, event_type, button_state, x_value, y_value]
         _LOGGER.debug("Sending legacy mouse event: %s", message)
-        try:
-            await ws.send_json(message)
-        except (aiohttp.ClientConnectionError, ConnectionError, RuntimeError):
-            await self._invalidate_ws(ws)
-            raise
+        await self._send_ws(lambda ws: ws.send_json(message))
 
     async def mouse_move_abs(self, x: float, y: float) -> None:
         """
