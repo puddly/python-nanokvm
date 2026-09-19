@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 import contextlib
 import functools
 from http.cookies import Morsel, SimpleCookie
@@ -66,6 +66,7 @@ from .models.common import (
     GetWifiRsp,
     GpioType,
     HidMode,
+    HWFamily,
     HWVersion,
     ImageEnabledRsp,
     IsPasswordUpdatedRsp,
@@ -236,8 +237,8 @@ def _version_at_least(version: str, minimum: str) -> bool:
     return normalized_version >= normalized_minimum
 
 
-def require_hardware(*versions: HWVersion) -> Callable[[F], F]:
-    """Decorator that restricts a method to specific hardware versions."""
+def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
+    """Restrict a method to specific hardware versions or families."""
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
@@ -247,12 +248,33 @@ def require_hardware(*versions: HWVersion) -> Callable[[F], F]:
                     f"{func.__name__} requires hardware detection; "
                     f"call detect_hardware() first"
                 )
-            if self._hw_version not in versions:
-                allowed = ", ".join(v.value for v in versions)
-                raise NanoKVMNotSupportedError(
-                    f"{func.__name__} requires hardware: {allowed} "
-                    f"(detected: {self._hw_version})"
+            family = self._hw_version.family
+            matches = any(
+                (isinstance(requirement, HWFamily) and family is requirement)
+                or (
+                    isinstance(requirement, HWVersion)
+                    and self._hw_version is requirement
                 )
+                for requirement in requirements
+            )
+            if not matches:
+                allowed = ", ".join(requirement.value for requirement in requirements)
+                if all(
+                    isinstance(requirement, HWFamily) for requirement in requirements
+                ):
+                    detected = (
+                        family.value if family is not None else self._hw_version.value
+                    )
+                    message = (
+                        f"{func.__name__} requires hardware family: {allowed} "
+                        f"(detected: {detected})"
+                    )
+                else:
+                    message = (
+                        f"{func.__name__} requires hardware: {allowed} "
+                        f"(detected: {self._hw_version})"
+                    )
+                raise NanoKVMNotSupportedError(message)
             return await func(self, *args, **kwargs)
 
         return wrapper  # type: ignore[return-value]
@@ -275,7 +297,8 @@ def require_application_version(
                     return await func(self, *args, **kwargs)
                 await self.detect_hardware()
 
-            minimum = pro if self._hw_version == HWVersion.PRO else non_pro
+            assert self._hw_version is not None
+            minimum = pro if self._is_hardware_family(HWFamily.PRO) else non_pro
             if minimum is None:
                 return await func(self, *args, **kwargs)
 
@@ -288,7 +311,7 @@ def require_application_version(
                 self._application_version, minimum
             ):
                 hardware_family = (
-                    "Pro" if self._hw_version == HWVersion.PRO else "non-Pro"
+                    "Pro" if self._is_hardware_family(HWFamily.PRO) else "non-Pro"
                 )
                 raise NanoKVMNotSupportedError(
                     f"{func.__name__} requires {hardware_family} application "
@@ -508,6 +531,15 @@ class NanoKVMClient:
             response.raise_for_status()
             yield response
 
+    async def _read_json_response(self, response: ClientResponse) -> Any:
+        """Read a JSON response and normalize decoding failures."""
+        try:
+            return await response.json(content_type=None)
+        except (json.JSONDecodeError, UnicodeDecodeError, ValidationError):
+            raise NanoKVMInvalidResponseError(
+                "Invalid JSON response received"
+            ) from None
+
     @overload
     async def _api_request_json(
         self,
@@ -549,12 +581,7 @@ class NanoKVMClient:
             ),
             **kwargs,
         ) as response:
-            try:
-                raw_response = await response.json(content_type=None)
-            except (json.JSONDecodeError, ValidationError):
-                raise NanoKVMInvalidResponseError(
-                    "Invalid JSON response received"
-                ) from None
+            raw_response = await self._read_json_response(response)
 
         return self._validate_api_response(raw_response, response_model)
 
@@ -595,12 +622,7 @@ class NanoKVMClient:
             data=data,
             **kwargs,
         ) as response:
-            try:
-                raw_response = await response.json(content_type=None)
-            except (json.JSONDecodeError, ValidationError):
-                raise NanoKVMInvalidResponseError(
-                    "Invalid JSON response received"
-                ) from None
+            raw_response = await self._read_json_response(response)
 
         return self._validate_api_response(raw_response, response_model)
 
@@ -697,12 +719,7 @@ class NanoKVMClient:
                     exclude_none=True,
                 ),
             ) as response:
-                try:
-                    raw_response = await response.json(content_type=None)
-                except (json.JSONDecodeError, ValidationError):
-                    raise NanoKVMInvalidResponseError(
-                        "Invalid JSON response received"
-                    ) from None
+                raw_response = await self._read_json_response(response)
 
                 response_cookie = response.cookies.get(_SESSION_COOKIE_NAME)
                 cookie_token = (
@@ -831,14 +848,19 @@ class NanoKVMClient:
 
         self._session.cookie_jar.clear(is_device_session)
 
+    def _is_hardware_family(self, family: HWFamily) -> bool:
+        """Return whether the detected hardware belongs to ``family``."""
+        return self._hw_version is not None and self._hw_version.family is family
+
     async def _uses_current_password_contract(self) -> bool:
         """Determine whether this device uses the 2.5.1 password contract."""
+        if self._hw_version is None and self._token is None:
+            raise NanoKVMNotAuthenticatedError("Client is not authenticated")
         if self._hw_version is None:
-            if self._token is None:
-                raise NanoKVMNotAuthenticatedError("Client is not authenticated")
             await self.detect_hardware()
 
-        if self._hw_version == HWVersion.PRO:
+        assert self._hw_version is not None
+        if self._is_hardware_family(HWFamily.PRO):
             return False
 
         if self._application_version is None:
@@ -1139,14 +1161,14 @@ class NanoKVMClient:
         """Reboot the KVM device."""
         await self._api_request_json(hdrs.METH_POST, "/vm/system/reboot")
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def switch_to_pikvm(self) -> None:
         """Switch the system image to PiKVM."""
         await self._api_request_json(hdrs.METH_POST, "/vm/system/pikvm")
 
     # ── VM (non-Pro only) ──────────────────────────────────────────────
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     async def set_screen(self, setting: ScreenSettingType, value: int) -> None:
         """Set a non-Pro NanoKVM screen setting."""
         await self._api_request_json(
@@ -1155,7 +1177,7 @@ class NanoKVMClient:
             data=SetScreenReq(type=setting, value=value),
         )
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.2.6")
     async def get_swap_size(self) -> int:
         """Get Swap size."""
@@ -1166,7 +1188,7 @@ class NanoKVMClient:
         )
         return rsp.size
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.2.6")
     async def set_swap_size(self, size_mb: int) -> None:
         """Set the Swap size."""
@@ -1174,31 +1196,7 @@ class NanoKVMClient:
             hdrs.METH_POST, "/vm/swap", data=SetSwapSizeReq(size=size_mb)
         )
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
-    async def enable_swap(self) -> None:
-        """Enable swap."""
-        try:
-            await self._api_request_json(hdrs.METH_POST, "/vm/swap/enable")
-        except aiohttp.ClientResponseError as err:
-            if err.status == 404:
-                raise NanoKVMNotSupportedError(
-                    "enable_swap is unavailable on this non-Pro hardware/firmware"
-                ) from err
-            raise
-
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
-    async def disable_swap(self) -> None:
-        """Disable swap."""
-        try:
-            await self._api_request_json(hdrs.METH_POST, "/vm/swap/disable")
-        except aiohttp.ClientResponseError as err:
-            if err.status == 404:
-                raise NanoKVMNotSupportedError(
-                    "disable_swap is unavailable on this non-Pro hardware/firmware"
-                ) from err
-            raise
-
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     async def get_memory_limit(self) -> GetMemoryLimitRsp:
         """Get the configured Go memory limit."""
         return await self._api_request_json(
@@ -1207,7 +1205,7 @@ class NanoKVMClient:
             response_model=GetMemoryLimitRsp,
         )
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     async def set_memory_limit(self, enabled: bool, limit_mb: int) -> None:
         """Set or disable the Go memory limit."""
         await self._api_request_json(
@@ -1216,7 +1214,7 @@ class NanoKVMClient:
             data=SetMemoryLimitReq(enabled=enabled, limit=limit_mb),
         )
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     async def get_hdmi_state(self) -> GetHdmiStateRsp:
         """Get the HDMI state (PCIe variant)."""
         return await self._api_request_json(
@@ -1225,18 +1223,18 @@ class NanoKVMClient:
             response_model=GetHdmiStateRsp,
         )
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     async def reset_hdmi(self) -> None:
         """Reset the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/reset")
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.2.8")
     async def enable_hdmi(self) -> None:
         """Enable the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/enable")
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.2.8")
     async def disable_hdmi(self) -> None:
         """Disable the HDMI connection."""
@@ -1244,7 +1242,7 @@ class NanoKVMClient:
 
     # ── VM (Pro only) ──────────────────────────────────────────────────
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.7")
     async def refresh_virtual_device(self, device: str) -> None:
         """Refresh a virtual device (e.g. emmc)."""
@@ -1254,7 +1252,7 @@ class NanoKVMClient:
             data=RefreshVirtualDeviceReq(device=device),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.1.6")
     async def get_lcd_time_format(self) -> GetLcdTimeFormatRsp:
         """Get the LCD time format."""
@@ -1264,7 +1262,7 @@ class NanoKVMClient:
             response_model=GetLcdTimeFormatRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.1.6")
     async def set_lcd_time_format(self, fmt: LcdTimeFormat | str) -> None:
         """Set the LCD time format (12h/24h)."""
@@ -1274,7 +1272,7 @@ class NanoKVMClient:
             data=SetLcdTimeFormatReq(format=fmt),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def get_hdmi_capture(self) -> GetHdmiCaptureRsp:
         """Get HDMI capture status."""
         return await self._api_request_json(
@@ -1283,7 +1281,7 @@ class NanoKVMClient:
             response_model=GetHdmiCaptureRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def set_hdmi_capture(self, enabled: bool) -> None:
         """Set HDMI capture status."""
         await self._api_request_json(
@@ -1292,7 +1290,7 @@ class NanoKVMClient:
             data=SetHdmiCaptureReq(enabled=enabled),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def get_hdmi_passthrough(self) -> GetHdmiPassthroughRsp:
         """Get HDMI passthrough status."""
         return await self._api_request_json(
@@ -1301,7 +1299,7 @@ class NanoKVMClient:
             response_model=GetHdmiPassthroughRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def set_hdmi_passthrough(self, enabled: bool) -> None:
         """Set HDMI passthrough status."""
         await self._api_request_json(
@@ -1310,7 +1308,7 @@ class NanoKVMClient:
             data=SetHdmiPassthroughReq(enabled=enabled),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def get_edid(self) -> GetEdidRsp:
         """Get current EDID."""
         return await self._api_request_json(
@@ -1319,7 +1317,7 @@ class NanoKVMClient:
             response_model=GetEdidRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def switch_edid(self, edid: EdidValue) -> None:
         """Switch EDID."""
         await self._api_request_json(
@@ -1328,7 +1326,7 @@ class NanoKVMClient:
             data=SwitchEdidReq(edid=edid),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.3")
     async def get_custom_edid_list(self) -> GetCustomEdidListRsp:
         """Get custom EDID list."""
@@ -1338,7 +1336,7 @@ class NanoKVMClient:
             response_model=GetCustomEdidListRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.3")
     async def upload_edid(self, file_path: str | PathLike[str]) -> UploadEdidRsp:
         """Upload a custom EDID."""
@@ -1348,7 +1346,7 @@ class NanoKVMClient:
             response_model=UploadEdidRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.3")
     async def delete_edid(self, edid: str) -> None:
         """Delete a custom EDID."""
@@ -1358,7 +1356,7 @@ class NanoKVMClient:
             data=DeleteEdidReq(edid=edid),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.7")
     async def get_low_power(self) -> GetLowPowerRsp:
         """Get low power status."""
@@ -1368,7 +1366,7 @@ class NanoKVMClient:
             response_model=GetLowPowerRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.7")
     async def set_low_power(self, enable: bool) -> None:
         """Set low power mode."""
@@ -1378,7 +1376,7 @@ class NanoKVMClient:
             data=SetLowPowerReq(enable=enable),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def get_led_strip(self) -> GetLedStripRsp:
         """Get LED strip configuration."""
         return await self._api_request_json(
@@ -1387,7 +1385,7 @@ class NanoKVMClient:
             response_model=GetLedStripRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def set_led_strip(
         self,
         *,
@@ -1435,7 +1433,7 @@ class NanoKVMClient:
             ),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def get_timezone(self) -> GetTimeZoneRsp:
         """Get the configured timezone."""
         return await self._api_request_json(
@@ -1444,7 +1442,7 @@ class NanoKVMClient:
             response_model=GetTimeZoneRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def set_timezone(self, timezone: str) -> None:
         """Set the timezone."""
         await self._api_request_json(
@@ -1453,7 +1451,7 @@ class NanoKVMClient:
             data=SetTimeZoneReq(timezone=timezone),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.1.6")
     async def get_time_status(self) -> GetTimeStatusRsp:
         """Get time synchronization status."""
@@ -1463,13 +1461,13 @@ class NanoKVMClient:
             response_model=GetTimeStatusRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.1.6")
     async def sync_time(self) -> None:
         """Synchronize time."""
         await self._api_request_json(hdrs.METH_POST, "/vm/time/sync")
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.10")
     async def get_menubar_config(self) -> GetMenuBarConfigRsp:
         """Get menu bar configuration."""
@@ -1479,7 +1477,7 @@ class NanoKVMClient:
             response_model=GetMenuBarConfigRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.10")
     async def set_menubar_config(self, disabled_items: list[str]) -> None:
         """Set menu bar configuration."""
@@ -1500,7 +1498,7 @@ class NanoKVMClient:
             response_model=GetHidModeRsp,
         )
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.5.0")
     async def get_keyboard_led_status(self) -> GetKeyboardLedStatusRsp:
         """Get host keyboard LED state on non-Pro firmware 2.5.0 and newer.
@@ -1627,7 +1625,7 @@ class NanoKVMClient:
             data=DeleteImageReq(file=file),
         )
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     async def get_cdrom_status(self) -> GetCdRomRsp:
         """Check if the mounted image is in CD-ROM mode."""
         return await self._api_request_json(
@@ -1723,7 +1721,7 @@ class NanoKVMClient:
             data=SetMacNameReq(mac=mac, name=name),
         )
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.4.1")
     async def get_dns(self) -> GetDNSRsp:
         """Get DNS configuration."""
@@ -1733,7 +1731,7 @@ class NanoKVMClient:
             response_model=GetDNSRsp,
         )
 
-    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.4.1")
     async def set_dns(
         self, mode: DNSMode | str, servers: list[str] | None = None
@@ -1755,7 +1753,7 @@ class NanoKVMClient:
 
     # ── Network (Pro only) ─────────────────────────────────────────────
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.3")
     async def get_static_ip(self) -> GetStaticIPRsp:
         """Get static IP configuration."""
@@ -1765,7 +1763,7 @@ class NanoKVMClient:
             response_model=GetStaticIPRsp,
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.3")
     async def set_static_ip(self, enabled: bool, ip: str) -> None:
         """Set static IP configuration."""
@@ -1775,7 +1773,7 @@ class NanoKVMClient:
             data=SetStaticIPReq(enabled=enabled, ip=ip),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.1.7")
     async def scan_wifi(self) -> ScanWifiRsp:
         """Scan for available WiFi networks."""
@@ -1787,7 +1785,7 @@ class NanoKVMClient:
 
     # ── Stream (Pro only) ──────────────────────────────────────────────
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.6")
     async def set_rate_control_mode(self, mode: RateControlMode) -> None:
         """Set the stream rate control mode (CBR/VBR)."""
@@ -1797,7 +1795,7 @@ class NanoKVMClient:
             data=SetRateControlModeReq(mode=mode),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def set_stream_mode(self, mode: StreamMode | str) -> None:
         """Set the stream mode."""
         stream_mode = mode if isinstance(mode, StreamMode) else StreamMode(mode)
@@ -1807,7 +1805,7 @@ class NanoKVMClient:
             data=SetStreamModeReq(mode=stream_mode),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def set_stream_quality(self, quality: int) -> None:
         """Set the stream quality / bit-rate."""
         await self._api_request_json(
@@ -1816,7 +1814,7 @@ class NanoKVMClient:
             data=SetStreamQualityReq(quality=quality),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def set_gop(self, gop: int) -> None:
         """Set the stream GOP (Group of Pictures)."""
         await self._api_request_json(
@@ -1825,7 +1823,7 @@ class NanoKVMClient:
             data=SetGopReq(gop=gop),
         )
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.8")
     async def set_fps(self, fps: int) -> None:
         """Set the stream FPS."""
@@ -1900,12 +1898,16 @@ class NanoKVMClient:
 
     # ── Download ────────────────────────────────────────────────────────
 
+    def _image_download_prefix(self) -> str:
+        """Return the image download route prefix for the detected hardware."""
+        if self._is_hardware_family(HWFamily.PRO):
+            return "/storage/download"
+        return "/download"
+
     @require_application_version(non_pro="2.1.6")
     async def is_image_download_enabled(self) -> ImageEnabledRsp:
         """Check if the /data partition allows downloads."""
-        prefix = (
-            "/storage/download" if self._hw_version == HWVersion.PRO else "/download"
-        )
+        prefix = self._image_download_prefix()
         return await self._api_request_json(
             hdrs.METH_GET,
             f"{prefix}/image/enabled",
@@ -1915,9 +1917,7 @@ class NanoKVMClient:
     @require_application_version(non_pro="2.1.6")
     async def get_image_download_status(self) -> StatusImageRsp:
         """Get the status of an ongoing image download."""
-        prefix = (
-            "/storage/download" if self._hw_version == HWVersion.PRO else "/download"
-        )
+        prefix = self._image_download_prefix()
         return await self._api_request_json(
             hdrs.METH_GET,
             f"{prefix}/image/status",
@@ -1927,9 +1927,7 @@ class NanoKVMClient:
     @require_application_version(non_pro="2.1.6")
     async def download_image(self, url: str) -> StatusImageRsp:
         """Start downloading an image from a URL."""
-        prefix = (
-            "/storage/download" if self._hw_version == HWVersion.PRO else "/download"
-        )
+        prefix = self._image_download_prefix()
         return await self._api_request_json(
             hdrs.METH_POST,
             f"{prefix}/image",
@@ -1990,37 +1988,37 @@ class NanoKVMClient:
 
     # ── Extensions (Pro only) ──────────────────────────────────────────
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def assistant_install(self) -> None:
         """Install assistant dependencies."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/assistant/install")
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def assistant_start(self) -> None:
         """Start assistant."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/assistant/start")
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def kvmadmin_install(self) -> None:
         """Install kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/install")
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def kvmadmin_uninstall(self) -> None:
         """Uninstall kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/uninstall")
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def kvmadmin_start(self) -> None:
         """Start kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/start")
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def kvmadmin_stop(self) -> None:
         """Stop kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/stop")
 
-    @require_hardware(HWVersion.PRO)
+    @require_hardware(HWFamily.PRO)
     async def kvmadmin_status(self) -> GetKvmadminStatusRsp:
         """Get kvmadmin status."""
         return await self._api_request_json(
@@ -2151,7 +2149,7 @@ class NanoKVMClient:
 
         minimum_version = (
             _BINARY_MOUSE_MIN_PRO_VERSION
-            if self._hw_version == HWVersion.PRO
+            if self._is_hardware_family(HWFamily.PRO)
             else _BINARY_MOUSE_MIN_NON_PRO_VERSION
         )
         return self._application_version is None or _version_at_least(
@@ -2193,21 +2191,32 @@ class NanoKVMClient:
             )
         )
 
-    async def _send_mouse_report(self, report: bytes) -> None:
-        """Send a binary NanoKVM mouse event and HID report."""
+    def _report_for_current_mode(self, *, wheel: int = 0) -> bytes:
+        """Build a button or wheel report for the active mouse mode."""
+        if self._mouse_mode == "absolute":
+            return self._absolute_report(wheel)
+        return self._relative_report(wheel=wheel)
+
+    async def _send_ws(
+        self,
+        send: Callable[[aiohttp.ClientWebSocketResponse], Awaitable[None]],
+    ) -> None:
+        """Send one mouse message and invalidate the connection on failure."""
         ws = await self._get_ws()
         try:
-            await ws.send_bytes(bytes((2,)) + report)
+            await send(ws)
         except (aiohttp.ClientConnectionError, ConnectionError, RuntimeError):
             await self._invalidate_ws(ws)
             raise
+
+    async def _send_mouse_report(self, report: bytes) -> None:
+        """Send a binary NanoKVM mouse event and HID report."""
+        await self._send_ws(lambda ws: ws.send_bytes(bytes((2,)) + report))
 
     async def _send_legacy_mouse_event(
         self, event_type: int, button_state: int, x: float, y: float
     ) -> None:
         """Send a mouse event using the pre-2.3.2 JSON wire format."""
-        ws = await self._get_ws()
-
         if event_type == 2:
             x_value = int(x * 32768)
             y_value = int(y * 32768)
@@ -2223,11 +2232,7 @@ class NanoKVMClient:
 
         message = [2, event_type, button_state, x_value, y_value]
         _LOGGER.debug("Sending legacy mouse event: %s", message)
-        try:
-            await ws.send_json(message)
-        except (aiohttp.ClientConnectionError, ConnectionError, RuntimeError):
-            await self._invalidate_ws(ws)
-            raise
+        await self._send_ws(lambda ws: ws.send_json(message))
 
     async def mouse_move_abs(self, x: float, y: float) -> None:
         """
@@ -2282,10 +2287,7 @@ class NanoKVMClient:
         generation = self._session_generation
         self._mouse_buttons |= int(button)
         pressed_buttons = self._mouse_buttons
-        if self._mouse_mode == "absolute":
-            report = self._absolute_report()
-        else:
-            report = self._relative_report()
+        report = self._report_for_current_mode()
         try:
             await self._send_mouse_report(report)
         except BaseException:
@@ -2309,10 +2311,7 @@ class NanoKVMClient:
             return
 
         self._mouse_buttons = 0
-        if self._mouse_mode == "absolute":
-            report = self._absolute_report()
-        else:
-            report = self._relative_report()
+        report = self._report_for_current_mode()
         await self._send_mouse_report(report)
 
     async def mouse_click(
@@ -2364,8 +2363,5 @@ class NanoKVMClient:
 
         del dx  # NanoKVM's boot mouse report has a single vertical wheel byte.
         wheel = self._relative_value(dy)
-        if self._mouse_mode == "absolute":
-            report = self._absolute_report(wheel)
-        else:
-            report = self._relative_report(wheel=wheel)
+        report = self._report_for_current_mode(wheel=wheel)
         await self._send_mouse_report(report)

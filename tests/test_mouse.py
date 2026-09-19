@@ -60,6 +60,25 @@ def _sent_events(mock_ws: AsyncMock) -> list[list[int]]:
     return [call.args[0] for call in mock_ws.send_json.call_args_list]
 
 
+@pytest.mark.parametrize(
+    ("mode", "wheel", "expected"),
+    [
+        ("absolute", -2, bytes((3, 0x34, 0x12, 0x78, 0x56, 0xFE))),
+        ("relative", -2, bytes((3, 0, 0, 0xFE))),
+    ],
+)
+def test_current_mouse_report_uses_selected_mode(
+    mode: str, wheel: int, expected: bytes
+) -> None:
+    """Current button and wheel reports follow the selected mouse mode."""
+    client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
+    client._mouse_mode = mode
+    client._mouse_buttons = 3
+    client._mouse_abs_position = (0x1234, 0x5678)
+
+    assert client._report_for_current_mode(wheel=wheel) == expected
+
+
 async def test_mouse_move_abs_sends_hid_report(
     client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
 ) -> None:
@@ -287,6 +306,50 @@ async def test_mouse_send_reconnects_after_transport_failure() -> None:
 
     assert connect.await_count == 2
     first_ws.close.assert_awaited_once()
+
+
+async def test_legacy_mouse_send_reconnects_after_transport_failure() -> None:
+    """A failed legacy send invalidates the cached WebSocket too."""
+    first_ws = AsyncMock()
+    first_ws.closed = False
+    first_ws.send_json.side_effect = ConnectionResetError()
+    second_ws = AsyncMock()
+    second_ws.closed = False
+    connect = AsyncMock(side_effect=[first_ws, second_ws])
+
+    with patch("aiohttp.ClientSession.ws_connect", new=connect):
+        async with NanoKVMClient(
+            "http://localhost:8888/api/", token="test-token"
+        ) as client:
+            client._hw_version = HWVersion.PCIE
+            client._application_version = "2.3.1"
+            with pytest.raises(ConnectionResetError):
+                await client.mouse_move_rel(0.1, 0.0)
+            await client.mouse_move_rel(0.1, 0.0)
+
+    assert connect.await_count == 2
+    first_ws.close.assert_awaited_once()
+
+
+async def test_mouse_send_helper_invalidates_failed_websocket() -> None:
+    """The shared mouse transport helper invalidates the failed connection."""
+    ws = AsyncMock()
+    ws.closed = False
+
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        client._ws = ws
+
+        async def send(current_ws: Any) -> None:
+            assert current_ws is ws
+            raise ConnectionResetError()
+
+        with pytest.raises(ConnectionResetError):
+            await client._send_ws(send)
+
+    assert client._ws is None
+    ws.close.assert_awaited_once()
 
 
 async def test_logout_closes_websocket_and_prevents_further_mouse_input(
