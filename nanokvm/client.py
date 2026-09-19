@@ -1500,9 +1500,13 @@ class NanoKVMClient:
             response_model=GetHidModeRsp,
         )
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
     @require_application_version(non_pro="2.5.0")
     async def get_keyboard_led_status(self) -> GetKeyboardLedStatusRsp:
-        """Get the keyboard lock LED state reported by the host computer."""
+        """Get host keyboard LED state on non-Pro firmware 2.5.0 and newer.
+
+        When ``known`` is false, the host has not reported its LED state yet.
+        """
         return await self._api_request_json(
             hdrs.METH_GET,
             "/hid/leds",
