@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import contextlib
 from dataclasses import dataclass, field
 from os import PathLike
 import threading
@@ -81,7 +82,7 @@ class NanoKVMSSH:
                 if self.allow_unknown_host_key
                 else paramiko.RejectPolicy()
             )
-            await loop.run_in_executor(
+            connect_future = loop.run_in_executor(
                 None,
                 lambda: client.connect(
                     self.host,
@@ -89,9 +90,28 @@ class NanoKVMSSH:
                     username=self.username,
                     password=password,
                     timeout=10,
+                    banner_timeout=10,
+                    auth_timeout=10,
                 ),
             )
+            try:
+                await asyncio.shield(connect_future)
+            except asyncio.CancelledError:
+                # Cancellation does not stop a connect already running in the
+                # executor. Close now and again when the worker completes so
+                # a late successful connection cannot leak its transport.
+                def close_after_connect(future: asyncio.Future[None]) -> None:
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        future.exception()
+                    client.close()
+
+                connect_future.add_done_callback(close_after_connect)
+                client.close()
+                raise
+            previous_client = self.ssh_client
             self.ssh_client = client
+            if previous_client is not None:
+                previous_client.close()
         except paramiko.AuthenticationException as e:
             client.close()
             raise NanoKVMSSHAuthenticationError(
@@ -109,14 +129,15 @@ class NanoKVMSSH:
 
     async def run_command(self, command: str, timeout: float = 30) -> str:
         """Run a command via SSH and return output."""
-        if not self.ssh_client:
+        client = self.ssh_client
+        if client is None:
             raise NanoKVMSSHNotConnectedError(
                 "SSH not connected, call authenticate first"
             )
         loop = asyncio.get_running_loop()
         execution = _CommandExecution()
         command_future = loop.run_in_executor(
-            None, self._exec_command_sync, self.ssh_client, command, execution
+            None, self._exec_command_sync, client, command, execution
         )
         try:
             output, error, exit_status = await asyncio.wait_for(
@@ -138,6 +159,15 @@ class NanoKVMSSH:
         except asyncio.CancelledError:
             execution.cancel()
             raise
+        except (paramiko.SSHException, OSError, EOFError) as e:
+            self._invalidate_client(client)
+            raise NanoKVMSSHCommandError(f"SSH command failed: {e}") from e
+
+    def _invalidate_client(self, client: paramiko.SSHClient) -> None:
+        """Drop a failed client unless a newer connection replaced it."""
+        if self.ssh_client is client:
+            self.ssh_client = None
+        client.close()
 
     def _exec_command_sync(
         self,
