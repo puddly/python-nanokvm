@@ -8,6 +8,7 @@ import contextlib
 from dataclasses import dataclass, field
 from os import PathLike
 import threading
+from types import TracebackType
 
 import paramiko
 
@@ -69,6 +70,19 @@ class NanoKVMSSH:
         self.ssh_client: paramiko.SSHClient | None = None
         self._state_lock = asyncio.Lock()
         self._state_generation = 0
+
+    async def __aenter__(self) -> NanoKVMSSH:
+        """Enter an SSH client context without authenticating implicitly."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Disconnect when leaving an SSH client context."""
+        await self.disconnect()
 
     async def authenticate(self, password: str) -> None:
         """Authenticate with SSH using password."""

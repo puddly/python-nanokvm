@@ -380,3 +380,16 @@ async def test_disconnect_supersedes_in_flight_authentication() -> None:
     previous_client.close.assert_called_once_with()
     replacement_client.close.assert_called_once_with()
     assert client.ssh_client is None
+
+
+@pytest.mark.asyncio
+async def test_async_context_manager_disconnects_client() -> None:
+    fake_client = Mock()
+    client = NanoKVMSSH("kvm.local")
+    client.ssh_client = fake_client
+
+    async with client as entered:
+        assert entered is client
+
+    assert client.ssh_client is None
+    fake_client.close.assert_called_once_with()
