@@ -67,11 +67,16 @@ class NanoKVMSSH:
         self.known_hosts = known_hosts
         self.allow_unknown_host_key = allow_unknown_host_key
         self.ssh_client: paramiko.SSHClient | None = None
+        self._state_lock = asyncio.Lock()
+        self._state_generation = 0
 
     async def authenticate(self, password: str) -> None:
         """Authenticate with SSH using password."""
         loop = asyncio.get_running_loop()
         client = paramiko.SSHClient()
+        async with self._state_lock:
+            self._state_generation += 1
+            generation = self._state_generation
 
         try:
             client.load_system_host_keys()
@@ -108,8 +113,19 @@ class NanoKVMSSH:
                 connect_future.add_done_callback(close_after_connect)
                 client.close()
                 raise
-            previous_client = self.ssh_client
-            self.ssh_client = client
+            async with self._state_lock:
+                if generation != self._state_generation:
+                    previous_client = None
+                    superseded = True
+                else:
+                    previous_client = self.ssh_client
+                    self.ssh_client = client
+                    superseded = False
+            if superseded:
+                client.close()
+                raise NanoKVMSSHNotConnectedError(
+                    "SSH authentication was superseded by another session change"
+                )
             if previous_client is not None:
                 previous_client.close()
         except paramiko.AuthenticationException as e:
@@ -123,13 +139,17 @@ class NanoKVMSSH:
 
     async def disconnect(self) -> None:
         """Close SSH connection."""
-        if self.ssh_client:
-            self.ssh_client.close()
+        async with self._state_lock:
+            self._state_generation += 1
+            client = self.ssh_client
             self.ssh_client = None
+        if client is not None:
+            client.close()
 
     async def run_command(self, command: str, timeout: float = 30) -> str:
         """Run a command via SSH and return output."""
-        client = self.ssh_client
+        async with self._state_lock:
+            client = self.ssh_client
         if client is None:
             raise NanoKVMSSHNotConnectedError(
                 "SSH not connected, call authenticate first"

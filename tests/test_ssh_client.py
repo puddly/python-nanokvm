@@ -10,7 +10,11 @@ from unittest.mock import Mock, patch
 import paramiko
 import pytest
 
-from nanokvm.ssh_client import NanoKVMSSH, NanoKVMSSHCommandError
+from nanokvm.ssh_client import (
+    NanoKVMSSH,
+    NanoKVMSSHCommandError,
+    NanoKVMSSHNotConnectedError,
+)
 
 
 class _FakeChannel:
@@ -345,3 +349,34 @@ async def test_transport_failure_does_not_clear_replacement_client() -> None:
     assert client.ssh_client is replacement_client
     failed_client.close.assert_called_once_with()
     replacement_client.close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_supersedes_in_flight_authentication() -> None:
+    connect_started = threading.Event()
+    release_connect = threading.Event()
+    previous_client = Mock()
+    replacement_client = Mock()
+
+    def connect(*_: Any, **__: Any) -> None:
+        connect_started.set()
+        release_connect.wait(1)
+
+    replacement_client.connect.side_effect = connect
+    client = NanoKVMSSH("kvm.local")
+    client.ssh_client = previous_client
+
+    with patch(
+        "nanokvm.ssh_client.paramiko.SSHClient", return_value=replacement_client
+    ):
+        pending = asyncio.create_task(client.authenticate("synthetic-password"))
+        assert await asyncio.to_thread(connect_started.wait, 1)
+        await client.disconnect()
+        release_connect.set()
+
+        with pytest.raises(NanoKVMSSHNotConnectedError, match="superseded"):
+            await pending
+
+    previous_client.close.assert_called_once_with()
+    replacement_client.close.assert_called_once_with()
+    assert client.ssh_client is None
