@@ -60,6 +60,25 @@ def _sent_events(mock_ws: AsyncMock) -> list[list[int]]:
     return [call.args[0] for call in mock_ws.send_json.call_args_list]
 
 
+@pytest.mark.parametrize(
+    ("mode", "wheel", "expected"),
+    [
+        ("absolute", -2, bytes((3, 0x34, 0x12, 0x78, 0x56, 0xFE))),
+        ("relative", -2, bytes((3, 0, 0, 0xFE))),
+    ],
+)
+def test_current_mouse_report_uses_selected_mode(
+    mode: str, wheel: int, expected: bytes
+) -> None:
+    """Current button and wheel reports follow the selected mouse mode."""
+    client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
+    client._mouse_mode = mode
+    client._mouse_buttons = 3
+    client._mouse_abs_position = (0x1234, 0x5678)
+
+    assert client._report_for_current_mode(wheel=wheel) == expected
+
+
 async def test_mouse_move_abs_sends_hid_report(
     client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
 ) -> None:

@@ -2191,6 +2191,12 @@ class NanoKVMClient:
             )
         )
 
+    def _report_for_current_mode(self, *, wheel: int = 0) -> bytes:
+        """Build a button or wheel report for the active mouse mode."""
+        if self._mouse_mode == "absolute":
+            return self._absolute_report(wheel)
+        return self._relative_report(wheel=wheel)
+
     async def _send_ws(
         self,
         send: Callable[[aiohttp.ClientWebSocketResponse], Awaitable[None]],
@@ -2281,10 +2287,7 @@ class NanoKVMClient:
         generation = self._session_generation
         self._mouse_buttons |= int(button)
         pressed_buttons = self._mouse_buttons
-        if self._mouse_mode == "absolute":
-            report = self._absolute_report()
-        else:
-            report = self._relative_report()
+        report = self._report_for_current_mode()
         try:
             await self._send_mouse_report(report)
         except BaseException:
@@ -2308,10 +2311,7 @@ class NanoKVMClient:
             return
 
         self._mouse_buttons = 0
-        if self._mouse_mode == "absolute":
-            report = self._absolute_report()
-        else:
-            report = self._relative_report()
+        report = self._report_for_current_mode()
         await self._send_mouse_report(report)
 
     async def mouse_click(
@@ -2363,8 +2363,5 @@ class NanoKVMClient:
 
         del dx  # NanoKVM's boot mouse report has a single vertical wheel byte.
         wheel = self._relative_value(dy)
-        if self._mouse_mode == "absolute":
-            report = self._absolute_report(wheel)
-        else:
-            report = self._relative_report(wheel=wheel)
+        report = self._report_for_current_mode(wheel=wheel)
         await self._send_mouse_report(report)
