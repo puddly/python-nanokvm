@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 import contextlib
 import functools
-from http.cookies import Morsel, SimpleCookie
+from http.cookies import Morsel
 import io
 import json
 import logging
@@ -29,6 +29,7 @@ from PIL import Image
 from pydantic import BaseModel, ValidationError
 import yarl
 
+from ._mouse import _MouseController
 from .models.common import (
     AddShortcutReq,
     ApiResponse,
@@ -381,6 +382,7 @@ class NanoKVMClient:
         self._hw_version: HWVersion | None = None
         self._application_version: str | None = None
         self._image_version: str | None = None
+        self._mouse = _MouseController(self, _LOGGER)
 
     def _create_ssl_context(self) -> ssl.SSLContext | Fingerprint | bool:
         """
@@ -2031,208 +2033,58 @@ class NanoKVMClient:
 
     async def _close_ws(self) -> None:
         """Close and forget the current WebSocket connection."""
-        async with self._ws_lock:
-            ws = self._ws
-            self._ws = None
-            if ws is not None and not ws.closed:
-                await ws.close()
+        await self._mouse.close_ws()
 
     async def _invalidate_ws(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         """Forget a failed WebSocket without closing a replacement connection."""
-        async with self._ws_lock:
-            if self._ws is ws:
-                self._ws = None
-            if not ws.closed:
-                await ws.close()
+        await self._mouse.invalidate_ws(ws)
 
     async def _get_ws(self) -> aiohttp.ClientWebSocketResponse:
         """Get or create WebSocket connection for mouse events."""
-        generation = self._session_generation
-        try:
-            async with self._ws_lock:
-                if self._ws is not None and not self._ws.closed:
-                    return self._ws
-
-                if self._ws is not None:
-                    await self._ws.close()
-                    self._ws = None
-
-                if not self._token:
-                    raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-
-                generation = self._session_generation
-
-                # WebSocket URL uses ws:// or wss:// scheme
-                scheme = "ws" if self.url.scheme == "http" else "wss"
-                ws_url = self.url.with_scheme(scheme) / "ws"
-
-                assert self._session is not None
-                assert self._ssl_config is not None
-
-                # ws_connect cannot override cookies per request. An isolated
-                # jar prevents concurrent requests or async tracing callbacks
-                # from replacing this handshake's identity. Share the external
-                # connector without taking ownership of it.
-                if self._session.closed:
-                    raise RuntimeError("Session is closed")
-                if self._ws_session is None or self._ws_session.closed:
-                    self._ws_session = ClientSession(
-                        connector=self._session.connector,
-                        connector_owner=False,
-                        cookie_jar=aiohttp.DummyCookieJar(),
-                        auth=self._session.auth,
-                        trust_env=self._session.trust_env,
-                        trace_configs=self._session.trace_configs,
-                        skip_auto_headers=self._session.skip_auto_headers,
-                        timeout=aiohttp.ClientTimeout(total=self._request_timeout),
-                    )
-
-                headers = self._session.headers.copy()
-                cookies = SimpleCookie()
-                cookies.load(headers.get(hdrs.COOKIE, ""))
-                cookies.load(
-                    {
-                        name: cookie.value
-                        for name, cookie in self._session.cookie_jar.filter_cookies(
-                            ws_url
-                        ).items()
-                    }
-                )
-                cookies[_SESSION_COOKIE_NAME] = self._token
-                headers[hdrs.COOKIE] = cookies.output(header="", sep=";").strip()
-                self._clear_session_cookies()
-                self._ws = await self._ws_session.ws_connect(
-                    str(ws_url),
-                    headers=headers,
-                    ssl=self._ssl_config,
-                )
-                self._clear_session_cookies()
-                return self._ws
-        except aiohttp.ClientResponseError as err:
-            method = getattr(err.request_info, "method", hdrs.METH_GET)
-            if err.status == 401:
-                # _clear_local_session acquires _ws_lock, so do this after the
-                # lock above has been released to avoid a self-deadlock.
-                await self._clear_local_session(expected_generation=generation)
-                raise NanoKVMNotAuthenticatedError(
-                    "NanoKVM session is no longer authenticated"
-                ) from err
-            if err.status == 403:
-                raise NanoKVMPermissionError(
-                    status=err.status,
-                    method=method,
-                    path="/ws",
-                ) from err
-            raise
+        return await self._mouse.get_ws()
 
     async def _uses_binary_mouse_protocol(self) -> bool:
-        """Select the mouse wire format supported by the connected device.
-
-        NanoKVM changed mouse events from JSON to raw HID reports in 2.3.2;
-        the Pro firmware made the same change in application version 1.2.6.
-        This has to be a dispatcher rather than a version requirement:
-        earlier application versions still support mouse control through the
-        legacy JSON format.
-        """
-        if self._hw_version is None:
-            if self._token is None:
-                # The WebSocket will report the authentication error below.
-                # Keep the current protocol as the safe default when version
-                # detection is not possible.
-                return True
-            await self.detect_hardware()
-
-        if self._application_version is None:
-            if self._token is None:
-                return True
-            await self.detect_versions()
-
-        minimum_version = (
-            _BINARY_MOUSE_MIN_PRO_VERSION
-            if self._is_hardware_family(HWFamily.PRO)
-            else _BINARY_MOUSE_MIN_NON_PRO_VERSION
-        )
-        return self._application_version is None or _version_at_least(
-            self._application_version, minimum_version
-        )
+        """Select the mouse wire format supported by the connected device."""
+        return await self._mouse.uses_binary_mouse_protocol()
 
     @staticmethod
     def _clamp(value: int, minimum: int, maximum: int) -> int:
-        return max(minimum, min(maximum, value))
+        return _MouseController.clamp(value, minimum, maximum)
 
     @classmethod
     def _relative_value(cls, value: float) -> int:
-        return cls._clamp(round(value * 127), -127, 127)
+        return _MouseController.relative_value(value)
 
     @classmethod
     def _absolute_value(cls, value: float) -> int:
-        return cls._clamp(round(max(0.0, min(1.0, value)) * 32767), 0, 32767)
+        return _MouseController.absolute_value(value)
 
     def _absolute_report(self, wheel: int = 0) -> bytes:
-        x, y = self._mouse_abs_position
-        return bytes(
-            (
-                self._mouse_buttons,
-                x & 0xFF,
-                (x >> 8) & 0xFF,
-                y & 0xFF,
-                (y >> 8) & 0xFF,
-                self._clamp(wheel, -127, 127) & 0xFF,
-            )
-        )
+        return self._mouse.absolute_report(wheel)
 
     def _relative_report(self, dx: int = 0, dy: int = 0, wheel: int = 0) -> bytes:
-        return bytes(
-            (
-                self._mouse_buttons,
-                self._clamp(dx, -127, 127) & 0xFF,
-                self._clamp(dy, -127, 127) & 0xFF,
-                self._clamp(wheel, -127, 127) & 0xFF,
-            )
-        )
+        return self._mouse.relative_report(dx, dy, wheel)
 
     def _report_for_current_mode(self, *, wheel: int = 0) -> bytes:
         """Build a button or wheel report for the active mouse mode."""
-        if self._mouse_mode == "absolute":
-            return self._absolute_report(wheel)
-        return self._relative_report(wheel=wheel)
+        return self._mouse.report_for_current_mode(wheel=wheel)
 
     async def _send_ws(
         self,
         send: Callable[[aiohttp.ClientWebSocketResponse], Awaitable[None]],
     ) -> None:
         """Send one mouse message and invalidate the connection on failure."""
-        ws = await self._get_ws()
-        try:
-            await send(ws)
-        except (aiohttp.ClientConnectionError, ConnectionError, RuntimeError):
-            await self._invalidate_ws(ws)
-            raise
+        await self._mouse.send_ws(send)
 
     async def _send_mouse_report(self, report: bytes) -> None:
         """Send a binary NanoKVM mouse event and HID report."""
-        await self._send_ws(lambda ws: ws.send_bytes(bytes((2,)) + report))
+        await self._mouse.send_mouse_report(report)
 
     async def _send_legacy_mouse_event(
         self, event_type: int, button_state: int, x: float, y: float
     ) -> None:
         """Send a mouse event using the pre-2.3.2 JSON wire format."""
-        if event_type == 2:
-            x_value = int(x * 32768)
-            y_value = int(y * 32768)
-        elif event_type == 3:
-            x_value = self._relative_value(x)
-            y_value = self._relative_value(y)
-        elif event_type == 4:
-            x_value = 0
-            y_value = 1 if y > 0 else -1 if y < 0 else 0
-        else:
-            x_value = int(x)
-            y_value = int(y)
-
-        message = [2, event_type, button_state, x_value, y_value]
-        _LOGGER.debug("Sending legacy mouse event: %s", message)
-        await self._send_ws(lambda ws: ws.send_json(message))
+        await self._mouse.send_legacy_mouse_event(event_type, button_state, x, y)
 
     async def mouse_move_abs(self, x: float, y: float) -> None:
         """
@@ -2242,13 +2094,7 @@ class NanoKVMClient:
             x: X coordinate (0.0 to 1.0, left to right)
             y: Y coordinate (0.0 to 1.0, top to bottom)
         """
-        if not await self._uses_binary_mouse_protocol():
-            await self._send_legacy_mouse_event(2, 0, x, y)
-            return
-
-        self._mouse_mode = "absolute"
-        self._mouse_abs_position = (self._absolute_value(x), self._absolute_value(y))
-        await self._send_mouse_report(self._absolute_report())
+        await self._mouse.mouse_move_abs(x, y)
 
     async def mouse_move_rel(self, dx: float, dy: float) -> None:
         """
@@ -2258,14 +2104,7 @@ class NanoKVMClient:
             dx: Horizontal movement (-1.0 to 1.0)
             dy: Vertical movement (-1.0 to 1.0)
         """
-        if not await self._uses_binary_mouse_protocol():
-            await self._send_legacy_mouse_event(3, 0, dx, dy)
-            return
-
-        self._mouse_mode = "relative"
-        await self._send_mouse_report(
-            self._relative_report(self._relative_value(dx), self._relative_value(dy))
-        )
+        await self._mouse.mouse_move_rel(dx, dy)
 
     async def mouse_down(self, button: MouseButton = MouseButton.LEFT) -> None:
         """
@@ -2275,30 +2114,7 @@ class NanoKVMClient:
             button: Mouse button to press (MouseButton.LEFT, MouseButton.RIGHT,
                 MouseButton.MIDDLE, MouseButton.BACK, MouseButton.FORWARD)
         """
-        if not await self._uses_binary_mouse_protocol():
-            if button in (MouseButton.BACK, MouseButton.FORWARD):
-                raise NanoKVMNotSupportedError(
-                    "Back and Forward mouse buttons require the binary mouse protocol"
-                )
-            await self._send_legacy_mouse_event(1, int(button), 0.0, 0.0)
-            return
-
-        previous_buttons = self._mouse_buttons
-        generation = self._session_generation
-        self._mouse_buttons |= int(button)
-        pressed_buttons = self._mouse_buttons
-        report = self._report_for_current_mode()
-        try:
-            await self._send_mouse_report(report)
-        except BaseException:
-            # Do not turn an unsent press into a drag on the next movement, or
-            # overwrite state changed by a newer session or another mouse call.
-            if (
-                self._session_generation == generation
-                and self._mouse_buttons == pressed_buttons
-            ):
-                self._mouse_buttons = previous_buttons
-            raise
+        await self._mouse.mouse_down(button)
 
     async def mouse_up(self) -> None:
         """
@@ -2306,13 +2122,7 @@ class NanoKVMClient:
 
         The report releases all currently held buttons.
         """
-        if not await self._uses_binary_mouse_protocol():
-            await self._send_legacy_mouse_event(0, 0, 0.0, 0.0)
-            return
-
-        self._mouse_buttons = 0
-        report = self._report_for_current_mode()
-        await self._send_mouse_report(report)
+        await self._mouse.mouse_up()
 
     async def mouse_click(
         self,
@@ -2331,23 +2141,7 @@ class NanoKVMClient:
             y: Optional Y coordinate (0.0 to 1.0) for absolute positioning
                 before click
         """
-        # Move to position if coordinates provided
-        if x is not None and y is not None:
-            await self.mouse_move_abs(x, y)
-            # Small delay to ensure position update
-            await asyncio.sleep(0.05)
-
-        pressed = False
-        try:
-            # Send mouse down
-            await self.mouse_down(button)
-            pressed = True
-            # Small delay between down and up
-            await asyncio.sleep(0.05)
-        finally:
-            if pressed:
-                # Always release after a successful press, including cancellation.
-                await self.mouse_up()
+        await self._mouse.mouse_click(button, x, y)
 
     async def mouse_scroll(self, dx: float, dy: float) -> None:
         """
@@ -2357,11 +2151,4 @@ class NanoKVMClient:
             dx: Horizontal scroll amount (-1.0 to 1.0)
             dy: Vertical scroll amount (-1.0 to 1.0) # positive=up, negative=down)
         """
-        if not await self._uses_binary_mouse_protocol():
-            await self._send_legacy_mouse_event(4, 0, dx, dy)
-            return
-
-        del dx  # NanoKVM's boot mouse report has a single vertical wheel byte.
-        wheel = self._relative_value(dy)
-        report = self._report_for_current_mode(wheel=wheel)
-        await self._send_mouse_report(report)
+        await self._mouse.mouse_scroll(dx, dy)

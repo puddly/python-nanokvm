@@ -16,6 +16,23 @@ from nanokvm.client import (
 from nanokvm.models import HWVersion, MouseButton
 
 
+def test_client_initializes_internal_mouse_controller() -> None:
+    """Mouse and WebSocket operations are owned by an internal component."""
+    client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
+
+    assert hasattr(client, "_mouse")
+
+
+async def test_mouse_public_method_delegates_to_internal_controller() -> None:
+    """The public client method remains a thin compatibility wrapper."""
+    client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
+
+    with patch.object(client._mouse, "mouse_move_rel", new_callable=AsyncMock) as move:
+        await client.mouse_move_rel(0.1, -0.2)
+
+    move.assert_awaited_once_with(0.1, -0.2)
+
+
 @pytest.fixture
 async def client_with_mock_ws() -> AsyncGenerator[tuple[NanoKVMClient, AsyncMock], Any]:
     """Fixture that provides a client with a mocked WebSocket."""
