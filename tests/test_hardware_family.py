@@ -1,0 +1,95 @@
+"""Tests for NanoKVM hardware family classification."""
+
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock
+
+import pytest
+
+from nanokvm.client import (
+    NanoKVMClient,
+    NanoKVMError,
+    NanoKVMNotSupportedError,
+    require_hardware,
+)
+from nanokvm.models import HWFamily, HWVersion
+
+
+@pytest.mark.parametrize(
+    ("version", "family"),
+    [
+        (HWVersion.ALPHA, HWFamily.NON_PRO),
+        (HWVersion.BETA, HWFamily.NON_PRO),
+        (HWVersion.PCIE, HWFamily.NON_PRO),
+        (HWVersion.PRO, HWFamily.PRO),
+        (HWVersion.UNKNOWN, None),
+    ],
+)
+def test_hardware_versions_map_to_families(
+    version: HWVersion, family: HWFamily | None
+) -> None:
+    """Exact hardware versions expose their family without changing identity."""
+    assert version.family is family
+
+
+async def test_hardware_decorator_accepts_each_non_pro_version() -> None:
+    """A non-Pro family requirement accepts Alpha, Beta, and PCIe."""
+
+    @require_hardware(HWFamily.NON_PRO)
+    async def operation(client: SimpleNamespace) -> str:
+        return "ok"
+
+    for version in (HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE):
+        assert await operation(SimpleNamespace(_hw_version=version)) == "ok"
+
+
+async def test_hardware_decorator_preserves_exact_version_requirements() -> None:
+    """Existing exact hardware requirements keep their original behavior."""
+
+    @require_hardware(HWVersion.PRO)
+    async def operation(client: SimpleNamespace) -> str:
+        return "ok"
+
+    assert await operation(SimpleNamespace(_hw_version=HWVersion.PRO)) == "ok"
+    with pytest.raises(NanoKVMNotSupportedError, match="hardware: Pro"):
+        await operation(SimpleNamespace(_hw_version=HWVersion.PCIE))
+
+
+async def test_pro_family_requirement_accepts_future_pro_hardware() -> None:
+    """Pro-only operations accept future hardware versions in the Pro family."""
+    request = AsyncMock()
+    client = cast(
+        NanoKVMClient,
+        SimpleNamespace(
+            _hw_version=SimpleNamespace(family=HWFamily.PRO, value="Pro Desk PoE"),
+            _api_request_json=request,
+        ),
+    )
+
+    await NanoKVMClient.get_hdmi_capture(client)
+    request.assert_awaited_once()
+
+
+async def test_hardware_decorator_family_requirement_requires_detection() -> None:
+    """A family requirement requires hardware detection first."""
+
+    @require_hardware(HWFamily.NON_PRO)
+    async def operation(client: SimpleNamespace) -> str:
+        return "ok"
+
+    with pytest.raises(NanoKVMError, match="requires hardware detection"):
+        await operation(SimpleNamespace(_hw_version=None))
+
+
+@pytest.mark.parametrize("version", [HWVersion.PRO, HWVersion.UNKNOWN])
+async def test_hardware_decorator_family_requirement_rejects_other_versions(
+    version: HWVersion,
+) -> None:
+    """Pro and unknown hardware cannot use a non-Pro-only operation."""
+
+    @require_hardware(HWFamily.NON_PRO)
+    async def operation(client: SimpleNamespace) -> str:
+        return "ok"
+
+    with pytest.raises(NanoKVMNotSupportedError, match="hardware family: non-Pro"):
+        await operation(SimpleNamespace(_hw_version=version))

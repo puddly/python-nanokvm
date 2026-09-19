@@ -1,5 +1,6 @@
 """Malformed response values must not escape through chained tracebacks."""
 
+from collections.abc import Awaitable
 import logging
 import traceback
 
@@ -59,6 +60,34 @@ async def test_invalid_response_traceback_and_exception_log_hide_payload(
                 pytest.fail("Expected a response validation error")
             assert _SECRET not in rendered
             assert _SECRET not in caplog.text
+
+
+@pytest.mark.parametrize("transport", ["json", "form", "login"])
+async def test_invalid_utf8_response_is_rejected_consistently(transport: str) -> None:
+    """All JSON response paths translate invalid UTF-8 into the client error."""
+    async with NanoKVMClient(
+        _URL,
+        token="synthetic-session",
+        use_password_obfuscation=True,
+    ) as client:
+        with aioresponses() as mocked:
+            operation: Awaitable[object]
+            if transport == "json":
+                mocked.get(f"{_URL}auth/account", body=b"\xff")
+                operation = client.get_account()
+            elif transport == "form":
+                mocked.post(f"{_URL}upload", body=b"\xff")
+                operation = client._api_request_form(
+                    "POST", "/upload", data=aiohttp.FormData()
+                )
+            else:
+                mocked.post(f"{_URL}auth/login", body=b"\xff")
+                operation = client.authenticate("synthetic-user", "synthetic-password")
+
+            with pytest.raises(
+                NanoKVMInvalidResponseError, match="Invalid JSON response"
+            ):
+                await operation
 
 
 @pytest.mark.parametrize("code", [0, -1, -2])

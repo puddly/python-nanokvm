@@ -82,6 +82,13 @@ class DownloadStatus(StrEnum):
     CHECKSUM_FAILED = "checksum_failed"
 
 
+class HWFamily(StrEnum):
+    """Hardware families supported by NanoKVM."""
+
+    NON_PRO = "non-Pro"
+    PRO = "Pro"
+
+
 class HWVersion(StrEnum):
     """Hardware Version Enum based on Go constants."""
 
@@ -90,6 +97,15 @@ class HWVersion(StrEnum):
     PCIE = "PCIE"
     PRO = "Pro"
     UNKNOWN = "Unknown"
+
+    @property
+    def family(self) -> HWFamily | None:
+        """Return the product family for this exact hardware version."""
+        if self is HWVersion.PRO:
+            return HWFamily.PRO
+        if self in (HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE):
+            return HWFamily.NON_PRO
+        return None
 
 
 class MouseJigglerMode(StrEnum):
