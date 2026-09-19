@@ -12,7 +12,9 @@ import pytest
 
 from nanokvm.ssh_client import (
     NanoKVMSSH,
+    NanoKVMSSHAuthenticationError,
     NanoKVMSSHCommandError,
+    NanoKVMSSHConnectionError,
     NanoKVMSSHNotConnectedError,
 )
 
@@ -266,7 +268,68 @@ async def test_authentication_passes_banner_and_authentication_timeouts() -> Non
         timeout=10,
         banner_timeout=10,
         auth_timeout=10,
+        allow_agent=False,
+        look_for_keys=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_authentication_options_are_configurable() -> None:
+    fake_client = Mock()
+    client = NanoKVMSSH(
+        "kvm.local",
+        connect_timeout=3.5,
+        banner_timeout=4.5,
+        auth_timeout=5.5,
+        allow_agent=True,
+        look_for_keys=True,
+    )
+    with patch("nanokvm.ssh_client.paramiko.SSHClient", return_value=fake_client):
+        await client.authenticate("synthetic-password")
+
+    fake_client.connect.assert_called_once_with(
+        "kvm.local",
+        port=22,
+        username="root",
+        password="synthetic-password",
+        timeout=3.5,
+        banner_timeout=4.5,
+        auth_timeout=5.5,
+        allow_agent=True,
+        look_for_keys=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_connection_failure_has_different_error() -> None:
+    fake_client = Mock()
+    fake_client.connect.side_effect = OSError("connection refused")
+    client = NanoKVMSSH("kvm.local")
+
+    with (
+        patch("nanokvm.ssh_client.paramiko.SSHClient", return_value=fake_client),
+        pytest.raises(NanoKVMSSHConnectionError, match="connection refused"),
+    ):
+        await client.authenticate("synthetic-password")
+
+    fake_client.close.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_invalid_password_remains_an_authentication_error() -> None:
+    fake_client = Mock()
+    fake_client.connect.side_effect = paramiko.AuthenticationException(
+        "invalid password"
+    )
+    client = NanoKVMSSH("kvm.local")
+
+    with (
+        patch("nanokvm.ssh_client.paramiko.SSHClient", return_value=fake_client),
+        pytest.raises(NanoKVMSSHAuthenticationError, match="invalid password"),
+    ):
+        await client.authenticate("synthetic-password")
+
+    fake_client.close.assert_called_once_with()
 
 
 @pytest.mark.asyncio

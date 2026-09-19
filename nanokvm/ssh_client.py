@@ -29,6 +29,10 @@ class NanoKVMSSHAuthenticationError(NanoKVMSSHError):
     """Exception for SSH authentication failures."""
 
 
+class NanoKVMSSHConnectionError(NanoKVMSSHError):
+    """Exception for SSH network or host-key failures."""
+
+
 class NanoKVMSSHCommandError(NanoKVMSSHError):
     """Exception for SSH command execution errors."""
 
@@ -60,6 +64,11 @@ class NanoKVMSSH:
         *,
         known_hosts: str | PathLike[str] | None = None,
         allow_unknown_host_key: bool = False,
+        connect_timeout: float | None = 10,
+        banner_timeout: float | None = 10,
+        auth_timeout: float | None = 10,
+        allow_agent: bool = False,
+        look_for_keys: bool = False,
     ) -> None:
         """Initialize the SSH client."""
         self.host = host
@@ -67,6 +76,11 @@ class NanoKVMSSH:
         self.username = username
         self.known_hosts = known_hosts
         self.allow_unknown_host_key = allow_unknown_host_key
+        self.connect_timeout = connect_timeout
+        self.banner_timeout = banner_timeout
+        self.auth_timeout = auth_timeout
+        self.allow_agent = allow_agent
+        self.look_for_keys = look_for_keys
         self.ssh_client: paramiko.SSHClient | None = None
         self._state_lock = asyncio.Lock()
         self._state_generation = 0
@@ -108,9 +122,11 @@ class NanoKVMSSH:
                     port=self.port,
                     username=self.username,
                     password=password,
-                    timeout=10,
-                    banner_timeout=10,
-                    auth_timeout=10,
+                    timeout=self.connect_timeout,
+                    banner_timeout=self.banner_timeout,
+                    auth_timeout=self.auth_timeout,
+                    allow_agent=self.allow_agent,
+                    look_for_keys=self.look_for_keys,
                 ),
             )
             try:
@@ -149,7 +165,7 @@ class NanoKVMSSH:
             ) from e
         except (paramiko.SSHException, paramiko.BadHostKeyException, OSError) as e:
             client.close()
-            raise NanoKVMSSHAuthenticationError(f"SSH connection failed: {e}") from e
+            raise NanoKVMSSHConnectionError(f"SSH connection failed: {e}") from e
 
     async def disconnect(self) -> None:
         """Close SSH connection."""
