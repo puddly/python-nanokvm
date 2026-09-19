@@ -48,6 +48,7 @@ from .models.common import (
     GetHostnameRsp,
     GetImagesRsp,
     GetInfoRsp,
+    GetKeyboardLedStatusRsp,
     GetLeaderKeyRsp,
     GetMacRsp,
     GetMdnsStateRsp,
@@ -1499,6 +1500,19 @@ class NanoKVMClient:
             response_model=GetHidModeRsp,
         )
 
+    @require_hardware(HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE)
+    @require_application_version(non_pro="2.5.0")
+    async def get_keyboard_led_status(self) -> GetKeyboardLedStatusRsp:
+        """Get host keyboard LED state on non-Pro firmware 2.5.0 and newer.
+
+        When ``known`` is false, the host has not reported its LED state yet.
+        """
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/hid/leds",
+            response_model=GetKeyboardLedStatusRsp,
+        )
+
     @require_application_version(non_pro="2.3.2", pro="1.2.8")
     async def get_shortcuts(self) -> GetShortcutsRsp:
         """Get configured custom HID shortcuts."""
@@ -2254,9 +2268,13 @@ class NanoKVMClient:
 
         Args:
             button: Mouse button to press (MouseButton.LEFT, MouseButton.RIGHT,
-                MouseButton.MIDDLE)
+                MouseButton.MIDDLE, MouseButton.BACK, MouseButton.FORWARD)
         """
         if not await self._uses_binary_mouse_protocol():
+            if button in (MouseButton.BACK, MouseButton.FORWARD):
+                raise NanoKVMNotSupportedError(
+                    "Back and Forward mouse buttons require the binary mouse protocol"
+                )
             await self._send_legacy_mouse_event(1, int(button), 0.0, 0.0)
             return
 
@@ -2308,7 +2326,7 @@ class NanoKVMClient:
 
         Args:
             button: Mouse button to click (MouseButton.LEFT, MouseButton.RIGHT,
-                MouseButton.MIDDLE)
+                MouseButton.MIDDLE, MouseButton.BACK, MouseButton.FORWARD)
             x: Optional X coordinate (0.0 to 1.0) for absolute positioning
                 before click
             y: Optional Y coordinate (0.0 to 1.0) for absolute positioning
