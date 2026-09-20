@@ -365,6 +365,13 @@ class GetKeyboardLedStatusRsp(BaseModel):
     known: bool
     updated_at: datetime | None = Field(default=None, alias="updatedAt")
 
+    @field_validator("updated_at", mode="before")
+    @classmethod
+    def _normalize_updated_at(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
 
 class SetHidModeReq(BaseModel):
     mode: HidMode
