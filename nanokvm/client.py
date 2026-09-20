@@ -12,7 +12,6 @@ from collections.abc import (
 )
 import contextlib
 import functools
-import io
 import logging
 from os import PathLike
 import re
@@ -20,20 +19,14 @@ import ssl
 from typing import Any, TypeVar, overload
 
 import aiohttp
-from aiohttp import (
-    BodyPartReader,
-    ClientResponse,
-    ClientSession,
-    Fingerprint,
-    MultipartReader,
-    hdrs,
-)
+from aiohttp import ClientResponse, ClientSession, Fingerprint, hdrs
 from PIL import Image
 from pydantic import BaseModel
 import yarl
 
 from .components.mouse import MouseController
 from .components.session import SessionController
+from .components.stream import StreamController
 from .models.common import (
     AddShortcutReq,
     ApiResponseCode,
@@ -388,6 +381,7 @@ class NanoKVMClient:
         self._image_version: str | None = None
         self._session_controller = SessionController(self, _LOGGER)
         self._mouse = MouseController(self, _LOGGER)
+        self._stream_controller = StreamController(self, _LOGGER)
 
     def _create_ssl_context(self) -> ssl.SSLContext | Fingerprint | bool:
         """Create and configure the SSL context for the HTTP session."""
@@ -1537,32 +1531,12 @@ class NanoKVMClient:
 
     def _parse_jpeg_from_bytes(self, data: bytes) -> Image.Image:
         """Parse JPEG image from bytes."""
-        with Image.open(io.BytesIO(data), formats=["JPEG"]) as image:
-            image.load()
-            return image.copy()
+        return self._stream_controller.parse_jpeg_from_bytes(data)
 
     async def mjpeg_stream(self) -> AsyncIterator[Image.Image]:
         """Stream MJPEG frames."""
-        async with self._request(
-            hdrs.METH_GET,
-            "/stream/mjpeg",
-            timeout=aiohttp.ClientTimeout(total=None, connect=self._request_timeout),
-        ) as response:
-            reader = MultipartReader.from_response(response)
-            loop = asyncio.get_running_loop()
-
-            async for part in reader:
-                assert isinstance(part, BodyPartReader)
-                data = await part.read()
-                if not data:
-                    _LOGGER.debug("Received empty MJPEG part, ending stream.")
-                    break
-
-                # Process image in executor to avoid blocking async loop
-                image = await loop.run_in_executor(
-                    None, self._parse_jpeg_from_bytes, data
-                )
-                yield image
+        async for image in self._stream_controller.mjpeg_stream():
+            yield image
 
     # ── Application ─────────────────────────────────────────────────────
 

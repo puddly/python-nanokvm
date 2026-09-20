@@ -43,6 +43,13 @@ def test_client_initializes_internal_session_controller() -> None:
     assert hasattr(client, "_session_controller")
 
 
+def test_client_initializes_internal_stream_controller() -> None:
+    """MJPEG transport and image decoding have an internal owner."""
+    client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
+
+    assert hasattr(client, "_stream_controller")
+
+
 async def test_authenticate_delegates_to_internal_session_controller() -> None:
     """The public authentication method remains a compatibility wrapper."""
     client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
