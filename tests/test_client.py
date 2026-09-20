@@ -122,7 +122,9 @@ async def test_image_download_prefix_by_hardware_family(
 )
 def test_download_status_accepts_terminal_states(status: str) -> None:
     """Download status responses include terminal success and failure states."""
-    response = StatusImageRsp(status=status, file="image.iso", percentage="")
+    response = StatusImageRsp.model_validate(
+        {"status": status, "file": "image.iso", "percentage": ""}
+    )
 
     assert response.status is DownloadStatus(status)
 
@@ -621,7 +623,10 @@ def test_model_normalizations_for_wol_and_oled() -> None:
     assert GetMacRsp(macs=["", "AA:BB:CC:DD:EE:FF", "   "]).macs == [
         "AA:BB:CC:DD:EE:FF"
     ]
-    assert GetOLEDRsp(exist=True, type="desk", sleep=0).type == OledType.DESK
+    assert (
+        GetOLEDRsp.model_validate({"exist": True, "type": "desk", "sleep": 0}).type
+        == OledType.DESK
+    )
 
 
 async def test_connect_wifi_no_auth_sends_ap_header() -> None:

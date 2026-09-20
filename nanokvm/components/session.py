@@ -483,9 +483,11 @@ class SessionController:
                 hdrs.METH_POST,
                 "/auth/password",
                 expected_generation=generation,
-                data=ChangePasswordV251Req(
-                    current_password=obfuscate_password(current_password),
-                    password=obfuscate_password(new_password),
+                data=ChangePasswordV251Req.model_validate(
+                    {
+                        "currentPassword": obfuscate_password(current_password),
+                        "password": obfuscate_password(new_password),
+                    }
                 ),
             )
             await client._clear_local_session(expected_generation=generation)

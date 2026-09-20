@@ -960,10 +960,11 @@ class NanoKVMClient:
     @require_application_version(pro="1.1.6")
     async def set_lcd_time_format(self, fmt: LcdTimeFormat | str) -> None:
         """Set the LCD time format (12h/24h)."""
+        format_value = fmt if isinstance(fmt, LcdTimeFormat) else LcdTimeFormat(fmt)
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/lcd/time/format",
-            data=SetLcdTimeFormatReq(format=fmt),
+            data=SetLcdTimeFormatReq(format=format_value),
         )
 
     @require_hardware(HWFamily.PRO)
@@ -1119,11 +1120,13 @@ class NanoKVMClient:
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/ledstrip/set",
-            data=SetLedStripReq(
-                on=on,
-                horizontal_count=horizontal_count,
-                vertical_count=vertical_count,
-                brightness=brightness,
+            data=SetLedStripReq.model_validate(
+                {
+                    "on": on,
+                    "hor": horizontal_count,
+                    "ver": vertical_count,
+                    "brightness": brightness,
+                }
             ),
         )
 
@@ -1178,7 +1181,7 @@ class NanoKVMClient:
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/menubar",
-            data=SetMenuBarConfigReq(disabled_items=disabled_items),
+            data=SetMenuBarConfigReq.model_validate({"disabledItems": disabled_items}),
         )
 
     # ── HID ─────────────────────────────────────────────────────────────
@@ -1303,10 +1306,12 @@ class NanoKVMClient:
         await self._api_request_json(
             hdrs.METH_POST,
             "/storage/image/mount",
-            data=MountImageReq(
-                file=file,
-                cdrom=cdrom if file else None,
-                read_only=read_only if file else None,
+            data=MountImageReq.model_validate(
+                {
+                    "file": file,
+                    "cdrom": cdrom if file else None,
+                    "readOnly": read_only if file else None,
+                }
             ),
         )
 
