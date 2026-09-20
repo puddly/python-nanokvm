@@ -14,9 +14,6 @@ async with NanoKVMClient("https://kvm.local/api/") as client:
     info = await client.get_info()
     hardware = await client.get_hardware()
     gpio = await client.get_gpio()
-    images = await client.get_images()
-    leds = await client.get_keyboard_led_status()
-    print(leds.num_lock, leds.caps_lock, leds.scroll_lock)
 
     await client.paste_text("Hello\nworld!")
     await client.mouse_click(MouseButton.LEFT, 0.5, 0.5)
@@ -62,7 +59,7 @@ await client.change_password(
 Older non-Pro firmware and NanoKVM Pro use the original two-argument call.
 
 A successful password change clears the local session. Starting another login
-or logging out also invalidates older authentication and password operations.
+or logging out invalidates in-flight authenticated operations and streams.
 Superseded operations raise `NanoKVMNotAuthenticatedError`.
 
 When an external `aiohttp.ClientSession` is supplied, it remains owned by the

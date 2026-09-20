@@ -71,6 +71,42 @@ async def test_delayed_401_does_not_clear_replacement_session(
             assert client.token == new_token
 
 
+async def test_delayed_form_success_is_rejected_after_reauthentication() -> None:
+    """Multipart responses cannot cross into a replacement session."""
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed_success(*args: object, **kwargs: object) -> CallbackResult:
+        started.set()
+        await release.wait()
+        return CallbackResult(payload={"code": 0, "msg": "ok", "data": None})
+
+    async with NanoKVMClient(_URL, token="old-session") as client:
+        with aioresponses() as mocked:
+            mocked.post(f"{_URL}upload", callback=delayed_success)
+            mocked.post(
+                f"{_URL}auth/login",
+                payload={"code": 0, "msg": "ok", "data": {"token": "new-session"}},
+            )
+            mocked.get(
+                f"{_URL}vm/hardware",
+                payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
+            )
+            pending = asyncio.create_task(
+                client._api_request_form("POST", "/upload", data=aiohttp.FormData())
+            )
+            async with asyncio.timeout(2):
+                await started.wait()
+                try:
+                    await client.authenticate("synthetic-user", "synthetic-password")
+                finally:
+                    release.set()
+                with pytest.raises(
+                    NanoKVMNotAuthenticatedError, match="Session changed"
+                ):
+                    await pending
+            assert client.token == "new-session"
+
+
 async def test_websocket_401_waiting_for_cleanup_cannot_clear_new_login() -> None:
     """Model another login winning the lock before handshake cleanup runs."""
     cleanup_started = asyncio.Event()
@@ -163,8 +199,8 @@ async def test_session_cleanup_does_not_close_new_websocket_while_old_one_closes
 
 
 @pytest.mark.parametrize("operation", ["logout", "password"])
-async def test_delayed_session_ending_response_keeps_new_login(operation: str) -> None:
-    """Successful logout/password responses belong to the sending session too."""
+async def test_delayed_session_ending_response_is_rejected(operation: str) -> None:
+    """A superseded logout or password change reports its stale response."""
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -207,5 +243,8 @@ async def test_delayed_session_ending_response_keeps_new_login(operation: str) -
                     await client.authenticate("synthetic-user", "synthetic-password")
                 finally:
                     release.set()
-                await pending
+                with pytest.raises(
+                    NanoKVMNotAuthenticatedError, match="Session changed"
+                ):
+                    await pending
             assert client.token == "new-session"

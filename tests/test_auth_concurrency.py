@@ -1,11 +1,14 @@
 """Concurrent authentication must preserve the identity of each operation."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+import io
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 from aiohttp import web
+from PIL import Image
 import pytest
 
 from nanokvm.client import NanoKVMClient, NanoKVMNotAuthenticatedError
@@ -166,3 +169,86 @@ async def test_login_superseded_while_closing_old_websocket_is_not_sent() -> Non
                 await pending
         assert attempts == ["bob"]
         assert client.token == "bob"
+
+
+async def test_success_response_from_previous_identity_is_rejected() -> None:
+    """A delayed success cannot return data from the previous account."""
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def login(request: web.Request) -> web.Response:
+        username = (await request.json())["username"]
+        response = _ok()
+        response.set_cookie("nano-kvm-token", username)
+        return response
+
+    async def account(request: web.Request) -> web.Response:
+        username = request.cookies["nano-kvm-token"]
+        if username == "alice":
+            started.set()
+            await release.wait()
+        return _ok({"username": username})
+
+    app = web.Application()
+    app.router.add_post("/api/auth/login", login)
+    app.router.add_get("/api/auth/account", account)
+    async with _server(app) as url, NanoKVMClient(url, token="alice") as client:
+        async with asyncio.timeout(2):
+            pending = asyncio.create_task(client.get_account())
+            await started.wait()
+            try:
+                await client.authenticate("bob", "password")
+            finally:
+                release.set()
+
+            with pytest.raises(NanoKVMNotAuthenticatedError, match="Session changed"):
+                await pending
+
+        assert (await client.get_account()).username == "bob"
+
+
+async def test_logout_stops_existing_mjpeg_stream_before_next_frame() -> None:
+    """A stream opened by a cleared session cannot deliver another frame."""
+    started, release = asyncio.Event(), asyncio.Event()
+    image = Image.new("RGB", (2, 1), "red")
+    encoded = io.BytesIO()
+    image.save(encoded, "JPEG")
+    jpeg = encoded.getvalue()
+
+    async def logout(request: web.Request) -> web.Response:
+        return _ok()
+
+    async def mjpeg(request: web.Request) -> web.StreamResponse:
+        response = web.StreamResponse(
+            headers={"Content-Type": "multipart/x-mixed-replace; boundary=frame"}
+        )
+        await response.prepare(request)
+        started.set()
+        await release.wait()
+        await response.write(
+            b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+            + str(len(jpeg)).encode()
+            + b"\r\n\r\n"
+            + jpeg
+            + b"\r\n--frame--\r\n"
+        )
+        await response.write_eof()
+        return response
+
+    app = web.Application()
+    app.router.add_post("/api/auth/logout", logout)
+    app.router.add_get("/api/stream/mjpeg", mjpeg)
+    async with _server(app) as url, NanoKVMClient(url, token="alice") as client:
+        stream = cast(AsyncGenerator[Image.Image, None], client.mjpeg_stream())
+        pending = asyncio.ensure_future(stream.__anext__())
+        async with asyncio.timeout(2):
+            await started.wait()
+            try:
+                await client.logout()
+            finally:
+                release.set()
+
+            with pytest.raises(NanoKVMNotAuthenticatedError, match="Session changed"):
+                await pending
+
+        await stream.aclose()
+        assert client.token is None
