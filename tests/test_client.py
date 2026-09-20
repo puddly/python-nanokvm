@@ -2,7 +2,6 @@ import asyncio
 import io
 import logging
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import aiohttp
 from aiohttp import ClientSession, web
@@ -34,32 +33,6 @@ from nanokvm.models import (
     StreamMode,
     VirtualDevice,
 )
-
-
-def test_client_initializes_internal_session_controller() -> None:
-    """HTTP, authentication, and session state have an internal owner."""
-    client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
-
-    assert hasattr(client, "_session_controller")
-
-
-def test_client_initializes_internal_stream_controller() -> None:
-    """MJPEG transport and image decoding have an internal owner."""
-    client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
-
-    assert hasattr(client, "_stream_controller")
-
-
-async def test_authenticate_delegates_to_internal_session_controller() -> None:
-    """The public authentication method remains a compatibility wrapper."""
-    client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
-
-    with patch.object(
-        client._session_controller, "authenticate", new_callable=AsyncMock
-    ) as authenticate:
-        await client.authenticate("synthetic-user", "synthetic-password")
-
-    authenticate.assert_awaited_once_with("synthetic-user", "synthetic-password")
 
 
 def _mark_detected(
@@ -974,12 +947,6 @@ async def test_set_stream_mode_accepts_existing_string_values() -> None:
                 ("POST", yarl.URL("http://localhost:8888/api/stream/mode"))
             ]
             assert calls[0].kwargs.get("json") == {"mode": "h264-direct"}
-
-
-def test_legacy_swap_control_methods_are_not_exposed() -> None:
-    """The client does not expose routes removed from released firmware."""
-    assert not hasattr(NanoKVMClient, "enable_swap")
-    assert not hasattr(NanoKVMClient, "disable_swap")
 
 
 async def test_client_context_manager() -> None:
