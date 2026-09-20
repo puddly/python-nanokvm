@@ -11,13 +11,13 @@ from typing import TYPE_CHECKING
 import aiohttp
 from aiohttp import ClientSession, hdrs
 
-from .models.common import HWFamily, MouseButton
+from ..models.common import HWFamily, MouseButton
 
 if TYPE_CHECKING:
-    from .client import NanoKVMClient
+    from ..client import NanoKVMClient
 
 
-class _MouseController:
+class MouseController:
     """Own the mouse protocol and its lazily-created WebSocket transport."""
 
     def __init__(self, client: NanoKVMClient, logger: logging.Logger) -> None:
@@ -44,7 +44,7 @@ class _MouseController:
 
     async def get_ws(self) -> aiohttp.ClientWebSocketResponse:
         """Get or create WebSocket connection for mouse events."""
-        from .client import (
+        from ..client import (
             _SESSION_COOKIE_NAME,
             NanoKVMNotAuthenticatedError,
             NanoKVMPermissionError,
@@ -131,7 +131,7 @@ class _MouseController:
 
     async def uses_binary_mouse_protocol(self) -> bool:
         """Select the mouse wire format supported by the connected device."""
-        from .client import (
+        from ..client import (
             _BINARY_MOUSE_MIN_NON_PRO_VERSION,
             _BINARY_MOUSE_MIN_PRO_VERSION,
             _version_at_least,
@@ -265,7 +265,7 @@ class _MouseController:
 
     async def mouse_down(self, button: MouseButton = MouseButton.LEFT) -> None:
         """Press a mouse button."""
-        from .client import NanoKVMNotSupportedError
+        from ..client import NanoKVMNotSupportedError
 
         client = self._client
         if not await self.uses_binary_mouse_protocol():

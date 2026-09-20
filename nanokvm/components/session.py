@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 import contextlib
 from http.cookies import Morsel
 import json
@@ -17,7 +17,7 @@ import aiohttp
 from aiohttp import ClientResponse, ClientSession, Fingerprint, hdrs
 from pydantic import BaseModel, ValidationError
 
-from .models.common import (
+from ..models.common import (
     ApiResponse,
     ApiResponseCode,
     ChangePasswordReq,
@@ -28,13 +28,13 @@ from .models.common import (
 )
 
 if TYPE_CHECKING:
-    from .client import NanoKVMClient
+    from ..client import NanoKVMClient
 
 
 T = TypeVar("T", bound=BaseModel)
 
 
-class _SessionController:
+class SessionController:
     """Own HTTP requests and the authentication state of a client."""
 
     def __init__(self, client: NanoKVMClient, logger: logging.Logger) -> None:
@@ -92,9 +92,9 @@ class _SessionController:
         timeout: aiohttp.ClientTimeout | None = None,
         expected_generation: int | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[ClientResponse]:
+    ) -> AsyncGenerator[ClientResponse, None]:
         """Make an authenticated or unauthenticated API request."""
-        from .client import NanoKVMNotAuthenticatedError, NanoKVMPermissionError
+        from ..client import NanoKVMNotAuthenticatedError, NanoKVMPermissionError
 
         client = self._client
         if expected_generation is not None:
@@ -147,7 +147,7 @@ class _SessionController:
         try:
             return await response.json(content_type=None)
         except (json.JSONDecodeError, UnicodeDecodeError, ValidationError):
-            from .client import NanoKVMInvalidResponseError
+            from ..client import NanoKVMInvalidResponseError
 
             raise NanoKVMInvalidResponseError(
                 "Invalid JSON response received"
@@ -202,7 +202,7 @@ class _SessionController:
         response_model: type[T] | None = None,
     ) -> T | None:
         """Validate the shared NanoKVM response envelope."""
-        from .client import NanoKVMApiError, NanoKVMInvalidResponseError
+        from ..client import NanoKVMApiError, NanoKVMInvalidResponseError
 
         try:
             api_response = ApiResponse[Any].model_validate(raw_response)
@@ -256,7 +256,7 @@ class _SessionController:
         self, username: str, password_to_send: str, *, generation: int
     ) -> None:
         """Perform a single authentication attempt with the given password."""
-        from .client import (
+        from ..client import (
             _SESSION_COOKIE_NAME,
             NanoKVMApiError,
             NanoKVMAuthenticationFailure,
@@ -314,7 +314,7 @@ class _SessionController:
 
     async def authenticate(self, username: str, password: str) -> None:
         """Authenticate and store the session token."""
-        from .client import NanoKVMAuthenticationFailure, obfuscate_password
+        from ..client import NanoKVMAuthenticationFailure, obfuscate_password
 
         client = self._client
         # A failed identity switch must never leave the previous account usable.
@@ -350,7 +350,7 @@ class _SessionController:
 
     def check_session_generation(self, generation: int) -> None:
         """Reject an operation superseded by an authentication transition."""
-        from .client import NanoKVMNotAuthenticatedError
+        from ..client import NanoKVMNotAuthenticatedError
 
         if generation != self._client._session_generation:
             raise NanoKVMNotAuthenticatedError(
@@ -393,7 +393,7 @@ class _SessionController:
 
     def clear_session_cookies(self) -> None:
         """Remove only session cookies whose scope overlaps this device's API."""
-        from .client import _SESSION_COOKIE_NAME
+        from ..client import _SESSION_COOKIE_NAME
 
         client = self._client
         if client._session is None:
@@ -418,7 +418,7 @@ class _SessionController:
 
     async def uses_current_password_contract(self) -> bool:
         """Determine whether this device uses the 2.5.1 password contract."""
-        from .client import (
+        from ..client import (
             _CURRENT_PASSWORD_MIN_NON_PRO_VERSION,
             NanoKVMError,
             NanoKVMNotAuthenticatedError,
@@ -462,7 +462,7 @@ class _SessionController:
         current_password: str | None = None,
     ) -> None:
         """Change the KVM password for the authenticated account."""
-        from .client import obfuscate_password
+        from ..client import obfuscate_password
 
         client = self._client
         generation = client._session_generation

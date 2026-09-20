@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Coroutine,
+)
 import contextlib
 import functools
 import io
@@ -26,8 +32,8 @@ from PIL import Image
 from pydantic import BaseModel
 import yarl
 
-from ._mouse import _MouseController
-from ._session import _SessionController
+from .components.mouse import MouseController
+from .components.session import SessionController
 from .models.common import (
     AddShortcutReq,
     ApiResponseCode,
@@ -380,8 +386,8 @@ class NanoKVMClient:
         self._hw_version: HWVersion | None = None
         self._application_version: str | None = None
         self._image_version: str | None = None
-        self._session_controller = _SessionController(self, _LOGGER)
-        self._mouse = _MouseController(self, _LOGGER)
+        self._session_controller = SessionController(self, _LOGGER)
+        self._mouse = MouseController(self, _LOGGER)
 
     def _create_ssl_context(self) -> ssl.SSLContext | Fingerprint | bool:
         """Create and configure the SSL context for the HTTP session."""
@@ -443,7 +449,7 @@ class NanoKVMClient:
         timeout: aiohttp.ClientTimeout | None = None,
         expected_generation: int | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[ClientResponse]:
+    ) -> AsyncGenerator[ClientResponse, None]:
         """Make an API request."""
         async with self._session_controller.request(
             method,
@@ -1741,15 +1747,15 @@ class NanoKVMClient:
 
     @staticmethod
     def _clamp(value: int, minimum: int, maximum: int) -> int:
-        return _MouseController.clamp(value, minimum, maximum)
+        return MouseController.clamp(value, minimum, maximum)
 
     @classmethod
     def _relative_value(cls, value: float) -> int:
-        return _MouseController.relative_value(value)
+        return MouseController.relative_value(value)
 
     @classmethod
     def _absolute_value(cls, value: float) -> int:
-        return _MouseController.absolute_value(value)
+        return MouseController.absolute_value(value)
 
     def _absolute_report(self, wheel: int = 0) -> bytes:
         return self._mouse.absolute_report(wheel)
