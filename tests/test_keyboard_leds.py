@@ -90,6 +90,21 @@ def test_keyboard_led_status_preserves_unknown_state() -> None:
     assert status.updated_at is None
 
 
+def test_keyboard_led_status_normalizes_empty_update_timestamp() -> None:
+    """The firmware uses an empty timestamp before the host reports its state."""
+    status = GetKeyboardLedStatusRsp.model_validate(
+        {
+            "numLock": False,
+            "capsLock": False,
+            "scrollLock": False,
+            "known": False,
+            "updatedAt": "",
+        }
+    )
+
+    assert status.updated_at is None
+
+
 async def test_get_keyboard_led_status_preserves_permission_errors() -> None:
     """A forbidden LED query is classified by the shared HTTP error handling."""
     async with NanoKVMClient(
