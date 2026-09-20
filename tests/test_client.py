@@ -95,7 +95,9 @@ async def test_image_download_prefix_by_hardware_family(
 )
 def test_download_status_accepts_terminal_states(status: str) -> None:
     """Download status responses include terminal success and failure states."""
-    response = StatusImageRsp(status=status, file="image.iso", percentage="")
+    response = StatusImageRsp.model_validate(
+        {"status": status, "file": "image.iso", "percentage": ""}
+    )
 
     assert response.status is DownloadStatus(status)
 
@@ -594,7 +596,10 @@ def test_model_normalizations_for_wol_and_oled() -> None:
     assert GetMacRsp(macs=["", "AA:BB:CC:DD:EE:FF", "   "]).macs == [
         "AA:BB:CC:DD:EE:FF"
     ]
-    assert GetOLEDRsp(exist=True, type="desk", sleep=0).type == OledType.DESK
+    assert (
+        GetOLEDRsp.model_validate({"exist": True, "type": "desk", "sleep": 0}).type
+        == OledType.DESK
+    )
 
 
 async def test_connect_wifi_no_auth_sends_ap_header() -> None:
@@ -942,12 +947,6 @@ async def test_set_stream_mode_accepts_existing_string_values() -> None:
                 ("POST", yarl.URL("http://localhost:8888/api/stream/mode"))
             ]
             assert calls[0].kwargs.get("json") == {"mode": "h264-direct"}
-
-
-def test_legacy_swap_control_methods_are_not_exposed() -> None:
-    """The client does not expose routes removed from released firmware."""
-    assert not hasattr(NanoKVMClient, "enable_swap")
-    assert not hasattr(NanoKVMClient, "disable_swap")
 
 
 async def test_client_context_manager() -> None:

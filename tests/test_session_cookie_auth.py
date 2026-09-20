@@ -352,9 +352,9 @@ async def test_mjpeg_request_uses_cookie_login_token() -> None:
 
     application = web.Application()
     application.router.add_get("/api/stream/mjpeg", stream_handler)
-    runner = aiohttp.web.AppRunner(application)
+    runner = web.AppRunner(application)
     await runner.setup()
-    site = aiohttp.web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     sockets = getattr(site._server, "sockets", None)
     assert sockets

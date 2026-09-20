@@ -3,38 +3,33 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Coroutine,
+)
 import contextlib
 import functools
-from http.cookies import Morsel, SimpleCookie
-import io
-import json
 import logging
 from os import PathLike
-from pathlib import Path
 import re
 import ssl
-from typing import Any, TypeVar, overload
+from typing import Any, Literal, TypeVar, overload
 
 import aiohttp
-from aiohttp import (
-    BodyPartReader,
-    ClientResponse,
-    ClientSession,
-    Fingerprint,
-    MultipartReader,
-    hdrs,
-)
+from aiohttp import ClientResponse, ClientSession, Fingerprint, hdrs
 from PIL import Image
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 import yarl
 
+from .components.mouse import MouseController
+from .components.session import SessionController
+from .components.stream import StreamController
 from .models.common import (
     AddShortcutReq,
-    ApiResponse,
     ApiResponseCode,
-    ChangePasswordReq,
-    ChangePasswordV251Req,
     ConnectWifiReq,
     DeleteImageReq,
     DeleteMacReq,
@@ -70,8 +65,6 @@ from .models.common import (
     HWVersion,
     ImageEnabledRsp,
     IsPasswordUpdatedRsp,
-    LoginReq,
-    LoginRsp,
     LoginTailscaleRsp,
     MountImageReq,
     MouseButton,
@@ -146,7 +139,7 @@ from .models.pro import (
     SwitchEdidReq,
     UploadEdidRsp,
 )
-from .utils import obfuscate_password
+from .utils import obfuscate_password as _obfuscate_password
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -159,6 +152,11 @@ PASTE_CHAR_MAP = set(
 )
 
 _SESSION_COOKIE_NAME = "nano-kvm-token"
+
+
+def obfuscate_password(password: str) -> str:
+    """Keep the password helper available from the client module."""
+    return _obfuscate_password(password)
 
 
 class NanoKVMError(Exception):
@@ -371,8 +369,8 @@ class NanoKVMClient:
         self._ws_session: ClientSession | None = None
         self._ws_lock = asyncio.Lock()
         self._mouse_buttons = 0
-        self._mouse_mode = "relative"
-        self._mouse_abs_position = (0, 0)
+        self._mouse_mode: Literal["relative", "absolute"] = "relative"
+        self._mouse_abs_position: tuple[int, int] = (0, 0)
         self._verify_ssl = verify_ssl
         self._ssl_ca_cert = ssl_ca_cert
         self._ssl_fingerprint = ssl_fingerprint
@@ -381,40 +379,13 @@ class NanoKVMClient:
         self._hw_version: HWVersion | None = None
         self._application_version: str | None = None
         self._image_version: str | None = None
+        self._session_controller = SessionController(self, _LOGGER)
+        self._mouse = MouseController(self, _LOGGER)
+        self._stream_controller = StreamController(self, _LOGGER)
 
     def _create_ssl_context(self) -> ssl.SSLContext | Fingerprint | bool:
-        """
-        Create and configure SSL context based on initialization parameters.
-
-        Returns:
-            Fingerprint: Certificate fingerprint pinning (when ssl_fingerprint set)
-            ssl.SSLContext: Configured SSL context for custom certificates
-            True: Use default SSL verification (aiohttp default)
-            False: Disable SSL verification
-
-        Raises:
-            FileNotFoundError: If the CA certificate file is missing.
-            ssl.SSLError: If the CA certificate is invalid.
-        """
-
-        if self._ssl_fingerprint:
-            _LOGGER.debug("Using certificate fingerprint pinning")
-            return Fingerprint(bytes.fromhex(self._ssl_fingerprint.replace(":", "")))
-
-        if not self._verify_ssl:
-            _LOGGER.warning(
-                "SSL verification is disabled. This is insecure and should only be "
-                "used for testing with self-signed certificates."
-            )
-            return False
-
-        if not self._ssl_ca_cert:
-            return True
-
-        ssl_ctx = ssl.create_default_context(cafile=self._ssl_ca_cert)
-        _LOGGER.debug("Using custom CA certificate: %s", self._ssl_ca_cert)
-
-        return ssl_ctx
+        """Create and configure the SSL context for the HTTP session."""
+        return self._session_controller.create_ssl_context()
 
     @property
     def token(self) -> str | None:
@@ -455,24 +426,12 @@ class NanoKVMClient:
 
     async def __aenter__(self) -> NanoKVMClient:
         """Async context manager entry."""
-        self._ssl_config = await asyncio.to_thread(self._create_ssl_context)
-        if self._session is None and not self._external_session_provided:
-            self._session = ClientSession()
+        await self._session_controller.enter()
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit - cleanup resources."""
-        # Close WebSocket connection
-        await self._close_ws()
-
-        if self._ws_session is not None:
-            await self._ws_session.close()
-            self._ws_session = None
-
-        # Close HTTP session
-        if self._session is not None and not self._external_session_provided:
-            await self._session.close()
-            self._session = None
+        await self._session_controller.exit()
 
     @contextlib.asynccontextmanager
     async def _request(
@@ -484,61 +443,21 @@ class NanoKVMClient:
         timeout: aiohttp.ClientTimeout | None = None,
         expected_generation: int | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[ClientResponse]:
+    ) -> AsyncGenerator[ClientResponse, None]:
         """Make an API request."""
-        if expected_generation is not None:
-            self._check_session_generation(expected_generation)
-        generation = self._session_generation
-        cookies = {}
-        if authenticate:
-            if not self._token:
-                raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-            cookies["nano-kvm-token"] = self._token
-
-        assert self._session is not None
-        assert self._ssl_config is not None
-
-        self._clear_session_cookies()
-        request_headers = {
-            hdrs.ACCEPT: "application/json",
-            **kwargs.pop("headers", {}),
-        }
-
-        async with self._session.request(
+        async with self._session_controller.request(
             method,
-            self.url / path.lstrip("/"),
-            headers=request_headers,
-            cookies=cookies,
-            timeout=timeout or aiohttp.ClientTimeout(total=self._request_timeout),
-            raise_for_status=False,
-            ssl=self._ssl_config,
+            path,
+            authenticate=authenticate,
+            timeout=timeout,
+            expected_generation=expected_generation,
             **kwargs,
         ) as response:
-            # The explicit token owns the session. Do not leave response cookies
-            # available to another client sharing this HTTP session.
-            self._clear_session_cookies()
-            if authenticate and response.status == 401:
-                await self._clear_local_session(expected_generation=generation)
-                raise NanoKVMNotAuthenticatedError(
-                    "NanoKVM session is no longer authenticated"
-                )
-            if authenticate and response.status == 403:
-                raise NanoKVMPermissionError(
-                    status=response.status,
-                    method=response.method,
-                    path=f"/{path.lstrip('/')}",
-                )
-            response.raise_for_status()
             yield response
 
     async def _read_json_response(self, response: ClientResponse) -> Any:
         """Read a JSON response and normalize decoding failures."""
-        try:
-            return await response.json(content_type=None)
-        except (json.JSONDecodeError, UnicodeDecodeError, ValidationError):
-            raise NanoKVMInvalidResponseError(
-                "Invalid JSON response received"
-            ) from None
+        return await self._session_controller.read_json_response(response)
 
     @overload
     async def _api_request_json(
@@ -569,21 +488,13 @@ class NanoKVMClient:
         **kwargs: Any,
     ) -> T | None:
         """Make API request and parse JSON response."""
-        _LOGGER.debug("Making API request: %s %s", method, path)
-
-        async with self._request(
+        return await self._session_controller.api_request_json(
             method,
             path,
-            json=(
-                data.model_dump(by_alias=True, exclude_none=True)
-                if data is not None
-                else None
-            ),
+            response_model=response_model,
+            data=data,
             **kwargs,
-        ) as response:
-            raw_response = await self._read_json_response(response)
-
-        return self._validate_api_response(raw_response, response_model)
+        )
 
     @overload
     async def _api_request_form(
@@ -614,17 +525,13 @@ class NanoKVMClient:
         **kwargs: Any,
     ) -> T | None:
         """Make API request with multipart/form data and parse JSON response."""
-        _LOGGER.debug("Making API form request: %s %s", method, path)
-
-        async with self._request(
+        return await self._session_controller.api_request_form(
             method,
             path,
+            response_model=response_model,
             data=data,
             **kwargs,
-        ) as response:
-            raw_response = await self._read_json_response(response)
-
-        return self._validate_api_response(raw_response, response_model)
+        )
 
     def _validate_api_response(
         self,
@@ -632,31 +539,9 @@ class NanoKVMClient:
         response_model: type[T] | None = None,
     ) -> T | None:
         """Validate the shared NanoKVM response envelope."""
-        try:
-            api_response = ApiResponse[Any].model_validate(raw_response)
-        except ValidationError:
-            raise NanoKVMInvalidResponseError("Invalid API response envelope") from None
-
-        _LOGGER.debug("Got API response: code=%s", api_response.code)
-
-        if api_response.code != ApiResponseCode.SUCCESS.value:
-            raise NanoKVMApiError(
-                f"API returned error (Code: {api_response.code})",
-                code=api_response.code,
-                msg=api_response.msg,
-                data=api_response.data,
-            )
-
-        if response_model is None:
-            return None
-
-        if api_response.data is None:
-            raise NanoKVMInvalidResponseError("Successful API response is missing data")
-
-        try:
-            return response_model.model_validate(api_response.data)
-        except ValidationError:
-            raise NanoKVMInvalidResponseError("Invalid data in API response") from None
+        return self._session_controller.validate_api_response(
+            raw_response, response_model
+        )
 
     @overload
     async def _upload_file(
@@ -684,18 +569,12 @@ class NanoKVMClient:
         **kwargs: Any,
     ) -> T | None:
         """Upload a file using the NanoKVM multipart API."""
-        upload_path = Path(file_path)
-        form = aiohttp.FormData()
-
-        with upload_path.open("rb") as file_obj:
-            form.add_field("file", file_obj, filename=upload_path.name)
-            return await self._api_request_form(
-                hdrs.METH_POST,
-                path,
-                response_model=response_model,
-                data=form,
-                **kwargs,
-            )
+        return await self._session_controller.upload_file(
+            path,
+            file_path,
+            response_model=response_model,
+            **kwargs,
+        )
 
     # ── Authentication ──────────────────────────────────────────────────
 
@@ -703,150 +582,33 @@ class NanoKVMClient:
         self, username: str, password_to_send: str, *, generation: int
     ) -> None:
         """Perform a single authentication attempt with the given password."""
-        try:
-            # NanoKVM 2.5.1 moved the session token from the JSON payload to a
-            # HttpOnly Set-Cookie header.  Read the envelope and response cookie
-            # while the response context is still open; the cookie jar is not a
-            # reliable source because callers may provide a DummyCookieJar or a
-            # session shared with other services.
-            async with self._request(
-                hdrs.METH_POST,
-                "/auth/login",
-                authenticate=False,
-                expected_generation=generation,
-                json=LoginReq(username=username, password=password_to_send).model_dump(
-                    by_alias=True,
-                    exclude_none=True,
-                ),
-            ) as response:
-                raw_response = await self._read_json_response(response)
-
-                response_cookie = response.cookies.get(_SESSION_COOKIE_NAME)
-                cookie_token = (
-                    response_cookie.value.strip() if response_cookie is not None else ""
-                )
-
-            # Validate the API code before accepting a token from either source.
-            self._check_session_generation(generation)
-            self._validate_api_response(raw_response)
-
-            token = cookie_token
-            if not token and raw_response.get("data") is not None:
-                try:
-                    token = LoginRsp.model_validate(raw_response["data"]).token.strip()
-                except ValidationError:
-                    raise NanoKVMInvalidResponseError(
-                        "Invalid authentication response data"
-                    ) from None
-
-            if not token:
-                raise NanoKVMInvalidResponseError(
-                    "Authentication response missing token."
-                )
-
-            self._token = token
-        except NanoKVMApiError as err:
-            if err.code == ApiResponseCode.INVALID_USERNAME_OR_PASSWORD.value:
-                raise NanoKVMAuthenticationFailure(
-                    "Invalid username or password"
-                ) from err
-            else:
-                raise
+        await self._session_controller.do_authenticate(
+            username, password_to_send, generation=generation
+        )
 
     async def authenticate(self, username: str, password: str) -> None:
         """Authenticate and store the session token."""
-        # A failed identity switch must never leave the previous account usable.
-        generation = await self._clear_local_session()
-        _LOGGER.debug("Attempting authentication for user: %s", username)
-
-        if self._use_password_obfuscation is True:
-            _LOGGER.debug("Using password obfuscation (forced)")
-            await self._do_authenticate(
-                username, obfuscate_password(password), generation=generation
-            )
-        elif self._use_password_obfuscation is False:
-            _LOGGER.debug("Using plain text password (forced)")
-            await self._do_authenticate(username, password, generation=generation)
-        else:
-            # Auto-detect: try obfuscated first, fall back to plain text
-            _LOGGER.debug("Auto-detecting password mode")
-            try:
-                await self._do_authenticate(
-                    username, obfuscate_password(password), generation=generation
-                )
-                self._use_password_obfuscation = True
-                _LOGGER.info("Auto-detected obfuscated password mode")
-            except NanoKVMAuthenticationFailure:
-                _LOGGER.debug(
-                    "Obfuscated authentication failed, trying plain text password"
-                )
-                await self._do_authenticate(username, password, generation=generation)
-                self._use_password_obfuscation = False
-                _LOGGER.info("Auto-detected plain text password mode")
-
-        await self.detect_hardware()
-        self._check_session_generation(generation)
+        await self._session_controller.authenticate(username, password)
 
     def _check_session_generation(self, generation: int) -> None:
         """Reject an operation superseded by an authentication transition."""
-        if generation != self._session_generation:
-            raise NanoKVMNotAuthenticatedError(
-                "Session changed while the operation was in progress"
-            )
+        self._session_controller.check_session_generation(generation)
 
     async def logout(self) -> None:
         """Log out and clear the session token."""
-        generation = self._session_generation
-        try:
-            if self._token and self._token != "disabled":
-                await self._api_request_json(hdrs.METH_POST, "/auth/logout")
-        finally:
-            await self._clear_local_session(expected_generation=generation)
+        await self._session_controller.logout()
 
     async def _clear_local_session(
         self, *, expected_generation: int | None = None
     ) -> int:
         """Clear local authentication and transport state without closing HTTP."""
-        async with self._ws_lock:
-            if (
-                expected_generation is not None
-                and expected_generation != self._session_generation
-            ):
-                return self._session_generation
-            self._session_generation += 1
-            generation = self._session_generation
-            self._token = None
-            self._mouse_buttons = 0
-            self._clear_session_cookies()
-            ws = self._ws
-            self._ws = None
-        # Detach state atomically, then close only the old transport. Network I/O
-        # must not block a new login or close its replacement WebSocket.
-        if ws is not None and not ws.closed:
-            await ws.close()
-        return generation
+        return await self._session_controller.clear_local_session(
+            expected_generation=expected_generation
+        )
 
     def _clear_session_cookies(self) -> None:
         """Remove only session cookies whose scope overlaps this device's API."""
-        if self._session is None:
-            return
-        host = self.url.raw_host or ""
-        base_path = self.url.path.rstrip("/")
-
-        def is_device_session(cookie: Morsel[str]) -> bool:
-            if cookie.key != _SESSION_COOKIE_NAME:
-                return False
-            domain = cookie["domain"].lstrip(".")
-            if domain and host != domain and not host.endswith(f".{domain}"):
-                return False
-            path = cookie["path"].rstrip("/")
-            return (
-                base_path == path
-                or base_path.startswith(f"{path}/")
-                or path.startswith(f"{base_path}/")
-            )
-
-        self._session.cookie_jar.clear(is_device_session)
+        self._session_controller.clear_session_cookies()
 
     def _is_hardware_family(self, family: HWFamily) -> bool:
         """Return whether the detected hardware belongs to ``family``."""
@@ -854,33 +616,7 @@ class NanoKVMClient:
 
     async def _uses_current_password_contract(self) -> bool:
         """Determine whether this device uses the 2.5.1 password contract."""
-        if self._hw_version is None and self._token is None:
-            raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-        if self._hw_version is None:
-            await self.detect_hardware()
-
-        assert self._hw_version is not None
-        if self._is_hardware_family(HWFamily.PRO):
-            return False
-
-        if self._application_version is None:
-            if self._token is None:
-                raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-            await self.detect_versions()
-
-        if self._application_version is None:
-            raise NanoKVMError(
-                "Application version must be identified before changing the password"
-            )
-
-        parsed_version = _parse_version(self._application_version)
-        minimum_version = _parse_version(_CURRENT_PASSWORD_MIN_NON_PRO_VERSION)
-        if parsed_version is None or minimum_version is None:
-            raise NanoKVMError(
-                "Application version must be identified before changing the password"
-            )
-
-        return parsed_version >= minimum_version
+        return await self._session_controller.uses_current_password_contract()
 
     async def change_password(
         self,
@@ -890,52 +626,10 @@ class NanoKVMClient:
         current_password: str | None = None,
     ) -> None:
         """Change the KVM password for the authenticated account."""
-        generation = self._session_generation
-        if await self._uses_current_password_contract():
-            if not current_password or not current_password.strip():
-                raise ValueError(
-                    "current_password is required for NanoKVM 2.5.1 and newer"
-                )
-
-            account = await self.get_account()
-            self._check_session_generation(generation)
-            if account.username != username:
-                raise ValueError(
-                    "username must match the authenticated account on NanoKVM 2.5.1"
-                )
-
-            await self._api_request_json(
-                hdrs.METH_POST,
-                "/auth/password",
-                expected_generation=generation,
-                data=ChangePasswordV251Req(
-                    current_password=obfuscate_password(current_password),
-                    password=obfuscate_password(new_password),
-                ),
-            )
-            await self._clear_local_session(expected_generation=generation)
-            return
-
-        if self._use_password_obfuscation is None:
-            raise ValueError(
-                "Password mode is unknown. Authenticate first or set "
-                "use_password_obfuscation explicitly before changing the password."
-            )
-
-        password_to_send = (
-            obfuscate_password(new_password)
-            if self._use_password_obfuscation
-            else new_password
-        )
-
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/auth/password",
-            expected_generation=generation,
-            data=ChangePasswordReq(
-                username=username,
-                password=password_to_send,
-            ),
+        await self._session_controller.change_password(
+            username,
+            new_password,
+            current_password=current_password,
         )
 
     async def is_password_updated(self) -> IsPasswordUpdatedRsp:
@@ -1266,10 +960,11 @@ class NanoKVMClient:
     @require_application_version(pro="1.1.6")
     async def set_lcd_time_format(self, fmt: LcdTimeFormat | str) -> None:
         """Set the LCD time format (12h/24h)."""
+        format_value = fmt if isinstance(fmt, LcdTimeFormat) else LcdTimeFormat(fmt)
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/lcd/time/format",
-            data=SetLcdTimeFormatReq(format=fmt),
+            data=SetLcdTimeFormatReq(format=format_value),
         )
 
     @require_hardware(HWFamily.PRO)
@@ -1425,11 +1120,13 @@ class NanoKVMClient:
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/ledstrip/set",
-            data=SetLedStripReq(
-                on=on,
-                horizontal_count=horizontal_count,
-                vertical_count=vertical_count,
-                brightness=brightness,
+            data=SetLedStripReq.model_validate(
+                {
+                    "on": on,
+                    "hor": horizontal_count,
+                    "ver": vertical_count,
+                    "brightness": brightness,
+                }
             ),
         )
 
@@ -1484,7 +1181,7 @@ class NanoKVMClient:
         await self._api_request_json(
             hdrs.METH_POST,
             "/vm/menubar",
-            data=SetMenuBarConfigReq(disabled_items=disabled_items),
+            data=SetMenuBarConfigReq.model_validate({"disabledItems": disabled_items}),
         )
 
     # ── HID ─────────────────────────────────────────────────────────────
@@ -1609,10 +1306,12 @@ class NanoKVMClient:
         await self._api_request_json(
             hdrs.METH_POST,
             "/storage/image/mount",
-            data=MountImageReq(
-                file=file,
-                cdrom=cdrom if file else None,
-                read_only=read_only if file else None,
+            data=MountImageReq.model_validate(
+                {
+                    "file": file,
+                    "cdrom": cdrom if file else None,
+                    "readOnly": read_only if file else None,
+                }
             ),
         )
 
@@ -1837,32 +1536,12 @@ class NanoKVMClient:
 
     def _parse_jpeg_from_bytes(self, data: bytes) -> Image.Image:
         """Parse JPEG image from bytes."""
-        with Image.open(io.BytesIO(data), formats=["JPEG"]) as image:
-            image.load()
-            return image.copy()
+        return self._stream_controller.parse_jpeg_from_bytes(data)
 
     async def mjpeg_stream(self) -> AsyncIterator[Image.Image]:
         """Stream MJPEG frames."""
-        async with self._request(
-            hdrs.METH_GET,
-            "/stream/mjpeg",
-            timeout=aiohttp.ClientTimeout(total=None, connect=self._request_timeout),
-        ) as response:
-            reader = MultipartReader.from_response(response)
-            loop = asyncio.get_running_loop()
-
-            async for part in reader:
-                assert isinstance(part, BodyPartReader)
-                data = await part.read()
-                if not data:
-                    _LOGGER.debug("Received empty MJPEG part, ending stream.")
-                    break
-
-                # Process image in executor to avoid blocking async loop
-                image = await loop.run_in_executor(
-                    None, self._parse_jpeg_from_bytes, data
-                )
-                yield image
+        async for image in self._stream_controller.mjpeg_stream():
+            yield image
 
     # ── Application ─────────────────────────────────────────────────────
 
@@ -2031,208 +1710,58 @@ class NanoKVMClient:
 
     async def _close_ws(self) -> None:
         """Close and forget the current WebSocket connection."""
-        async with self._ws_lock:
-            ws = self._ws
-            self._ws = None
-            if ws is not None and not ws.closed:
-                await ws.close()
+        await self._mouse.close_ws()
 
     async def _invalidate_ws(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         """Forget a failed WebSocket without closing a replacement connection."""
-        async with self._ws_lock:
-            if self._ws is ws:
-                self._ws = None
-            if not ws.closed:
-                await ws.close()
+        await self._mouse.invalidate_ws(ws)
 
     async def _get_ws(self) -> aiohttp.ClientWebSocketResponse:
         """Get or create WebSocket connection for mouse events."""
-        generation = self._session_generation
-        try:
-            async with self._ws_lock:
-                if self._ws is not None and not self._ws.closed:
-                    return self._ws
-
-                if self._ws is not None:
-                    await self._ws.close()
-                    self._ws = None
-
-                if not self._token:
-                    raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-
-                generation = self._session_generation
-
-                # WebSocket URL uses ws:// or wss:// scheme
-                scheme = "ws" if self.url.scheme == "http" else "wss"
-                ws_url = self.url.with_scheme(scheme) / "ws"
-
-                assert self._session is not None
-                assert self._ssl_config is not None
-
-                # ws_connect cannot override cookies per request. An isolated
-                # jar prevents concurrent requests or async tracing callbacks
-                # from replacing this handshake's identity. Share the external
-                # connector without taking ownership of it.
-                if self._session.closed:
-                    raise RuntimeError("Session is closed")
-                if self._ws_session is None or self._ws_session.closed:
-                    self._ws_session = ClientSession(
-                        connector=self._session.connector,
-                        connector_owner=False,
-                        cookie_jar=aiohttp.DummyCookieJar(),
-                        auth=self._session.auth,
-                        trust_env=self._session.trust_env,
-                        trace_configs=self._session.trace_configs,
-                        skip_auto_headers=self._session.skip_auto_headers,
-                        timeout=aiohttp.ClientTimeout(total=self._request_timeout),
-                    )
-
-                headers = self._session.headers.copy()
-                cookies = SimpleCookie()
-                cookies.load(headers.get(hdrs.COOKIE, ""))
-                cookies.load(
-                    {
-                        name: cookie.value
-                        for name, cookie in self._session.cookie_jar.filter_cookies(
-                            ws_url
-                        ).items()
-                    }
-                )
-                cookies[_SESSION_COOKIE_NAME] = self._token
-                headers[hdrs.COOKIE] = cookies.output(header="", sep=";").strip()
-                self._clear_session_cookies()
-                self._ws = await self._ws_session.ws_connect(
-                    str(ws_url),
-                    headers=headers,
-                    ssl=self._ssl_config,
-                )
-                self._clear_session_cookies()
-                return self._ws
-        except aiohttp.ClientResponseError as err:
-            method = getattr(err.request_info, "method", hdrs.METH_GET)
-            if err.status == 401:
-                # _clear_local_session acquires _ws_lock, so do this after the
-                # lock above has been released to avoid a self-deadlock.
-                await self._clear_local_session(expected_generation=generation)
-                raise NanoKVMNotAuthenticatedError(
-                    "NanoKVM session is no longer authenticated"
-                ) from err
-            if err.status == 403:
-                raise NanoKVMPermissionError(
-                    status=err.status,
-                    method=method,
-                    path="/ws",
-                ) from err
-            raise
+        return await self._mouse.get_ws()
 
     async def _uses_binary_mouse_protocol(self) -> bool:
-        """Select the mouse wire format supported by the connected device.
-
-        NanoKVM changed mouse events from JSON to raw HID reports in 2.3.2;
-        the Pro firmware made the same change in application version 1.2.6.
-        This has to be a dispatcher rather than a version requirement:
-        earlier application versions still support mouse control through the
-        legacy JSON format.
-        """
-        if self._hw_version is None:
-            if self._token is None:
-                # The WebSocket will report the authentication error below.
-                # Keep the current protocol as the safe default when version
-                # detection is not possible.
-                return True
-            await self.detect_hardware()
-
-        if self._application_version is None:
-            if self._token is None:
-                return True
-            await self.detect_versions()
-
-        minimum_version = (
-            _BINARY_MOUSE_MIN_PRO_VERSION
-            if self._is_hardware_family(HWFamily.PRO)
-            else _BINARY_MOUSE_MIN_NON_PRO_VERSION
-        )
-        return self._application_version is None or _version_at_least(
-            self._application_version, minimum_version
-        )
+        """Select the mouse wire format supported by the connected device."""
+        return await self._mouse.uses_binary_mouse_protocol()
 
     @staticmethod
     def _clamp(value: int, minimum: int, maximum: int) -> int:
-        return max(minimum, min(maximum, value))
+        return MouseController.clamp(value, minimum, maximum)
 
     @classmethod
     def _relative_value(cls, value: float) -> int:
-        return cls._clamp(round(value * 127), -127, 127)
+        return MouseController.relative_value(value)
 
     @classmethod
     def _absolute_value(cls, value: float) -> int:
-        return cls._clamp(round(max(0.0, min(1.0, value)) * 32767), 0, 32767)
+        return MouseController.absolute_value(value)
 
     def _absolute_report(self, wheel: int = 0) -> bytes:
-        x, y = self._mouse_abs_position
-        return bytes(
-            (
-                self._mouse_buttons,
-                x & 0xFF,
-                (x >> 8) & 0xFF,
-                y & 0xFF,
-                (y >> 8) & 0xFF,
-                self._clamp(wheel, -127, 127) & 0xFF,
-            )
-        )
+        return self._mouse.absolute_report(wheel)
 
     def _relative_report(self, dx: int = 0, dy: int = 0, wheel: int = 0) -> bytes:
-        return bytes(
-            (
-                self._mouse_buttons,
-                self._clamp(dx, -127, 127) & 0xFF,
-                self._clamp(dy, -127, 127) & 0xFF,
-                self._clamp(wheel, -127, 127) & 0xFF,
-            )
-        )
+        return self._mouse.relative_report(dx, dy, wheel)
 
     def _report_for_current_mode(self, *, wheel: int = 0) -> bytes:
         """Build a button or wheel report for the active mouse mode."""
-        if self._mouse_mode == "absolute":
-            return self._absolute_report(wheel)
-        return self._relative_report(wheel=wheel)
+        return self._mouse.report_for_current_mode(wheel=wheel)
 
     async def _send_ws(
         self,
         send: Callable[[aiohttp.ClientWebSocketResponse], Awaitable[None]],
     ) -> None:
         """Send one mouse message and invalidate the connection on failure."""
-        ws = await self._get_ws()
-        try:
-            await send(ws)
-        except (aiohttp.ClientConnectionError, ConnectionError, RuntimeError):
-            await self._invalidate_ws(ws)
-            raise
+        await self._mouse.send_ws(send)
 
     async def _send_mouse_report(self, report: bytes) -> None:
         """Send a binary NanoKVM mouse event and HID report."""
-        await self._send_ws(lambda ws: ws.send_bytes(bytes((2,)) + report))
+        await self._mouse.send_mouse_report(report)
 
     async def _send_legacy_mouse_event(
         self, event_type: int, button_state: int, x: float, y: float
     ) -> None:
         """Send a mouse event using the pre-2.3.2 JSON wire format."""
-        if event_type == 2:
-            x_value = int(x * 32768)
-            y_value = int(y * 32768)
-        elif event_type == 3:
-            x_value = self._relative_value(x)
-            y_value = self._relative_value(y)
-        elif event_type == 4:
-            x_value = 0
-            y_value = 1 if y > 0 else -1 if y < 0 else 0
-        else:
-            x_value = int(x)
-            y_value = int(y)
-
-        message = [2, event_type, button_state, x_value, y_value]
-        _LOGGER.debug("Sending legacy mouse event: %s", message)
-        await self._send_ws(lambda ws: ws.send_json(message))
+        await self._mouse.send_legacy_mouse_event(event_type, button_state, x, y)
 
     async def mouse_move_abs(self, x: float, y: float) -> None:
         """
@@ -2242,13 +1771,7 @@ class NanoKVMClient:
             x: X coordinate (0.0 to 1.0, left to right)
             y: Y coordinate (0.0 to 1.0, top to bottom)
         """
-        if not await self._uses_binary_mouse_protocol():
-            await self._send_legacy_mouse_event(2, 0, x, y)
-            return
-
-        self._mouse_mode = "absolute"
-        self._mouse_abs_position = (self._absolute_value(x), self._absolute_value(y))
-        await self._send_mouse_report(self._absolute_report())
+        await self._mouse.mouse_move_abs(x, y)
 
     async def mouse_move_rel(self, dx: float, dy: float) -> None:
         """
@@ -2258,14 +1781,7 @@ class NanoKVMClient:
             dx: Horizontal movement (-1.0 to 1.0)
             dy: Vertical movement (-1.0 to 1.0)
         """
-        if not await self._uses_binary_mouse_protocol():
-            await self._send_legacy_mouse_event(3, 0, dx, dy)
-            return
-
-        self._mouse_mode = "relative"
-        await self._send_mouse_report(
-            self._relative_report(self._relative_value(dx), self._relative_value(dy))
-        )
+        await self._mouse.mouse_move_rel(dx, dy)
 
     async def mouse_down(self, button: MouseButton = MouseButton.LEFT) -> None:
         """
@@ -2275,30 +1791,7 @@ class NanoKVMClient:
             button: Mouse button to press (MouseButton.LEFT, MouseButton.RIGHT,
                 MouseButton.MIDDLE, MouseButton.BACK, MouseButton.FORWARD)
         """
-        if not await self._uses_binary_mouse_protocol():
-            if button in (MouseButton.BACK, MouseButton.FORWARD):
-                raise NanoKVMNotSupportedError(
-                    "Back and Forward mouse buttons require the binary mouse protocol"
-                )
-            await self._send_legacy_mouse_event(1, int(button), 0.0, 0.0)
-            return
-
-        previous_buttons = self._mouse_buttons
-        generation = self._session_generation
-        self._mouse_buttons |= int(button)
-        pressed_buttons = self._mouse_buttons
-        report = self._report_for_current_mode()
-        try:
-            await self._send_mouse_report(report)
-        except BaseException:
-            # Do not turn an unsent press into a drag on the next movement, or
-            # overwrite state changed by a newer session or another mouse call.
-            if (
-                self._session_generation == generation
-                and self._mouse_buttons == pressed_buttons
-            ):
-                self._mouse_buttons = previous_buttons
-            raise
+        await self._mouse.mouse_down(button)
 
     async def mouse_up(self) -> None:
         """
@@ -2306,13 +1799,7 @@ class NanoKVMClient:
 
         The report releases all currently held buttons.
         """
-        if not await self._uses_binary_mouse_protocol():
-            await self._send_legacy_mouse_event(0, 0, 0.0, 0.0)
-            return
-
-        self._mouse_buttons = 0
-        report = self._report_for_current_mode()
-        await self._send_mouse_report(report)
+        await self._mouse.mouse_up()
 
     async def mouse_click(
         self,
@@ -2331,23 +1818,7 @@ class NanoKVMClient:
             y: Optional Y coordinate (0.0 to 1.0) for absolute positioning
                 before click
         """
-        # Move to position if coordinates provided
-        if x is not None and y is not None:
-            await self.mouse_move_abs(x, y)
-            # Small delay to ensure position update
-            await asyncio.sleep(0.05)
-
-        pressed = False
-        try:
-            # Send mouse down
-            await self.mouse_down(button)
-            pressed = True
-            # Small delay between down and up
-            await asyncio.sleep(0.05)
-        finally:
-            if pressed:
-                # Always release after a successful press, including cancellation.
-                await self.mouse_up()
+        await self._mouse.mouse_click(button, x, y)
 
     async def mouse_scroll(self, dx: float, dy: float) -> None:
         """
@@ -2357,11 +1828,4 @@ class NanoKVMClient:
             dx: Horizontal scroll amount (-1.0 to 1.0)
             dy: Vertical scroll amount (-1.0 to 1.0) # positive=up, negative=down)
         """
-        if not await self._uses_binary_mouse_protocol():
-            await self._send_legacy_mouse_event(4, 0, dx, dy)
-            return
-
-        del dx  # NanoKVM's boot mouse report has a single vertical wheel byte.
-        wheel = self._relative_value(dy)
-        report = self._report_for_current_mode(wheel=wheel)
-        await self._send_mouse_report(report)
+        await self._mouse.mouse_scroll(dx, dy)
