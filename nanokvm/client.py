@@ -16,7 +16,7 @@ import logging
 from os import PathLike
 import re
 import ssl
-from typing import Any, TypeVar, overload
+from typing import Any, Literal, TypeVar, overload
 
 import aiohttp
 from aiohttp import ClientResponse, ClientSession, Fingerprint, hdrs
@@ -369,8 +369,8 @@ class NanoKVMClient:
         self._ws_session: ClientSession | None = None
         self._ws_lock = asyncio.Lock()
         self._mouse_buttons = 0
-        self._mouse_mode = "relative"
-        self._mouse_abs_position = (0, 0)
+        self._mouse_mode: Literal["relative", "absolute"] = "relative"
+        self._mouse_abs_position: tuple[int, int] = (0, 0)
         self._verify_ssl = verify_ssl
         self._ssl_ca_cert = ssl_ca_cert
         self._ssl_fingerprint = ssl_fingerprint

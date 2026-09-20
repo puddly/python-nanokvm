@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -85,7 +85,7 @@ def _sent_events(mock_ws: AsyncMock) -> list[list[int]]:
     ],
 )
 def test_current_mouse_report_uses_selected_mode(
-    mode: str, wheel: int, expected: bytes
+    mode: Literal["absolute", "relative"], wheel: int, expected: bytes
 ) -> None:
     """Current button and wheel reports follow the selected mouse mode."""
     client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
