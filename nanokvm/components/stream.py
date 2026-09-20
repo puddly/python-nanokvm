@@ -32,6 +32,7 @@ class StreamController:
     async def mjpeg_stream(self) -> AsyncGenerator[Image.Image, None]:
         """Stream decoded MJPEG frames."""
         client = self._client
+        generation = client._session_generation
         async with client._request(
             hdrs.METH_GET,
             "/stream/mjpeg",
@@ -51,4 +52,5 @@ class StreamController:
                 image = await loop.run_in_executor(
                     None, client._parse_jpeg_from_bytes, data
                 )
+                client._check_session_generation(generation)
                 yield image

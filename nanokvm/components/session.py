@@ -128,6 +128,8 @@ class SessionController:
             # The explicit token owns the session. Do not leave response cookies
             # available to another client sharing this HTTP session.
             client._clear_session_cookies()
+            if authenticate:
+                client._check_session_generation(generation)
             if authenticate and response.status == 401:
                 await client._clear_local_session(expected_generation=generation)
                 raise NanoKVMNotAuthenticatedError(
@@ -141,6 +143,8 @@ class SessionController:
                 )
             response.raise_for_status()
             yield response
+            if authenticate:
+                client._check_session_generation(generation)
 
     async def read_json_response(self, response: ClientResponse) -> Any:
         """Read a JSON response and normalize decoding failures."""
