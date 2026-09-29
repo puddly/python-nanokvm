@@ -733,6 +733,7 @@ class NanoKVMClient:
             data=SetGpioReq(type=button, duration=duration_ms),
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def get_ssh_state(self) -> GetSSHStateRsp:
         """Get SSH enabled state."""
         return await self._api_request_json(
@@ -741,10 +742,12 @@ class NanoKVMClient:
             response_model=GetSSHStateRsp,
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def enable_ssh(self) -> None:
         """Enable SSH server."""
         await self._api_request_json(hdrs.METH_POST, "/vm/ssh/enable")
 
+    @require_application_version(non_pro="2.1.6")
     async def disable_ssh(self) -> None:
         """Disable SSH server."""
         await self._api_request_json(hdrs.METH_POST, "/vm/ssh/disable")
@@ -908,7 +911,8 @@ class NanoKVMClient:
             data=SetMemoryLimitReq(enabled=enabled, limit=limit_mb),
         )
 
-    @require_hardware(HWFamily.NON_PRO)
+    @require_hardware(HWVersion.PCIE)
+    @require_application_version(non_pro="2.2.8")
     async def get_hdmi_state(self) -> GetHdmiStateRsp:
         """Get the HDMI state (PCIe variant)."""
         return await self._api_request_json(
@@ -917,18 +921,19 @@ class NanoKVMClient:
             response_model=GetHdmiStateRsp,
         )
 
-    @require_hardware(HWFamily.NON_PRO)
+    @require_hardware(HWVersion.PCIE)
+    @require_application_version(non_pro="2.1.5")
     async def reset_hdmi(self) -> None:
         """Reset the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/reset")
 
-    @require_hardware(HWFamily.NON_PRO)
+    @require_hardware(HWVersion.PCIE)
     @require_application_version(non_pro="2.2.8")
     async def enable_hdmi(self) -> None:
         """Enable the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/enable")
 
-    @require_hardware(HWFamily.NON_PRO)
+    @require_hardware(HWVersion.PCIE)
     @require_application_version(non_pro="2.2.8")
     async def disable_hdmi(self) -> None:
         """Disable the HDMI connection."""
@@ -1131,6 +1136,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.6")
     async def get_timezone(self) -> GetTimeZoneRsp:
         """Get the configured timezone."""
         return await self._api_request_json(
@@ -1140,6 +1146,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.6")
     async def set_timezone(self, timezone: str) -> None:
         """Set the timezone."""
         await self._api_request_json(
@@ -1262,6 +1269,7 @@ class NanoKVMClient:
             data=SetHidModeReq(mode=mode),
         )
 
+    @require_application_version(pro="1.1.6")
     async def reset_hid(self) -> None:
         """Reset the HID subsystem."""
         await self._api_request_json(hdrs.METH_POST, "/hid/reset")
@@ -1315,7 +1323,7 @@ class NanoKVMClient:
             ),
         )
 
-    @require_application_version(non_pro="2.3.0")
+    @require_application_version(non_pro="2.3.0", pro="1.1.6")
     async def delete_image(self, file: str) -> None:
         """Delete an image file."""
         await self._api_request_json(
@@ -1325,6 +1333,7 @@ class NanoKVMClient:
         )
 
     @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.2.1")
     async def get_cdrom_status(self) -> GetCdRomRsp:
         """Check if the mounted image is in CD-ROM mode."""
         return await self._api_request_json(
@@ -1343,6 +1352,7 @@ class NanoKVMClient:
             response_model=GetWifiRsp,
         )
 
+    @require_application_version(non_pro="2.3.1")
     async def connect_wifi(self, ssid: str, password: str) -> None:
         """Connect to a WiFi network."""
         await self._api_request_json(
@@ -1377,6 +1387,7 @@ class NanoKVMClient:
             headers={"X-AP-Key": ap_password},
         )
 
+    @require_application_version(non_pro="2.3.1")
     async def disconnect_wifi(self) -> None:
         """Disconnect from the current WiFi network."""
         await self._api_request_json(hdrs.METH_POST, "/network/wifi/disconnect")
@@ -1442,6 +1453,7 @@ class NanoKVMClient:
             data=SetDNSReq(mode=DNSMode(mode), servers=servers or []),
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def get_tailscale_status(self) -> GetTailscaleStatusRsp:
         """Get Tailscale status."""
         return await self._api_request_json(
@@ -1668,36 +1680,43 @@ class NanoKVMClient:
     # ── Extensions (Pro only) ──────────────────────────────────────────
 
     @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.4")
     async def assistant_install(self) -> None:
         """Install assistant dependencies."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/assistant/install")
 
     @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.4")
     async def assistant_start(self) -> None:
         """Start assistant."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/assistant/start")
 
     @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.5")
     async def kvmadmin_install(self) -> None:
         """Install kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/install")
 
     @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.5")
     async def kvmadmin_uninstall(self) -> None:
         """Uninstall kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/uninstall")
 
     @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.5")
     async def kvmadmin_start(self) -> None:
         """Start kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/start")
 
     @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.5")
     async def kvmadmin_stop(self) -> None:
         """Stop kvmadmin."""
         await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/stop")
 
     @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.5")
     async def kvmadmin_status(self) -> GetKvmadminStatusRsp:
         """Get kvmadmin status."""
         return await self._api_request_json(

@@ -367,7 +367,11 @@ class SessionController:
         generation = client._session_generation
         try:
             if client._token and client._token != "disabled":
-                await client._api_request_json(hdrs.METH_POST, "/auth/logout")
+                try:
+                    await client._api_request_json(hdrs.METH_POST, "/auth/logout")
+                except aiohttp.ClientResponseError as err:
+                    if err.status != 404:
+                        raise
         finally:
             await client._clear_local_session(expected_generation=generation)
 
