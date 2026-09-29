@@ -908,7 +908,8 @@ class NanoKVMClient:
             data=SetMemoryLimitReq(enabled=enabled, limit=limit_mb),
         )
 
-    @require_hardware(HWFamily.NON_PRO)
+    @require_hardware(HWVersion.PCIE)
+    @require_application_version(non_pro="2.2.8")
     async def get_hdmi_state(self) -> GetHdmiStateRsp:
         """Get the HDMI state (PCIe variant)."""
         return await self._api_request_json(
@@ -917,18 +918,19 @@ class NanoKVMClient:
             response_model=GetHdmiStateRsp,
         )
 
-    @require_hardware(HWFamily.NON_PRO)
+    @require_hardware(HWVersion.PCIE)
+    @require_application_version(non_pro="2.1.5")
     async def reset_hdmi(self) -> None:
         """Reset the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/reset")
 
-    @require_hardware(HWFamily.NON_PRO)
+    @require_hardware(HWVersion.PCIE)
     @require_application_version(non_pro="2.2.8")
     async def enable_hdmi(self) -> None:
         """Enable the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/enable")
 
-    @require_hardware(HWFamily.NON_PRO)
+    @require_hardware(HWVersion.PCIE)
     @require_application_version(non_pro="2.2.8")
     async def disable_hdmi(self) -> None:
         """Disable the HDMI connection."""
