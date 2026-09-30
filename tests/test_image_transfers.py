@@ -321,9 +321,10 @@ async def test_non_pro_upload_streams_file_and_reports_sync_progress(
         )
 
     assert [(call["method"], call["path"]) for call in state["calls"]] == [
-        ("POST", "/api/download/file")
+        ("GET", "/api/storage/image"),
+        ("POST", "/api/download/file"),
     ]
-    request = state["calls"][0]
+    request = state["calls"][1]
     assert request["headers"]["X-SHA256-Sum"] == "b" * 64
     assert request["payload"] == [
         {"name": "file", "filename": "synthetic_name-1.ISO", "value": b"0123456"}
@@ -449,6 +450,72 @@ async def test_pro_upload_rejects_existing_basename_before_post(tmp_path: Path) 
 
     assert [(call["method"], call["path"]) for call in state["calls"]] == [
         ("GET", "/api/storage/image")
+    ]
+
+
+async def test_non_pro_upload_rejects_existing_basename_by_default(
+    tmp_path: Path,
+) -> None:
+    """A non-Pro upload does not silently replace an existing image."""
+    image = tmp_path / "occupied.iso"
+    image.write_bytes(b"synthetic")
+
+    async with (
+        _device_server() as (base_url, state),
+        NanoKVMClient(base_url, token="synthetic-token") as client,
+    ):
+        state["pro_images"] = ["/data/occupied.iso"]
+        _mark(client, HWVersion.PCIE, "2.5.2")
+        with pytest.raises(FileExistsError):
+            await client.upload_image(image)
+
+    assert [(call["method"], call["path"]) for call in state["calls"]] == [
+        ("GET", "/api/storage/image")
+    ]
+
+
+async def test_non_pro_upload_can_explicitly_replace_existing_image(
+    tmp_path: Path,
+) -> None:
+    """Explicit overwrite keeps the non-Pro firmware replacement contract."""
+    image = tmp_path / "occupied.iso"
+    image.write_bytes(b"synthetic")
+
+    async with (
+        _device_server() as (base_url, state),
+        NanoKVMClient(base_url, token="synthetic-token") as client,
+    ):
+        state["pro_images"] = ["/data/occupied.iso"]
+        _mark(client, HWVersion.PCIE, "2.5.2")
+        await client.upload_image(image, overwrite=True)
+
+    assert [(call["method"], call["path"]) for call in state["calls"]] == [
+        ("GET", "/api/storage/image"),
+        ("POST", "/api/download/file"),
+    ]
+
+
+async def test_pro_upload_deletes_existing_image_only_with_explicit_overwrite(
+    tmp_path: Path,
+) -> None:
+    """Explicit Pro overwrite removes the old file before sending replacement chunks."""
+    image = tmp_path / "occupied.iso"
+    image.write_bytes(b"synthetic")
+
+    async with (
+        _device_server() as (base_url, state),
+        NanoKVMClient(base_url, token="synthetic-token") as client,
+    ):
+        state["pro_images"] = ["/data/occupied.iso"]
+        _mark(client, HWVersion.PRO, "1.2.15")
+        await client.upload_image(image, chunk_size=4, overwrite=True)
+
+    assert [(call["method"], call["path"]) for call in state["calls"]] == [
+        ("GET", "/api/storage/image"),
+        ("POST", "/api/storage/image/delete"),
+        ("POST", "/api/storage/image/upload"),
+        ("POST", "/api/storage/image/upload"),
+        ("POST", "/api/storage/image/upload"),
     ]
 
 
@@ -603,38 +670,24 @@ async def test_pro_upload_cancellation_cleans_partial_remote_image(
     assert state["calls"][-1]["payload"] == {"file": "/data/cancelled.iso"}
 
 
-async def test_empty_pro_upload_uses_one_chunk_and_reports_final_zero_after_acceptance(
+async def test_empty_upload_is_rejected_before_device_io(
     tmp_path: Path,
 ) -> None:
-    """An empty file avoids zero chunks and reports accepted completion."""
+    """An empty image cannot create an unusable remote file or false progress."""
     image = tmp_path / "empty.iso"
     image.write_bytes(b"")
     events: list[models.ImageTransferProgress] = []
-    accepted_at_final: list[bool] = []
 
     async with (
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         _mark(client, HWVersion.PRO, "1.2.15")
+        with pytest.raises(ValueError, match="must not be empty"):
+            await client.upload_image(image, progress_callback=events.append)
 
-        def progress(item: models.ImageTransferProgress) -> None:
-            events.append(item)
-            if len(events) > 1 and item.bytes_transferred == item.total_bytes:
-                accepted_at_final.append(state["accepted_uploads"] == [b""])
-
-        await client.upload_image(image, chunk_size=4, progress_callback=progress)
-
-    assert [(call["method"], call["path"]) for call in state["calls"]] == [
-        ("GET", "/api/storage/image"),
-        ("POST", "/api/storage/image/upload"),
-    ]
-    fields = state["calls"][1]["payload"]
-    assert fields[2] == {"name": "totalChunks", "filename": None, "value": b"1"}
-    assert fields[3] == {"name": "file", "filename": "empty.iso", "value": b""}
-    assert [event.bytes_transferred for event in events] == [0, 0]
-    assert [event.percentage for event in events] == [0, 0]
-    assert accepted_at_final == [True]
+    assert state["calls"] == []
+    assert events == []
 
 
 @pytest.mark.parametrize(
@@ -874,4 +927,6 @@ async def test_progress_callback_failure_stops_upload_without_final_update(
 
     assert [event.bytes_transferred for event in events] == [0]
     assert all(event.percentage < 100 for event in events)
-    assert state["calls"] == []
+    assert [(call["method"], call["path"]) for call in state["calls"]] == [
+        ("GET", "/api/storage/image")
+    ]

@@ -12,6 +12,7 @@ from collections.abc import (
 )
 import contextlib
 import functools
+import hashlib
 import inspect
 import logging
 from os import PathLike
@@ -330,6 +331,12 @@ def _validate_sha256(sha256: str | None) -> None:
     """Validate an optional SHA-256 checksum before device I/O."""
     if sha256 is not None and re.fullmatch(r"[0-9a-fA-F]{64}", sha256) is None:
         raise ValueError("sha256 must contain 64 hexadecimal characters")
+
+
+def _calculate_file_sha256(file_path: Path) -> str:
+    """Calculate a file checksum without loading it into memory."""
+    with file_path.open("rb") as file_obj:
+        return hashlib.file_digest(file_obj, "sha256").hexdigest()
 
 
 def _validate_sha256_argument(func: F) -> F:
@@ -1496,14 +1503,16 @@ class NanoKVMClient:
         progress_callback: ImageTransferProgressCallback | None = None,
         sha256: str | None = None,
         chunk_size: int = 1024 * 1024,
+        overwrite: bool = False,
     ) -> None:
-        """Upload one local image, serializing transfers on this client."""
+        """Upload an image, rejecting an existing name unless overwrite is enabled."""
         async with self._image_transfer_lock:
             await self._upload_image(
                 file_path,
                 progress_callback=progress_callback,
                 sha256=sha256,
                 chunk_size=chunk_size,
+                overwrite=overwrite,
             )
 
     async def _upload_image(
@@ -1513,6 +1522,7 @@ class NanoKVMClient:
         progress_callback: ImageTransferProgressCallback | None = None,
         sha256: str | None = None,
         chunk_size: int = 1024 * 1024,
+        overwrite: bool = False,
     ) -> None:
         """Upload a local image, streaming on non-Pro and chunking on Pro."""
         image_path = Path(file_path)
@@ -1533,6 +1543,9 @@ class NanoKVMClient:
             )
 
         total_bytes = file_stat.st_size
+        if total_bytes == 0:
+            raise ValueError("file_path must not be empty")
+
         is_pro = self._is_hardware_family(HWFamily.PRO)
         if is_pro and sha256 is not None:
             raise NanoKVMNotSupportedError(
@@ -1570,12 +1583,15 @@ class NanoKVMClient:
             if not image_path.name.lower().endswith((".iso", ".img")):
                 raise ValueError("Pro image filename must end with .iso or .img")
 
-            remote_images = await self.get_images()
-            remote_file = f"/data/{image_path.name}"
-            if remote_file in remote_images.files:
-                raise FileExistsError(
-                    f"NanoKVM Pro already contains an image named {image_path.name}"
-                )
+        remote_file = f"/data/{image_path.name}"
+        remote_images = await self.get_images()
+        remote_file_exists = remote_file in remote_images.files
+        if remote_file_exists and not overwrite:
+            raise FileExistsError(
+                f"NanoKVM already contains an image named {image_path.name}"
+            )
+        if remote_file_exists and is_pro:
+            await self.delete_image(remote_file)
 
         await _report_image_transfer_progress(progress_callback, 0, total_bytes)
 
@@ -1969,7 +1985,22 @@ class NanoKVMClient:
         if checksum and re.fullmatch(r"[0-9a-fA-F]{64}", checksum) is None:
             raise ValueError("SHA-256 checksum must contain exactly 64 hex characters")
 
-        headers = {"X-SHA256-Checksum": checksum} if checksum else {}
+        if checksum:
+            actual_checksum = await asyncio.to_thread(
+                _calculate_file_sha256, package_path
+            )
+            if actual_checksum != checksum.lower():
+                raise ValueError("SHA-256 checksum does not match the update package")
+
+        supports_remote_checksum = (
+            self._application_version is None
+            or _version_at_least(self._application_version, "2.5.1")
+        )
+        headers = (
+            {"X-SHA256-Checksum": checksum}
+            if checksum and supports_remote_checksum
+            else {}
+        )
         try:
             await self._upload_file(
                 "/application/update/offline",

@@ -1,5 +1,6 @@
 """Tests for offline and custom-server application updates."""
 
+import hashlib
 import logging
 from pathlib import Path
 
@@ -29,11 +30,11 @@ async def test_update_application_offline_uploads_package_and_checksum(
     """Offline updates use the firmware multipart field and checksum header."""
     package = tmp_path / "nanokvm_2.5.2.tar.gz"
     package.write_bytes(b"synthetic update package")
-    checksum = "a" * 64
+    checksum = hashlib.sha256(package.read_bytes()).hexdigest()
     url = f"{_BASE_URL}application/update/offline"
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.3.1")
+        _mark_non_pro(client, application_version="2.5.1")
 
         with aioresponses() as mocked:
             mocked.post(
@@ -47,6 +48,49 @@ async def test_update_application_offline_uploads_package_and_checksum(
         assert isinstance(call.kwargs.get("data"), aiohttp.FormData)
         assert call.kwargs["headers"]["X-SHA256-Checksum"] == checksum
         assert call.kwargs["timeout"].total == 15 * 60
+
+
+async def test_update_application_offline_verifies_checksum_on_legacy_firmware(
+    tmp_path: Path,
+) -> None:
+    """Legacy firmware gets local checksum protection without an ignored header."""
+    package = tmp_path / "nanokvm_2.5.0.tar.gz"
+    package.write_bytes(b"synthetic update package")
+    checksum = hashlib.sha256(package.read_bytes()).hexdigest()
+    url = f"{_BASE_URL}application/update/offline"
+
+    async with NanoKVMClient(_BASE_URL, token="test-token") as client:
+        _mark_non_pro(client, application_version="2.5.0")
+
+        with aioresponses() as mocked:
+            mocked.post(
+                url,
+                payload={"code": 0, "msg": "success", "data": None},
+            )
+
+            await client.update_application_offline(package, sha256=checksum)
+
+        call = mocked.requests[("POST", yarl.URL(url))][0]
+        assert "X-SHA256-Checksum" not in call.kwargs["headers"]
+
+
+async def test_update_application_offline_rejects_checksum_mismatch_before_io(
+    tmp_path: Path,
+) -> None:
+    """A mismatched package checksum fails before every supported upload contract."""
+    package = tmp_path / "nanokvm_2.5.0.tar.gz"
+    package.write_bytes(b"synthetic update package")
+
+    async with NanoKVMClient(_BASE_URL, token="test-token") as client:
+        _mark_non_pro(client, application_version="2.3.1")
+
+        with (
+            aioresponses() as mocked,
+            pytest.raises(ValueError, match="does not match"),
+        ):
+            await client.update_application_offline(package, sha256="a" * 64)
+
+        assert not mocked.requests
 
 
 async def test_update_application_offline_omits_empty_checksum(tmp_path: Path) -> None:
