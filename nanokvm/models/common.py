@@ -544,6 +544,14 @@ class SetPreviewReq(BaseModel):
 
 
 # Download Models
+class ImageTransferProgress(BaseModel):
+    """Progress reported while uploading a local image file."""
+
+    bytes_transferred: int
+    total_bytes: int
+    percentage: float
+
+
 class ImageEnabledRsp(BaseModel):
     enabled: bool
 
@@ -556,3 +564,4 @@ class StatusImageRsp(BaseModel):
 
 class DownloadImageReq(BaseModel):
     file: str  # URL of the image to download
+    sha256sum: str | None = None
