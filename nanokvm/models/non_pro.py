@@ -23,6 +23,14 @@ class DNSMode(StrEnum):
     DHCP = "dhcp"
 
 
+class InputRegionMode(StrEnum):
+    """Input region operation modes."""
+
+    OFF = "off"
+    AUTO = "auto"
+    MANUAL = "manual"
+
+
 def _normalize_string_list(value: Any) -> Any:
     if value is None:
         return []
@@ -34,6 +42,69 @@ class SetScreenReq(BaseModel):
 
     type: ScreenSettingType
     value: int
+
+
+class OriginalResolution(BaseModel):
+    """Resolution detected from the original display signal."""
+
+    width: int
+    height: int
+
+
+class ManualRegion(BaseModel):
+    """A configured manual region relative to its source frame."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    frame_width: int = Field(alias="frameWidth")
+    frame_height: int = Field(alias="frameHeight")
+    left: int
+    top: int
+    width: int
+    height: int
+
+
+class GetInputRegionRsp(BaseModel):
+    """Current input region configuration."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    mode: InputRegionMode
+    frame_width: int = Field(default=0, alias="frameWidth")
+    frame_height: int = Field(default=0, alias="frameHeight")
+    left: int = 0
+    top: int = 0
+    width: int = 0
+    height: int = 0
+    resolutions: list[OriginalResolution] = Field(default_factory=list)
+    selected_resolution: str = Field(default="", alias="selectedResolution")
+    regions: list[ManualRegion] = Field(default_factory=list)
+    selected_region: str = Field(default="", alias="selectedRegion")
+
+
+class SetInputRegionReq(BaseModel):
+    """Input region configuration fields to update."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    mode: InputRegionMode
+    frame_width: int | None = Field(default=None, alias="frameWidth")
+    frame_height: int | None = Field(default=None, alias="frameHeight")
+    left: int | None = None
+    top: int | None = None
+    width: int | None = None
+    height: int | None = None
+    resolutions: list[OriginalResolution] | None = None
+    selected_resolution: str | None = Field(default=None, alias="selectedResolution")
+    regions: list[ManualRegion] | None = None
+    selected_region: str | None = Field(default=None, alias="selectedRegion")
+
+
+class GetInputResolutionRsp(BaseModel):
+    """Current source display resolution."""
+
+    width: int
+    height: int
 
 
 class GetMemoryLimitRsp(BaseModel):

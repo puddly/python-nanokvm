@@ -94,10 +94,16 @@ from .models.non_pro import (
     GetCdRomRsp,
     GetDNSRsp,
     GetHdmiStateRsp,
+    GetInputRegionRsp,
+    GetInputResolutionRsp,
     GetMemoryLimitRsp,
     GetSwapSizeRsp,
+    InputRegionMode,
+    ManualRegion,
+    OriginalResolution,
     ScreenSettingType,
     SetDNSReq,
+    SetInputRegionReq,
     SetMemoryLimitReq,
     SetScreenReq,
     SetSwapSizeReq,
@@ -864,6 +870,62 @@ class NanoKVMClient:
         await self._api_request_json(hdrs.METH_POST, "/vm/system/pikvm")
 
     # ── VM (non-Pro only) ──────────────────────────────────────────────
+
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.1")
+    async def get_input_region(self) -> GetInputRegionRsp:
+        """Get the configured non-Pro input region."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/vm/input-region",
+            response_model=GetInputRegionRsp,
+        )
+
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.1")
+    async def set_input_region(
+        self,
+        mode: InputRegionMode,
+        *,
+        frame_width: int | None = None,
+        frame_height: int | None = None,
+        left: int | None = None,
+        top: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        resolutions: list[OriginalResolution] | None = None,
+        selected_resolution: str | None = None,
+        regions: list[ManualRegion] | None = None,
+        selected_region: str | None = None,
+    ) -> None:
+        """Set the non-Pro input region configuration."""
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/vm/input-region",
+            data=SetInputRegionReq(
+                mode=mode,
+                frame_width=frame_width,
+                frame_height=frame_height,
+                left=left,
+                top=top,
+                width=width,
+                height=height,
+                resolutions=resolutions,
+                selected_resolution=selected_resolution,
+                regions=regions,
+                selected_region=selected_region,
+            ),
+        )
+
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.1")
+    async def get_input_resolution(self) -> GetInputResolutionRsp:
+        """Get the current non-Pro input frame resolution."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/vm/input-resolution",
+            response_model=GetInputResolutionRsp,
+        )
 
     @require_hardware(HWFamily.NON_PRO)
     async def set_screen(self, setting: ScreenSettingType, value: int) -> None:
