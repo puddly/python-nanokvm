@@ -12,14 +12,18 @@ from collections.abc import (
 )
 import contextlib
 import functools
+import inspect
 import logging
 from os import PathLike
+from pathlib import Path
 import re
 import ssl
+import stat
 from typing import Any, Literal, TypeVar, overload
 
 import aiohttp
 from aiohttp import ClientResponse, ClientSession, Fingerprint, hdrs
+from aiohttp.payload import Payload
 from PIL import Image
 from pydantic import BaseModel
 import yarl
@@ -36,6 +40,7 @@ from .models.common import (
     DeleteScriptReq,
     DeleteShortcutReq,
     DownloadImageReq,
+    DownloadStatus,
     GetAccountRsp,
     GetGpioRsp,
     GetHardwareRsp,
@@ -64,6 +69,7 @@ from .models.common import (
     HWFamily,
     HWVersion,
     ImageEnabledRsp,
+    ImageTransferProgress,
     IsPasswordUpdatedRsp,
     LoginTailscaleRsp,
     MountImageReq,
@@ -151,12 +157,80 @@ PASTE_CHAR_MAP = set(
     "[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 )
 
+ImageTransferProgressCallback = Callable[
+    [ImageTransferProgress], None | Awaitable[None]
+]
+
 _SESSION_COOKIE_NAME = "nano-kvm-token"
 
 
 def obfuscate_password(password: str) -> str:
     """Keep the password helper available from the client module."""
     return _obfuscate_password(password)
+
+
+async def _report_image_transfer_progress(
+    callback: ImageTransferProgressCallback | None,
+    bytes_transferred: int,
+    total_bytes: int,
+) -> None:
+    """Invoke a synchronous or asynchronous image progress callback."""
+    if callback is None:
+        return
+
+    percentage = 100 * bytes_transferred / total_bytes if total_bytes else 0
+    result = callback(
+        ImageTransferProgress(
+            bytes_transferred=bytes_transferred,
+            total_bytes=total_bytes,
+            percentage=percentage,
+        )
+    )
+    if inspect.isawaitable(result):
+        await result
+
+
+class _ImageProgressPayload(Payload):
+    """Stream one multipart image field in bounded chunks with progress updates."""
+
+    def __init__(
+        self,
+        file_path: Path,
+        *,
+        chunk_size: int,
+        total_bytes: int,
+        report_progress: Callable[[int], Awaitable[None]],
+    ) -> None:
+        super().__init__(file_path, content_type="application/octet-stream")
+        self._file_path = file_path
+        self._chunk_size = chunk_size
+        self._total_bytes = total_bytes
+        self._size = total_bytes
+        self._report_progress = report_progress
+
+    def decode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        """A file payload has no eager string representation."""
+        return "<streamed image>"
+
+    async def write(self, writer: Any) -> None:
+        """Write no more than one configured chunk at a time."""
+        self._consumed = True
+        bytes_transferred = 0
+        with self._file_path.open("rb") as image_file:
+            while bytes_transferred < self._total_bytes:
+                chunk = image_file.read(
+                    min(self._chunk_size, self._total_bytes - bytes_transferred)
+                )
+                if not chunk:
+                    raise OSError("image changed while it was being uploaded")
+
+                await writer.write(chunk)
+                bytes_transferred += len(chunk)
+                if bytes_transferred < self._total_bytes:
+                    await self._report_progress(bytes_transferred)
+
+            if image_file.read(1):
+                raise OSError("image changed while it was being uploaded")
 
 
 class NanoKVMError(Exception):
@@ -233,6 +307,23 @@ def _version_at_least(version: str, minimum: str) -> bool:
     normalized_version = parsed_version + (0,) * (length - len(parsed_version))
     normalized_minimum = parsed_minimum + (0,) * (length - len(parsed_minimum))
     return normalized_version >= normalized_minimum
+
+
+def _validate_sha256(sha256: str | None) -> None:
+    """Validate an optional SHA-256 checksum before device I/O."""
+    if sha256 is not None and re.fullmatch(r"[0-9a-fA-F]{64}", sha256) is None:
+        raise ValueError("sha256 must contain 64 hexadecimal characters")
+
+
+def _validate_sha256_argument(func: F) -> F:
+    """Validate a keyword-only ``sha256`` argument before version checks."""
+
+    @functools.wraps(func)
+    async def wrapper(self: NanoKVMClient, *args: Any, **kwargs: Any) -> Any:
+        _validate_sha256(kwargs.get("sha256"))
+        return await func(self, *args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
 
 
 def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
@@ -365,6 +456,7 @@ class NanoKVMClient:
         self._token = token
         self._session_generation = 0
         self._request_timeout = request_timeout
+        self._image_transfer_lock = asyncio.Lock()
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ws_session: ClientSession | None = None
         self._ws_lock = asyncio.Lock()
@@ -613,6 +705,20 @@ class NanoKVMClient:
     def _is_hardware_family(self, family: HWFamily) -> bool:
         """Return whether the detected hardware belongs to ``family``."""
         return self._hw_version is not None and self._hw_version.family is family
+
+    async def _ensure_image_transfer_version(self, minimum: str) -> None:
+        """Check an image-transfer firmware minimum using cached device details."""
+        if self._application_version is None and self._token is not None:
+            await self.detect_versions()
+
+        if self._application_version is not None and not _version_at_least(
+            self._application_version, minimum
+        ):
+            family = "Pro" if self._is_hardware_family(HWFamily.PRO) else "non-Pro"
+            raise NanoKVMNotSupportedError(
+                f"image transfer requires {family} application version >= {minimum} "
+                f"(detected: {self._application_version})"
+            )
 
     async def _uses_current_password_contract(self) -> bool:
         """Determine whether this device uses the 2.5.1 password contract."""
@@ -1295,6 +1401,169 @@ class NanoKVMClient:
             response_model=GetImagesRsp,
         )
 
+    async def upload_image(
+        self,
+        file_path: str | PathLike[str],
+        *,
+        progress_callback: ImageTransferProgressCallback | None = None,
+        sha256: str | None = None,
+        chunk_size: int = 1024 * 1024,
+    ) -> None:
+        """Upload one local image, serializing transfers on this client."""
+        async with self._image_transfer_lock:
+            await self._upload_image(
+                file_path,
+                progress_callback=progress_callback,
+                sha256=sha256,
+                chunk_size=chunk_size,
+            )
+
+    async def _upload_image(
+        self,
+        file_path: str | PathLike[str],
+        *,
+        progress_callback: ImageTransferProgressCallback | None = None,
+        sha256: str | None = None,
+        chunk_size: int = 1024 * 1024,
+    ) -> None:
+        """Upload a local image, streaming on non-Pro and chunking on Pro."""
+        image_path = Path(file_path)
+        file_stat = image_path.stat()
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise ValueError("file_path must point to a regular file")
+        if (
+            isinstance(chunk_size, bool)
+            or not isinstance(chunk_size, int)
+            or chunk_size <= 0
+        ):
+            raise ValueError("chunk_size must be a positive integer")
+        _validate_sha256(sha256)
+
+        if self._hw_version is None or self._hw_version.family is None:
+            raise NanoKVMNotSupportedError(
+                "upload_image requires detected supported hardware"
+            )
+
+        total_bytes = file_stat.st_size
+        is_pro = self._is_hardware_family(HWFamily.PRO)
+        if is_pro and sha256 is not None:
+            raise NanoKVMNotSupportedError(
+                "upload_image does not support sha256 on NanoKVM Pro"
+            )
+
+        transfer_timeout = aiohttp.ClientTimeout(
+            total=None,
+            sock_connect=self._request_timeout,
+            sock_read=self._request_timeout,
+        )
+
+        if not is_pro:
+            if ".." in image_path.name:
+                raise ValueError("non-Pro image filename must not contain '..'")
+            if re.fullmatch(r"[A-Za-z0-9._-]+", image_path.name) is None:
+                raise ValueError(
+                    "non-Pro image filename must use ASCII letters, numbers, "
+                    "dot, underscore, or hyphen"
+                )
+            if not image_path.name.lower().endswith(".iso"):
+                raise ValueError("non-Pro image filename must end with .iso")
+
+            await self._ensure_image_transfer_version("2.3.1")
+            if sha256 is not None:
+                await self._ensure_image_transfer_version("2.5.0")
+        else:
+            if not all(
+                character in " -_." or character.isalnum()
+                for character in image_path.name
+            ):
+                raise ValueError(
+                    "Pro image filename must already be sanitized by firmware rules"
+                )
+            if not image_path.name.lower().endswith((".iso", ".img")):
+                raise ValueError("Pro image filename must end with .iso or .img")
+
+            remote_images = await self.get_images()
+            remote_file = f"/data/{image_path.name}"
+            if remote_file in remote_images.files:
+                raise FileExistsError(
+                    f"NanoKVM Pro already contains an image named {image_path.name}"
+                )
+
+        await _report_image_transfer_progress(progress_callback, 0, total_bytes)
+
+        if is_pro:
+            total_chunks = max(1, (total_bytes + chunk_size - 1) // chunk_size)
+            bytes_transferred = 0
+            upload_started = False
+            try:
+                with image_path.open("rb", buffering=0) as image_file:
+                    for chunk_index in range(total_chunks):
+                        expected_size = min(
+                            chunk_size, total_bytes - chunk_index * chunk_size
+                        )
+                        chunk = image_file.read(expected_size)
+                        if len(chunk) != expected_size:
+                            raise OSError("image changed while it was being uploaded")
+                        if chunk_index == total_chunks - 1 and image_file.read(1):
+                            raise OSError("image changed while it was being uploaded")
+
+                        form = aiohttp.FormData(quote_fields=False)
+                        form.add_field("chunkIndex", str(chunk_index))
+                        form.add_field("chunkSize", str(chunk_size))
+                        form.add_field("totalChunks", str(total_chunks))
+                        form.add_field(
+                            "file",
+                            chunk,
+                            filename=image_path.name,
+                            content_type="application/octet-stream",
+                        )
+                        upload_started = True
+                        await self._api_request_form(
+                            hdrs.METH_POST,
+                            "/storage/image/upload",
+                            data=form,
+                            timeout=transfer_timeout,
+                        )
+                        bytes_transferred += len(chunk)
+                        await _report_image_transfer_progress(
+                            progress_callback, bytes_transferred, total_bytes
+                        )
+            except BaseException:
+                if upload_started:
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(self.delete_image(remote_file))
+                raise
+            return
+
+        async def report_progress(bytes_transferred: int) -> None:
+            await _report_image_transfer_progress(
+                progress_callback, bytes_transferred, total_bytes
+            )
+
+        form = aiohttp.FormData()
+        form.add_field(
+            "file",
+            _ImageProgressPayload(
+                image_path,
+                chunk_size=chunk_size,
+                total_bytes=total_bytes,
+                report_progress=report_progress,
+            ),
+            filename=image_path.name,
+            content_type="application/octet-stream",
+        )
+        headers = {"X-SHA256-Sum": sha256} if sha256 is not None else {}
+        await self._api_request_form(
+            hdrs.METH_POST,
+            "/download/file",
+            data=form,
+            headers=headers,
+            timeout=transfer_timeout,
+        )
+        await _report_image_transfer_progress(
+            progress_callback, total_bytes, total_bytes
+        )
+
     async def get_mounted_image(self) -> GetMountedImageRsp:
         """Get the currently mounted image file."""
         return await self._api_request_json(
@@ -1615,15 +1884,54 @@ class NanoKVMClient:
             response_model=StatusImageRsp,
         )
 
+    @require_application_version(non_pro="2.5.0")
+    @require_hardware(HWFamily.NON_PRO)
+    async def cancel_image_download(self) -> None:
+        """Cancel an active non-Pro image download."""
+        await self._api_request_json(hdrs.METH_POST, "/download/image/cancel")
+
+    async def watch_image_download(
+        self, *, poll_interval: float = 1.0
+    ) -> AsyncIterator[StatusImageRsp]:
+        """Poll image-download status until it reaches a terminal state."""
+        if poll_interval <= 0:
+            raise ValueError("poll_interval must be greater than zero")
+
+        terminal_statuses = {
+            DownloadStatus.IDLE,
+            DownloadStatus.SUCCESS,
+            DownloadStatus.FAILED,
+            DownloadStatus.CHECKSUM_FAILED,
+        }
+        while True:
+            status = await self.get_image_download_status()
+            yield status
+            if status.status in terminal_statuses:
+                return
+            await asyncio.sleep(poll_interval)
+
+    @_validate_sha256_argument
     @require_application_version(non_pro="2.1.6")
-    async def download_image(self, url: str) -> StatusImageRsp:
+    async def download_image(
+        self, url: str, *, sha256: str | None = None
+    ) -> StatusImageRsp:
         """Start downloading an image from a URL."""
+        if sha256 is not None:
+            if (
+                self._hw_version is None
+                or self._hw_version.family is not HWFamily.NON_PRO
+            ):
+                raise NanoKVMNotSupportedError(
+                    "download_image sha256 is only supported on non-Pro hardware"
+                )
+            await self._ensure_image_transfer_version("2.5.0")
+
         prefix = self._image_download_prefix()
         return await self._api_request_json(
             hdrs.METH_POST,
             f"{prefix}/image",
             response_model=StatusImageRsp,
-            data=DownloadImageReq(file=url),
+            data=DownloadImageReq(file=url, sha256sum=sha256),
         )
 
     # ── Extensions (shared) ────────────────────────────────────────────
