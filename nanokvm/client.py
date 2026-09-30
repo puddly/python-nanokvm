@@ -96,20 +96,26 @@ from .models.common import (
     WakeOnLANReq,
 )
 from .models.non_pro import (
+    AIControlMode,
+    AIControlStatusRsp,
     DNSMode,
     GetCdRomRsp,
     GetDNSRsp,
     GetHdmiStateRsp,
     GetInputRegionRsp,
     GetInputResolutionRsp,
+    GetMCPConfigRsp,
     GetMemoryLimitRsp,
     GetSwapSizeRsp,
     InputRegionMode,
     ManualRegion,
     OriginalResolution,
     ScreenSettingType,
+    SetAIControlModeReq,
+    SetAIControlModeRsp,
     SetDNSReq,
     SetInputRegionReq,
+    SetMCPConfigReq,
     SetMemoryLimitReq,
     SetScreenReq,
     SetSwapSizeReq,
@@ -2002,6 +2008,60 @@ class NanoKVMClient:
             f"{prefix}/image",
             response_model=StatusImageRsp,
             data=DownloadImageReq(file=url, sha256sum=sha256),
+        )
+
+    # ── MCP and coordinated control (non-Pro only) ─────────────────────
+
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.0")
+    async def get_mcp_config(self) -> GetMCPConfigRsp:
+        """Get MCP configuration and coordinated-control state."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/mcp/config",
+            response_model=GetMCPConfigRsp,
+        )
+
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.0")
+    async def set_mcp_enabled(self, enabled: bool) -> GetMCPConfigRsp:
+        """Enable or disable MCP control."""
+        return await self._api_request_json(
+            hdrs.METH_POST,
+            "/mcp/config",
+            response_model=GetMCPConfigRsp,
+            data=SetMCPConfigReq(enabled=enabled),
+        )
+
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.0")
+    async def regenerate_mcp_api_key(self) -> GetMCPConfigRsp:
+        """Generate and return a new MCP API key."""
+        return await self._api_request_json(
+            hdrs.METH_POST,
+            "/mcp/key/regenerate",
+            response_model=GetMCPConfigRsp,
+        )
+
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.0")
+    async def get_ai_control_status(self) -> AIControlStatusRsp:
+        """Get the current coordinated-control owner and transition state."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/ai/control/status",
+            response_model=AIControlStatusRsp,
+        )
+
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.0")
+    async def set_ai_control_mode(self, mode: AIControlMode) -> SetAIControlModeRsp:
+        """Select the owner of coordinated input control."""
+        return await self._api_request_json(
+            hdrs.METH_PUT,
+            "/ai/control/mode",
+            response_model=SetAIControlModeRsp,
+            data=SetAIControlModeReq(mode=mode),
         )
 
     # ── Extensions (shared) ────────────────────────────────────────────

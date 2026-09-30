@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ScreenSettingType(StrEnum):
@@ -21,6 +22,14 @@ class DNSMode(StrEnum):
 
     MANUAL = "manual"
     DHCP = "dhcp"
+
+
+class AIControlMode(StrEnum):
+    """Exclusive control modes for MCP and PicoClaw."""
+
+    OFF = "off"
+    MCP = "mcp"
+    PICOCLAW = "picoclaw"
 
 
 class InputRegionMode(StrEnum):
@@ -42,6 +51,58 @@ class SetScreenReq(BaseModel):
 
     type: ScreenSettingType
     value: int
+
+
+class GetMCPConfigRsp(BaseModel):
+    """MCP configuration and current coordinated-control state."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool
+    api_key: str = Field(alias="apiKey", repr=False)
+    control_mode: AIControlMode = Field(alias="controlMode")
+    transitioning: bool
+
+
+class SetMCPConfigReq(BaseModel):
+    """Enable or disable MCP control."""
+
+    enabled: bool
+
+
+class AIControlStatusRsp(BaseModel):
+    """Current owner and transition state of coordinated input control."""
+
+    mode: AIControlMode
+    transitioning: bool
+    last_error: str | None = None
+    changed_at: datetime | None = None
+
+
+class SetAIControlModeReq(BaseModel):
+    """Select the owner of coordinated input control."""
+
+    mode: AIControlMode
+
+
+class SetAIControlModeRsp(AIControlStatusRsp):
+    """Normalized result of a coordinated-control mode switch."""
+
+    runtime: dict[str, Any] | None = None
+    released: bool | None = None
+    closed_sessions: int | None = None
+    cleanup_warning: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _unwrap_control_status(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or not isinstance(value.get("control"), dict):
+            return value
+
+        return {
+            **value["control"],
+            **{key: item for key, item in value.items() if key != "control"},
+        }
 
 
 class OriginalResolution(BaseModel):
