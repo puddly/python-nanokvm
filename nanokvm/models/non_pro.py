@@ -55,7 +55,15 @@ class SetSwapSizeReq(BaseModel):
 
 
 class GetHdmiStateRsp(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     enabled: bool
+    signal: bool | None = None
+    idle_timeout: int | None = Field(default=None, alias="idleTimeout")
+
+
+class SetHdmiIdleTimeoutReq(BaseModel):
+    minutes: int
 
 
 class GetCdRomRsp(BaseModel):
