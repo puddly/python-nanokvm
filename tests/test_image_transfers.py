@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import io
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
@@ -377,6 +378,59 @@ async def test_pro_upload_sends_chunks_and_accepts_async_progress(
         }
     assert [event.bytes_transferred for event in events] == [0, 2, 4, 6]
     assert events[-1].percentage == 100
+
+
+async def test_pro_upload_fills_chunks_after_partial_raw_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A short raw read does not look like an image truncated during upload."""
+    image = tmp_path / "partial-reads.iso"
+    image_bytes = b"abcdef"
+    image.write_bytes(image_bytes)
+    original_open = Path.open
+
+    class PartialReadStream(io.RawIOBase):
+        def __init__(self, data: bytes) -> None:
+            self._data = data
+            self._position = 0
+
+        def readable(self) -> bool:
+            return True
+
+        def readinto(self, buffer: Any) -> int:
+            if self._position >= len(self._data):
+                return 0
+            size = min(1, len(buffer), len(self._data) - self._position)
+            buffer[:size] = self._data[self._position : self._position + size]
+            self._position += size
+            return size
+
+    def open_with_partial_raw_reads(
+        path: Path,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> Any:
+        if path == image and mode == "rb":
+            stream = PartialReadStream(image_bytes)
+            if buffering == 0:
+                return stream
+            return io.BufferedReader(stream)
+        return original_open(path, mode, buffering, encoding, errors, newline)
+
+    monkeypatch.setattr(Path, "open", open_with_partial_raw_reads)
+
+    async with (
+        _device_server() as (base_url, state),
+        NanoKVMClient(base_url, token="synthetic-token") as client,
+    ):
+        _mark(client, HWVersion.PRO, "1.2.15")
+        await client.upload_image(image, chunk_size=3)
+
+    assert state["accepted_uploads"] == [b"abc", b"def"]
 
 
 async def test_pro_upload_rejects_existing_basename_before_post(tmp_path: Path) -> None:

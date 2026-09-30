@@ -1501,7 +1501,15 @@ class NanoKVMClient:
                         expected_size = min(
                             chunk_size, total_bytes - chunk_index * chunk_size
                         )
-                        chunk = image_file.read(expected_size)
+                        chunk_parts: list[bytes] = []
+                        bytes_read = 0
+                        while bytes_read < expected_size:
+                            part = image_file.read(expected_size - bytes_read)
+                            if not part:
+                                break
+                            chunk_parts.append(part)
+                            bytes_read += len(part)
+                        chunk = b"".join(chunk_parts)
                         if len(chunk) != expected_size:
                             raise OSError("image changed while it was being uploaded")
                         if chunk_index == total_chunks - 1 and image_file.read(1):
