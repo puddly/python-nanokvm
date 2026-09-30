@@ -54,6 +54,16 @@ class SetSwapSizeReq(BaseModel):
     size: int
 
 
+class GetUpdateServerRsp(BaseModel):
+    enabled: bool
+    url: str = Field(repr=False)
+
+
+class SetUpdateServerReq(BaseModel):
+    enabled: bool
+    url: str = Field(repr=False)
+
+
 class GetHdmiStateRsp(BaseModel):
     enabled: bool
 
