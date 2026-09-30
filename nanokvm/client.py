@@ -107,6 +107,7 @@ from .models.non_pro import (
     GetMCPConfigRsp,
     GetMemoryLimitRsp,
     GetSwapSizeRsp,
+    GetUpdateServerRsp,
     InputRegionMode,
     ManualRegion,
     OriginalResolution,
@@ -120,6 +121,7 @@ from .models.non_pro import (
     SetMemoryLimitReq,
     SetScreenReq,
     SetSwapSizeReq,
+    SetUpdateServerReq,
 )
 from .models.pro import (
     DeleteEdidReq,
@@ -299,6 +301,8 @@ _VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$")
 _BINARY_MOUSE_MIN_NON_PRO_VERSION = "2.3.2"
 _BINARY_MOUSE_MIN_PRO_VERSION = "1.2.6"
 _CURRENT_PASSWORD_MIN_NON_PRO_VERSION = "2.5.1"
+_OFFLINE_UPDATE_PACKAGE_RE = re.compile(r"^nanokvm_[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz$")
+_OFFLINE_UPDATE_TIMEOUT_SECONDS = 15 * 60
 
 
 def _parse_version(version: str) -> tuple[int, ...] | None:
@@ -1947,6 +1951,67 @@ class NanoKVMClient:
     async def update_application(self) -> None:
         """Trigger the application update process."""
         await self._api_request_json(hdrs.METH_POST, "/application/update")
+
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.3.1")
+    async def update_application_offline(
+        self,
+        file_path: str | PathLike[str],
+        *,
+        sha256: str | None = None,
+    ) -> None:
+        """Install an official non-Pro application package from a local file."""
+        package_path = Path(file_path)
+        if _OFFLINE_UPDATE_PACKAGE_RE.fullmatch(package_path.name) is None:
+            raise ValueError("Update package filename must match nanokvm_X.Y.Z.tar.gz")
+
+        checksum = sha256.strip() if sha256 is not None else ""
+        if checksum and re.fullmatch(r"[0-9a-fA-F]{64}", checksum) is None:
+            raise ValueError("SHA-256 checksum must contain exactly 64 hex characters")
+
+        headers = {"X-SHA256-Checksum": checksum} if checksum else {}
+        try:
+            await self._upload_file(
+                "/application/update/offline",
+                package_path,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=_OFFLINE_UPDATE_TIMEOUT_SECONDS),
+            )
+        except aiohttp.ClientResponseError as err:
+            # The device can stop its old HTTP service before the proxy has
+            # forwarded the successful response. Its official UI treats that
+            # restart-related gateway response as successful too.
+            if (
+                err.status != 502
+                or self._application_version is None
+                or not _version_at_least(self._application_version, "2.5.1")
+            ):
+                raise
+
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.1")
+    async def get_update_server(self) -> GetUpdateServerRsp:
+        """Get the custom application update-server configuration."""
+        return await self._api_request_json(
+            hdrs.METH_GET,
+            "/application/update-server",
+            response_model=GetUpdateServerRsp,
+        )
+
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.1")
+    async def set_update_server(
+        self,
+        enabled: bool,
+        url: str,
+    ) -> GetUpdateServerRsp:
+        """Set and return the custom application update-server configuration."""
+        return await self._api_request_json(
+            hdrs.METH_POST,
+            "/application/update-server",
+            response_model=GetUpdateServerRsp,
+            data=SetUpdateServerReq(enabled=enabled, url=url),
+        )
 
     # ── Download ────────────────────────────────────────────────────────
 
