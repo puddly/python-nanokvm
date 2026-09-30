@@ -114,6 +114,7 @@ from .models.non_pro import (
     SetAIControlModeReq,
     SetAIControlModeRsp,
     SetDNSReq,
+    SetHdmiIdleTimeoutReq,
     SetInputRegionReq,
     SetMCPConfigReq,
     SetMemoryLimitReq,
@@ -1112,6 +1113,21 @@ class NanoKVMClient:
     async def disable_hdmi(self) -> None:
         """Disable the HDMI connection."""
         await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/disable")
+
+    @require_hardware(HWVersion.PCIE)
+    @require_application_version(non_pro="2.5.0")
+    async def set_hdmi_idle_timeout(self, minutes: int) -> None:
+        """Set the HDMI capture idle timeout in minutes; zero disables it."""
+        if isinstance(minutes, bool) or not isinstance(minutes, int):
+            raise ValueError("minutes must be an integer between 0 and 10080")
+        if not 0 <= minutes <= 10080:
+            raise ValueError("minutes must be between 0 and 10080")
+
+        await self._api_request_json(
+            hdrs.METH_POST,
+            "/vm/hdmi/timeout",
+            data=SetHdmiIdleTimeoutReq(minutes=minutes),
+        )
 
     # ── VM (Pro only) ──────────────────────────────────────────────────
 
