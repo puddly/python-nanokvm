@@ -6,7 +6,14 @@ from datetime import datetime
 from enum import IntEnum, StrEnum
 from typing import Any, Generic, Self, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 T = TypeVar("T")
 
@@ -150,7 +157,7 @@ class ApiResponse(BaseModel, Generic[T]):
     """Generic API response structure."""
 
     code: int
-    msg: str
+    msg: str = Field(validation_alias=AliasChoices("msg", "message"))
     data: T | None = None
 
 
@@ -537,6 +544,14 @@ class SetPreviewReq(BaseModel):
 
 
 # Download Models
+class ImageTransferProgress(BaseModel):
+    """Progress reported while uploading a local image file."""
+
+    bytes_transferred: int
+    total_bytes: int
+    percentage: float
+
+
 class ImageEnabledRsp(BaseModel):
     enabled: bool
 
@@ -549,3 +564,4 @@ class StatusImageRsp(BaseModel):
 
 class DownloadImageReq(BaseModel):
     file: str  # URL of the image to download
+    sha256sum: str | None = None
