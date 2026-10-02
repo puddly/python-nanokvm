@@ -118,7 +118,7 @@ async def test_permission_error_does_not_invalidate_session_or_retry_login() -> 
 async def test_http_401_invalidates_local_session() -> None:
     """An authenticated 401 clears the token and local input state."""
     async with NanoKVMClient(_BASE_URL, token="expired-token") as client:
-        client._mouse_buttons = 1
+        client._session._mouse_buttons = 1
         with aioresponses() as mocked:
             mocked.get(f"{_BASE_URL}vm/info", status=401, body=b'"unauthorized"')
 
@@ -126,7 +126,7 @@ async def test_http_401_invalidates_local_session() -> None:
                 await client.get_info()
 
             assert client.token is None
-            assert client._mouse_buttons == 0
+            assert client._session._mouse_buttons == 0
 
             with pytest.raises(NanoKVMNotAuthenticatedError):
                 await client.get_info()
@@ -180,8 +180,8 @@ async def test_websocket_403_is_permission_error() -> None:
         side_effect=handshake_error,
     ):
         async with NanoKVMClient(_BASE_URL, token="synthetic-token") as client:
-            client._hw_version = HWVersion.PCIE
-            client._application_version = "2.5.1"
+            client._session._hw_version = HWVersion.PCIE
+            client._session._application_version = "2.5.1"
 
             with pytest.raises(NanoKVMPermissionError) as exc_info:
                 await client.mouse_move_rel(0.1, 0.0)
@@ -207,15 +207,15 @@ async def test_websocket_401_clears_session_without_lock_deadlock() -> None:
         side_effect=handshake_error,
     ):
         async with NanoKVMClient(_BASE_URL, token="expired-token") as client:
-            client._hw_version = HWVersion.PCIE
-            client._application_version = "2.5.1"
-            client._mouse_buttons = 1
+            client._session._hw_version = HWVersion.PCIE
+            client._session._application_version = "2.5.1"
+            client._session._mouse_buttons = 1
 
             with pytest.raises(NanoKVMNotAuthenticatedError):
                 await asyncio.wait_for(client.mouse_move_rel(0.1, 0.0), timeout=1)
 
             assert client.token is None
-            assert client._mouse_buttons == 0
+            assert client._session._mouse_buttons == 0
 
 
 async def test_mjpeg_403_is_permission_error() -> None:

@@ -5,17 +5,27 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 import contextlib
-from http.cookies import Morsel
+from http.cookies import Morsel, SimpleCookie
 import json
 import logging
 from os import PathLike
 from pathlib import Path
 import ssl
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, Literal, TypeVar, overload
 
-import aiohttp
-from aiohttp import ClientResponse, ClientSession, Fingerprint, hdrs
+from aiohttp import (
+    ClientResponse,
+    ClientResponseError,
+    ClientSession,
+    ClientTimeout,
+    ClientWebSocketResponse,
+    DummyCookieJar,
+    Fingerprint,
+    FormData,
+    hdrs,
+)
 from pydantic import BaseModel, ValidationError
+import yarl
 
 from ..compatibility import _parse_version
 from ..exceptions import (
@@ -32,16 +42,15 @@ from ..models.common import (
     ChangePasswordReq,
     ChangePasswordV251Req,
     GetAccountRsp,
+    GetHardwareRsp,
+    GetInfoRsp,
     HWFamily,
+    HWVersion,
     IsPasswordUpdatedRsp,
     LoginReq,
     LoginRsp,
 )
 from ..utils import obfuscate_password
-
-if TYPE_CHECKING:
-    from ..client import NanoKVMClient
-
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -50,52 +59,82 @@ _CURRENT_PASSWORD_MIN_NON_PRO_VERSION = "2.5.1"
 
 
 class SessionController:
-    """Own HTTP requests and the authentication state of a client."""
+    """Own authentication, shared state, HTTP and WebSocket resources."""
 
-    def __init__(self, client: NanoKVMClient, logger: logging.Logger) -> None:
-        self._client = client
+    def __init__(
+        self,
+        url: str,
+        *,
+        token: str | None = None,
+        request_timeout: int = 10,
+        session: ClientSession | None = None,
+        verify_ssl: bool = True,
+        ssl_ca_cert: str | None = None,
+        ssl_fingerprint: str | None = None,
+        use_password_obfuscation: bool | None = None,
+        logger: logging.Logger,
+    ) -> None:
+        """Initialize the shared session, transport and device state."""
+        self.url = yarl.URL(url)
+        self._http_session: ClientSession | None = session
+        self._external_session_provided = session is not None
+        self._token = token
+        self._session_generation = 0
+        self._request_timeout = request_timeout
+        self._image_transfer_lock = asyncio.Lock()
+        self._ws: ClientWebSocketResponse | None = None
+        self._ws_session: ClientSession | None = None
+        self._ws_lock = asyncio.Lock()
+        self._mouse_buttons = 0
+        self._mouse_mode: Literal["relative", "absolute"] = "relative"
+        self._mouse_abs_position: tuple[int, int] = (0, 0)
+        self._verify_ssl = verify_ssl
+        self._ssl_ca_cert = ssl_ca_cert
+        self._ssl_fingerprint = ssl_fingerprint
+        self._use_password_obfuscation = use_password_obfuscation
+        self._ssl_config: ssl.SSLContext | Fingerprint | bool | None = None
+        self._hw_version: HWVersion | None = None
+        self._application_version: str | None = None
+        self._image_version: str | None = None
         self._logger = logger
 
     def create_ssl_context(self) -> ssl.SSLContext | Fingerprint | bool:
         """Create and configure SSL context from the client's settings."""
-        client = self._client
-        if client._ssl_fingerprint:
+        if self._ssl_fingerprint:
             self._logger.debug("Using certificate fingerprint pinning")
-            return Fingerprint(bytes.fromhex(client._ssl_fingerprint.replace(":", "")))
+            return Fingerprint(bytes.fromhex(self._ssl_fingerprint.replace(":", "")))
 
-        if not client._verify_ssl:
+        if not self._verify_ssl:
             self._logger.warning(
                 "SSL verification is disabled. This is insecure and should only be "
                 "used for testing with self-signed certificates."
             )
             return False
 
-        if not client._ssl_ca_cert:
+        if not self._ssl_ca_cert:
             return True
 
-        ssl_ctx = ssl.create_default_context(cafile=client._ssl_ca_cert)
-        self._logger.debug("Using custom CA certificate: %s", client._ssl_ca_cert)
+        ssl_ctx = ssl.create_default_context(cafile=self._ssl_ca_cert)
+        self._logger.debug("Using custom CA certificate: %s", self._ssl_ca_cert)
         return ssl_ctx
 
     async def enter(self) -> None:
         """Initialize the client's SSL configuration and HTTP session."""
-        client = self._client
-        client._ssl_config = await asyncio.to_thread(self.create_ssl_context)
-        if client._session is None and not client._external_session_provided:
-            client._session = ClientSession()
+        self._ssl_config = await asyncio.to_thread(self.create_ssl_context)
+        if self._http_session is None and not self._external_session_provided:
+            self._http_session = ClientSession()
 
     async def exit(self) -> None:
         """Close the client's WebSocket and owned HTTP resources."""
-        client = self._client
-        await client._close_ws()
+        await self.close_ws()
 
-        if client._ws_session is not None:
-            await client._ws_session.close()
-            client._ws_session = None
+        if self._ws_session is not None:
+            await self._ws_session.close()
+            self._ws_session = None
 
-        if client._session is not None and not client._external_session_provided:
-            await client._session.close()
-            client._session = None
+        if self._http_session is not None and not self._external_session_provided:
+            await self._http_session.close()
+            self._http_session = None
 
     @contextlib.asynccontextmanager
     async def request(
@@ -104,48 +143,47 @@ class SessionController:
         path: str,
         *,
         authenticate: bool = True,
-        timeout: aiohttp.ClientTimeout | None = None,
+        timeout: ClientTimeout | None = None,
         expected_generation: int | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[ClientResponse, None]:
         """Make an authenticated or unauthenticated API request."""
 
-        client = self._client
         if expected_generation is not None:
-            client._check_session_generation(expected_generation)
-        generation = client._session_generation
+            self.check_session_generation(expected_generation)
+        generation = self._session_generation
         cookies = {}
         if authenticate:
-            if not client._token:
+            if not self._token:
                 raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-            cookies["nano-kvm-token"] = client._token
+            cookies["nano-kvm-token"] = self._token
 
-        assert client._session is not None
-        assert client._ssl_config is not None
+        assert self._http_session is not None
+        assert self._ssl_config is not None
 
-        client._clear_session_cookies()
+        self.clear_session_cookies()
         request_headers = {
             hdrs.ACCEPT: "application/json",
             **kwargs.pop("headers", {}),
         }
 
-        async with client._session.request(
+        async with self._http_session.request(
             method,
-            client.url / path.lstrip("/"),
+            self.url / path.lstrip("/"),
             headers=request_headers,
             cookies=cookies,
-            timeout=timeout or aiohttp.ClientTimeout(total=client._request_timeout),
+            timeout=timeout or ClientTimeout(total=self._request_timeout),
             raise_for_status=False,
-            ssl=client._ssl_config,
+            ssl=self._ssl_config,
             **kwargs,
         ) as response:
             # The explicit token owns the session. Do not leave response cookies
             # available to another client sharing this HTTP session.
-            client._clear_session_cookies()
+            self.clear_session_cookies()
             if authenticate:
-                client._check_session_generation(generation)
+                self.check_session_generation(generation)
             if authenticate and response.status == 401:
-                await client._clear_local_session(expected_generation=generation)
+                await self.clear_local_session(expected_generation=generation)
                 raise NanoKVMNotAuthenticatedError(
                     "NanoKVM session is no longer authenticated"
                 )
@@ -158,7 +196,7 @@ class SessionController:
             response.raise_for_status()
             yield response
             if authenticate:
-                client._check_session_generation(generation)
+                self.check_session_generation(generation)
 
     async def read_json_response(self, response: ClientResponse) -> Any:
         """Read a JSON response and normalize decoding failures."""
@@ -169,6 +207,26 @@ class SessionController:
                 "Invalid JSON response received"
             ) from None
 
+    @overload
+    async def api_request_json(
+        self,
+        method: str,
+        path: str,
+        response_model: type[T],
+        data: BaseModel | None = None,
+        **kwargs: Any,
+    ) -> T: ...
+
+    @overload
+    async def api_request_json(
+        self,
+        method: str,
+        path: str,
+        response_model: None = None,
+        data: BaseModel | None = None,
+        **kwargs: Any,
+    ) -> None: ...
+
     async def api_request_json(
         self,
         method: str,
@@ -178,10 +236,9 @@ class SessionController:
         **kwargs: Any,
     ) -> T | None:
         """Make an API request and parse its JSON response."""
-        client = self._client
         self._logger.debug("Making API request: %s %s", method, path)
 
-        async with client._request(
+        async with self.request(
             method,
             path,
             json=(
@@ -191,26 +248,45 @@ class SessionController:
             ),
             **kwargs,
         ) as response:
-            raw_response = await client._read_json_response(response)
+            raw_response = await self.read_json_response(response)
 
-        return client._validate_api_response(raw_response, response_model)
+        return self.validate_api_response(raw_response, response_model)
+
+    @overload
+    async def api_request_form(
+        self,
+        method: str,
+        path: str,
+        response_model: type[T],
+        data: FormData,
+        **kwargs: Any,
+    ) -> T: ...
+
+    @overload
+    async def api_request_form(
+        self,
+        method: str,
+        path: str,
+        response_model: None = None,
+        data: FormData | None = None,
+        **kwargs: Any,
+    ) -> None: ...
 
     async def api_request_form(
         self,
         method: str,
         path: str,
         response_model: type[T] | None = None,
-        data: aiohttp.FormData | None = None,
+        data: FormData | None = None,
         **kwargs: Any,
     ) -> T | None:
         """Make a multipart/form request and parse its JSON response."""
-        client = self._client
         self._logger.debug("Making API form request: %s %s", method, path)
 
-        async with client._request(method, path, data=data, **kwargs) as response:
-            raw_response = await client._read_json_response(response)
+        async with self.request(method, path, data=data, **kwargs) as response:
+            raw_response = await self.read_json_response(response)
 
-        return client._validate_api_response(raw_response, response_model)
+        return self.validate_api_response(raw_response, response_model)
 
     def validate_api_response(
         self,
@@ -245,6 +321,24 @@ class SessionController:
         except ValidationError:
             raise NanoKVMInvalidResponseError("Invalid data in API response") from None
 
+    @overload
+    async def upload_file(
+        self,
+        path: str,
+        file_path: str | PathLike[str],
+        response_model: type[T],
+        **kwargs: Any,
+    ) -> T: ...
+
+    @overload
+    async def upload_file(
+        self,
+        path: str,
+        file_path: str | PathLike[str],
+        response_model: None = None,
+        **kwargs: Any,
+    ) -> None: ...
+
     async def upload_file(
         self,
         path: str,
@@ -253,13 +347,12 @@ class SessionController:
         **kwargs: Any,
     ) -> T | None:
         """Upload a file using the NanoKVM multipart API."""
-        client = self._client
         upload_path = Path(file_path)
-        form = aiohttp.FormData()
+        form = FormData()
 
         with upload_path.open("rb") as file_obj:
             form.add_field("file", file_obj, filename=upload_path.name)
-            return await client._api_request_form(
+            return await self.api_request_form(
                 hdrs.METH_POST,
                 path,
                 response_model=response_model,
@@ -271,14 +364,13 @@ class SessionController:
         self, username: str, password_to_send: str, *, generation: int
     ) -> None:
         """Perform a single authentication attempt with the given password."""
-        client = self._client
         try:
             # NanoKVM 2.5.1 moved the session token from the JSON payload to a
             # HttpOnly Set-Cookie header. Read the envelope and response cookie
             # while the response context is still open; the cookie jar is not a
             # reliable source because callers may provide a DummyCookieJar or a
             # session shared with other services.
-            async with client._request(
+            async with self.request(
                 hdrs.METH_POST,
                 "/auth/login",
                 authenticate=False,
@@ -288,15 +380,15 @@ class SessionController:
                     exclude_none=True,
                 ),
             ) as response:
-                raw_response = await client._read_json_response(response)
+                raw_response = await self.read_json_response(response)
 
                 response_cookie = response.cookies.get(_SESSION_COOKIE_NAME)
                 cookie_token = (
                     response_cookie.value.strip() if response_cookie is not None else ""
                 )
 
-            client._check_session_generation(generation)
-            client._validate_api_response(raw_response)
+            self.check_session_generation(generation)
+            self.validate_api_response(raw_response)
 
             token = cookie_token
             if not token and raw_response.get("data") is not None:
@@ -312,7 +404,7 @@ class SessionController:
                     "Authentication response missing token."
                 )
 
-            client._token = token
+            self._token = token
         except NanoKVMApiError as err:
             if err.code == ApiResponseCode.INVALID_USERNAME_OR_PASSWORD.value:
                 raise NanoKVMAuthenticationFailure(
@@ -320,80 +412,77 @@ class SessionController:
                 ) from err
             raise
 
-    async def authenticate(self, username: str, password: str) -> None:
+    async def authenticate(self, username: str, password: str) -> int:
         """Authenticate and store the session token."""
-        client = self._client
         # A failed identity switch must never leave the previous account usable.
-        generation = await client._clear_local_session()
+        generation = await self.clear_local_session()
         self._logger.debug("Attempting authentication for user: %s", username)
 
-        if client._use_password_obfuscation is True:
+        if self._use_password_obfuscation is True:
             self._logger.debug("Using password obfuscation (forced)")
-            await client._do_authenticate(
+            await self.do_authenticate(
                 username, obfuscate_password(password), generation=generation
             )
-        elif client._use_password_obfuscation is False:
+        elif self._use_password_obfuscation is False:
             self._logger.debug("Using plain text password (forced)")
-            await client._do_authenticate(username, password, generation=generation)
+            await self.do_authenticate(username, password, generation=generation)
         else:
             self._logger.debug("Auto-detecting password mode")
             try:
-                await client._do_authenticate(
+                await self.do_authenticate(
                     username, obfuscate_password(password), generation=generation
                 )
-                client._use_password_obfuscation = True
+                self._use_password_obfuscation = True
                 self._logger.info("Auto-detected obfuscated password mode")
             except NanoKVMAuthenticationFailure:
                 self._logger.debug(
                     "Obfuscated authentication failed, trying plain text password"
                 )
-                await client._do_authenticate(username, password, generation=generation)
-                client._use_password_obfuscation = False
+                await self.do_authenticate(username, password, generation=generation)
+                self._use_password_obfuscation = False
                 self._logger.info("Auto-detected plain text password mode")
 
-        await client.detect_hardware()
-        client._check_session_generation(generation)
+        self.check_session_generation(generation)
+        return generation
 
     def check_session_generation(self, generation: int) -> None:
         """Reject an operation superseded by an authentication transition."""
 
-        if generation != self._client._session_generation:
+        if generation != self._session_generation:
             raise NanoKVMNotAuthenticatedError(
                 "Session changed while the operation was in progress"
             )
 
     async def logout(self) -> None:
         """Log out and clear the session token."""
-        client = self._client
-        generation = client._session_generation
+        generation = self._session_generation
         try:
-            if client._token and client._token != "disabled":
+            if self._token and self._token != "disabled":
                 try:
-                    await client._api_request_json(hdrs.METH_POST, "/auth/logout")
-                except aiohttp.ClientResponseError as err:
+                    await self.api_request_json(hdrs.METH_POST, "/auth/logout")
+                except ClientResponseError as err:
                     if err.status != 404:
                         raise
         finally:
-            await client._clear_local_session(expected_generation=generation)
+            await self.clear_local_session(expected_generation=generation)
 
     async def clear_local_session(
         self, *, expected_generation: int | None = None
     ) -> int:
         """Clear local authentication and transport state without closing HTTP."""
-        client = self._client
-        async with client._ws_lock:
+        async with self._ws_lock:
             if (
                 expected_generation is not None
-                and expected_generation != client._session_generation
+                and expected_generation != self._session_generation
             ):
-                return client._session_generation
-            client._session_generation += 1
-            generation = client._session_generation
-            client._token = None
-            client._mouse_buttons = 0
-            client._clear_session_cookies()
-            ws = client._ws
-            client._ws = None
+                return self._session_generation
+            self._session_generation += 1
+            generation = self._session_generation
+            self._token = None
+            self._mouse_buttons = 0
+            self.clear_session_cookies()
+            ws = self._ws
+            self._ws = None
         # Detach state atomically, then close only the old transport. Network I/O
         # must not block a new login or close its replacement WebSocket.
         if ws is not None and not ws.closed:
@@ -402,11 +491,10 @@ class SessionController:
 
     def clear_session_cookies(self) -> None:
         """Remove only session cookies whose scope overlaps this device's API."""
-        client = self._client
-        if client._session is None:
+        if self._http_session is None:
             return
-        host = client.url.raw_host or ""
-        base_path = client.url.path.rstrip("/")
+        host = self.url.raw_host or ""
+        base_path = self.url.path.rstrip("/")
 
         def is_device_session(cookie: Morsel[str]) -> bool:
             if cookie.key != _SESSION_COOKIE_NAME:
@@ -421,31 +509,30 @@ class SessionController:
                 or path.startswith(f"{base_path}/")
             )
 
-        client._session.cookie_jar.clear(is_device_session)
+        self._http_session.cookie_jar.clear(is_device_session)
 
     async def uses_current_password_contract(self) -> bool:
         """Determine whether this device uses the 2.5.1 password contract."""
-        client = self._client
-        if client._hw_version is None and client._token is None:
+        if self._hw_version is None and self._token is None:
             raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-        if client._hw_version is None:
-            await client.detect_hardware()
+        if self._hw_version is None:
+            await self.detect_hardware()
 
-        assert client._hw_version is not None
-        if client._is_hardware_family(HWFamily.PRO):
+        assert self._hw_version is not None
+        if self.is_hardware_family(HWFamily.PRO):
             return False
 
-        if client._application_version is None:
-            if client._token is None:
+        if self._application_version is None:
+            if self._token is None:
                 raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-            await client.detect_versions()
+            await self.detect_versions()
 
-        if client._application_version is None:
+        if self._application_version is None:
             raise NanoKVMError(
                 "Application version must be identified before changing the password"
             )
 
-        parsed_version = _parse_version(client._application_version)
+        parsed_version = _parse_version(self._application_version)
         minimum_version = _parse_version(_CURRENT_PASSWORD_MIN_NON_PRO_VERSION)
         if parsed_version is None or minimum_version is None:
             raise NanoKVMError(
@@ -462,22 +549,21 @@ class SessionController:
         current_password: str | None = None,
     ) -> None:
         """Change the KVM password for the authenticated account."""
-        client = self._client
-        generation = client._session_generation
-        if await client._uses_current_password_contract():
+        generation = self._session_generation
+        if await self.uses_current_password_contract():
             if not current_password or not current_password.strip():
                 raise ValueError(
                     "current_password is required for NanoKVM 2.5.1 and newer"
                 )
 
-            account = await client.get_account()
-            client._check_session_generation(generation)
+            account = await self.get_account()
+            self.check_session_generation(generation)
             if account.username != username:
                 raise ValueError(
                     "username must match the authenticated account on NanoKVM 2.5.1"
                 )
 
-            await client._api_request_json(
+            await self.api_request_json(
                 hdrs.METH_POST,
                 "/auth/password",
                 expected_generation=generation,
@@ -488,10 +574,10 @@ class SessionController:
                     }
                 ),
             )
-            await client._clear_local_session(expected_generation=generation)
+            await self.clear_local_session(expected_generation=generation)
             return
 
-        if client._use_password_obfuscation is None:
+        if self._use_password_obfuscation is None:
             raise ValueError(
                 "Password mode is unknown. Authenticate first or set "
                 "use_password_obfuscation explicitly before changing the password."
@@ -499,11 +585,11 @@ class SessionController:
 
         password_to_send = (
             obfuscate_password(new_password)
-            if client._use_password_obfuscation
+            if self._use_password_obfuscation
             else new_password
         )
 
-        await client._api_request_json(
+        await self.api_request_json(
             hdrs.METH_POST,
             "/auth/password",
             expected_generation=generation,
@@ -515,7 +601,7 @@ class SessionController:
 
     async def is_password_updated(self) -> IsPasswordUpdatedRsp:
         """Check if the default password has been changed."""
-        return await self._client._api_request_json(
+        return await self.api_request_json(
             hdrs.METH_GET,
             "/auth/password",
             response_model=IsPasswordUpdatedRsp,
@@ -523,8 +609,137 @@ class SessionController:
 
     async def get_account(self) -> GetAccountRsp:
         """Get the configured username."""
-        return await self._client._api_request_json(
+        return await self.api_request_json(
             hdrs.METH_GET,
             "/auth/account",
             response_model=GetAccountRsp,
         )
+
+    def is_hardware_family(self, family: HWFamily) -> bool:
+        """Return whether the detected hardware belongs to ``family``."""
+        return self._hw_version is not None and self._hw_version.family is family
+
+    async def detect_hardware(self) -> None:
+        """Detect and store the hardware version."""
+        hw = await self.get_hardware()
+        self._hw_version = hw.version
+        self._logger.info("Detected hardware: %s", hw.version)
+
+    async def detect_versions(self) -> None:
+        """Detect and store image and application versions."""
+        info = await self.get_info()
+        self._application_version = info.application
+        self._image_version = info.image
+        self._logger.info(
+            "Detected versions: application=%s image=%s",
+            info.application,
+            info.image,
+        )
+
+    async def get_info(self) -> GetInfoRsp:
+        """Get general device information."""
+        return await self.api_request_json(
+            hdrs.METH_GET,
+            "/vm/info",
+            response_model=GetInfoRsp,
+        )
+
+    async def get_hardware(self) -> GetHardwareRsp:
+        """Get hardware version information."""
+        return await self.api_request_json(
+            hdrs.METH_GET,
+            "/vm/hardware",
+            response_model=GetHardwareRsp,
+        )
+
+    async def close_ws(self) -> None:
+        """Close and forget the current WebSocket connection."""
+        async with self._ws_lock:
+            ws = self._ws
+            self._ws = None
+            if ws is not None and not ws.closed:
+                await ws.close()
+
+    async def invalidate_ws(self, ws: ClientWebSocketResponse) -> None:
+        """Forget a failed WebSocket without closing a replacement connection."""
+        async with self._ws_lock:
+            if self._ws is ws:
+                self._ws = None
+            if not ws.closed:
+                await ws.close()
+
+    async def get_ws(self) -> ClientWebSocketResponse:
+        """Get or create WebSocket connection for mouse events."""
+        generation = self._session_generation
+        try:
+            async with self._ws_lock:
+                if self._ws is not None and not self._ws.closed:
+                    return self._ws
+
+                if self._ws is not None:
+                    await self._ws.close()
+                    self._ws = None
+
+                if not self._token:
+                    raise NanoKVMNotAuthenticatedError("Client is not authenticated")
+
+                generation = self._session_generation
+
+                # WebSocket URL uses ws:// or wss:// scheme
+                scheme = "ws" if self.url.scheme == "http" else "wss"
+                ws_url = self.url.with_scheme(scheme) / "ws"
+
+                assert self._http_session is not None
+                assert self._ssl_config is not None
+
+                # ws_connect cannot override cookies per request. An isolated
+                # jar prevents concurrent requests or async tracing callbacks
+                # from replacing this handshake's identity. Share the external
+                # connector without taking ownership of it.
+                if self._http_session.closed:
+                    raise RuntimeError("Session is closed")
+                if self._ws_session is None or self._ws_session.closed:
+                    self._ws_session = ClientSession(
+                        connector=self._http_session.connector,
+                        connector_owner=False,
+                        cookie_jar=DummyCookieJar(),
+                        auth=self._http_session.auth,
+                        trust_env=self._http_session.trust_env,
+                        trace_configs=self._http_session.trace_configs,
+                        skip_auto_headers=self._http_session.skip_auto_headers,
+                        timeout=ClientTimeout(total=self._request_timeout),
+                    )
+
+                headers = self._http_session.headers.copy()
+                cookies = SimpleCookie()
+                cookies.load(headers.get(hdrs.COOKIE, ""))
+                jar_cookies = self._http_session.cookie_jar.filter_cookies(ws_url)
+                cookies.load(
+                    {name: cookie.value for name, cookie in jar_cookies.items()}
+                )
+                cookies[_SESSION_COOKIE_NAME] = self._token
+                headers[hdrs.COOKIE] = cookies.output(header="", sep=";").strip()
+                self.clear_session_cookies()
+                self._ws = await self._ws_session.ws_connect(
+                    str(ws_url),
+                    headers=headers,
+                    ssl=self._ssl_config,
+                )
+                self.clear_session_cookies()
+                return self._ws
+        except ClientResponseError as err:
+            method = getattr(err.request_info, "method", hdrs.METH_GET)
+            if err.status == 401:
+                # _clear_local_session acquires _ws_lock, so do this after the
+                # lock above has been released to avoid a self-deadlock.
+                await self.clear_local_session(expected_generation=generation)
+                raise NanoKVMNotAuthenticatedError(
+                    "NanoKVM session is no longer authenticated"
+                ) from err
+            if err.status == 403:
+                raise NanoKVMPermissionError(
+                    status=err.status,
+                    method=method,
+                    path="/ws",
+                ) from err
+            raise

@@ -5,13 +5,19 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 import functools
 import re
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from .exceptions import NanoKVMError, NanoKVMNotSupportedError
 from .models.common import HWFamily, HWVersion
 
 if TYPE_CHECKING:
-    from .client import NanoKVMClient
+    from .components.session import SessionController
+
+
+class SessionProvider(Protocol):
+    """The shared session used by an endpoint controller."""
+
+    _session: SessionController
 
 
 F = TypeVar("F", bound=Callable[..., Coroutine[Any, Any, Any]])
@@ -45,18 +51,18 @@ def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
-        async def wrapper(self: NanoKVMClient, *args: Any, **kwargs: Any) -> Any:
-            if self._hw_version is None:
+        async def wrapper(self: SessionProvider, *args: Any, **kwargs: Any) -> Any:
+            if self._session._hw_version is None:
                 raise NanoKVMError(
                     f"{func.__name__} requires hardware detection; "
                     f"call detect_hardware() first"
                 )
-            family = self._hw_version.family
+            family = self._session._hw_version.family
             matches = any(
                 (isinstance(requirement, HWFamily) and family is requirement)
                 or (
                     isinstance(requirement, HWVersion)
-                    and self._hw_version is requirement
+                    and self._session._hw_version is requirement
                 )
                 for requirement in requirements
             )
@@ -66,7 +72,9 @@ def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
                     isinstance(requirement, HWFamily) for requirement in requirements
                 ):
                     detected = (
-                        family.value if family is not None else self._hw_version.value
+                        family.value
+                        if family is not None
+                        else self._session._hw_version.value
                     )
                     message = (
                         f"{func.__name__} requires hardware family: {allowed} "
@@ -75,7 +83,7 @@ def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
                 else:
                     message = (
                         f"{func.__name__} requires hardware: {allowed} "
-                        f"(detected: {self._hw_version})"
+                        f"(detected: {self._session._hw_version})"
                     )
                 raise NanoKVMNotSupportedError(message)
             return await func(self, *args, **kwargs)
@@ -94,31 +102,34 @@ def require_application_version(
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
-        async def wrapper(self: NanoKVMClient, *args: Any, **kwargs: Any) -> Any:
-            if self._hw_version is None:
-                if self._token is None:
+        async def wrapper(self: SessionProvider, *args: Any, **kwargs: Any) -> Any:
+            if self._session._hw_version is None:
+                if self._session._token is None:
                     return await func(self, *args, **kwargs)
-                await self.detect_hardware()
+                await self._session.detect_hardware()
 
-            assert self._hw_version is not None
-            minimum = pro if self._is_hardware_family(HWFamily.PRO) else non_pro
+            assert self._session._hw_version is not None
+            minimum = pro if self._session.is_hardware_family(HWFamily.PRO) else non_pro
             if minimum is None:
                 return await func(self, *args, **kwargs)
 
-            if self._application_version is None:
-                if self._token is None:
+            if self._session._application_version is None:
+                if self._session._token is None:
                     return await func(self, *args, **kwargs)
-                await self.detect_versions()
+                await self._session.detect_versions()
 
-            if self._application_version is not None and not _version_at_least(
-                self._application_version, minimum
+            if self._session._application_version is not None and not _version_at_least(
+                self._session._application_version, minimum
             ):
                 hardware_family = (
-                    "Pro" if self._is_hardware_family(HWFamily.PRO) else "non-Pro"
+                    "Pro"
+                    if self._session.is_hardware_family(HWFamily.PRO)
+                    else "non-Pro"
                 )
                 raise NanoKVMNotSupportedError(
                     f"{func.__name__} requires {hardware_family} application "
-                    f"version >= {minimum} (detected: {self._application_version})"
+                    f"version >= {minimum} "
+                    f"(detected: {self._session._application_version})"
                 )
 
             return await func(self, *args, **kwargs)

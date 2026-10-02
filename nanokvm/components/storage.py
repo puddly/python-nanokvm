@@ -11,13 +11,18 @@ from os import PathLike
 from pathlib import Path
 import re
 import stat
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import aiohttp
 from aiohttp import hdrs
 from aiohttp.payload import Payload
 
-from ..compatibility import F
+from ..compatibility import (
+    F,
+    _version_at_least,
+    require_application_version,
+    require_hardware,
+)
 from ..exceptions import NanoKVMNotSupportedError
 from ..models.common import (
     DeleteImageReq,
@@ -39,9 +44,7 @@ from ..models.common import (
 )
 from ..models.non_pro import GetCdRomRsp
 from ..utils import _validate_sha256
-
-if TYPE_CHECKING:
-    from ..client import NanoKVMClient
+from .session import SessionController
 
 ImageTransferProgressCallback = Callable[
     [ImageTransferProgress], None | Awaitable[None]
@@ -116,7 +119,7 @@ def _validate_sha256_argument(func: F) -> F:
     """Validate a keyword-only ``sha256`` argument before version checks."""
 
     @functools.wraps(func)
-    async def wrapper(self: NanoKVMClient, *args: Any, **kwargs: Any) -> Any:
+    async def wrapper(self: StorageController, *args: Any, **kwargs: Any) -> Any:
         _validate_sha256(kwargs.get("sha256"))
         return await func(self, *args, **kwargs)
 
@@ -126,12 +129,12 @@ def _validate_sha256_argument(func: F) -> F:
 class StorageController:
     """Implement storage operations behind the public client facade."""
 
-    def __init__(self, client: NanoKVMClient) -> None:
-        self._client = client
+    def __init__(self, session: SessionController) -> None:
+        self._session = session
 
     async def get_scripts(self) -> GetScriptsRsp:
         """Get the list of uploaded scripts."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             "/vm/script",
             response_model=GetScriptsRsp,
@@ -139,7 +142,7 @@ class StorageController:
 
     async def upload_script(self, file_path: str | PathLike[str]) -> UploadScriptRsp:
         """Upload a script file."""
-        return await self._client._upload_file(
+        return await self._session.upload_file(
             "/vm/script/upload",
             file_path,
             response_model=UploadScriptRsp,
@@ -147,7 +150,7 @@ class StorageController:
 
     async def run_script(self, name: str, script_type: RunScriptType) -> RunScriptRsp:
         """Run an uploaded script."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_POST,
             "/vm/script/run",
             response_model=RunScriptRsp,
@@ -156,7 +159,7 @@ class StorageController:
 
     async def delete_script(self, name: str) -> None:
         """Delete an uploaded script."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_DELETE,
             "/vm/script",
             data=DeleteScriptReq(name=name),
@@ -164,7 +167,7 @@ class StorageController:
 
     async def get_images(self) -> GetImagesRsp:
         """Get the list of available image files."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             "/storage/image",
             response_model=GetImagesRsp,
@@ -180,8 +183,8 @@ class StorageController:
         overwrite: bool = False,
     ) -> None:
         """Upload an image, rejecting an existing name unless overwrite is enabled."""
-        async with self._client._image_transfer_lock:
-            await self._client._upload_image(
+        async with self._session._image_transfer_lock:
+            await self._upload_image(
                 file_path,
                 progress_callback=progress_callback,
                 sha256=sha256,
@@ -211,7 +214,10 @@ class StorageController:
             raise ValueError("chunk_size must be a positive integer")
         _validate_sha256(sha256)
 
-        if self._client._hw_version is None or self._client._hw_version.family is None:
+        if (
+            self._session._hw_version is None
+            or self._session._hw_version.family is None
+        ):
             raise NanoKVMNotSupportedError(
                 "upload_image requires detected supported hardware"
             )
@@ -220,7 +226,7 @@ class StorageController:
         if total_bytes == 0:
             raise ValueError("file_path must not be empty")
 
-        is_pro = self._client._is_hardware_family(HWFamily.PRO)
+        is_pro = self._session.is_hardware_family(HWFamily.PRO)
         if is_pro and sha256 is not None:
             raise NanoKVMNotSupportedError(
                 "upload_image does not support sha256 on NanoKVM Pro"
@@ -228,8 +234,8 @@ class StorageController:
 
         transfer_timeout = aiohttp.ClientTimeout(
             total=None,
-            sock_connect=self._client._request_timeout,
-            sock_read=self._client._request_timeout,
+            sock_connect=self._session._request_timeout,
+            sock_read=self._session._request_timeout,
         )
 
         if not is_pro:
@@ -243,9 +249,9 @@ class StorageController:
             if not image_path.name.lower().endswith(".iso"):
                 raise ValueError("non-Pro image filename must end with .iso")
 
-            await self._client._ensure_image_transfer_version("2.3.1")
+            await self._ensure_image_transfer_version("2.3.1")
             if sha256 is not None:
-                await self._client._ensure_image_transfer_version("2.5.0")
+                await self._ensure_image_transfer_version("2.5.0")
         else:
             if not all(
                 character in " -_." or character.isalnum()
@@ -258,14 +264,14 @@ class StorageController:
                 raise ValueError("Pro image filename must end with .iso or .img")
 
         remote_file = f"/data/{image_path.name}"
-        remote_images = await self._client.get_images()
+        remote_images = await self.get_images()
         remote_file_exists = remote_file in remote_images.files
         if remote_file_exists and not overwrite:
             raise FileExistsError(
                 f"NanoKVM already contains an image named {image_path.name}"
             )
         if remote_file_exists and is_pro:
-            await self._client.delete_image(remote_file)
+            await self.delete_image(remote_file)
 
         await _report_image_transfer_progress(progress_callback, 0, total_bytes)
 
@@ -304,7 +310,7 @@ class StorageController:
                             content_type="application/octet-stream",
                         )
                         upload_started = True
-                        await self._client._api_request_form(
+                        await self._session.api_request_form(
                             hdrs.METH_POST,
                             "/storage/image/upload",
                             data=form,
@@ -317,7 +323,7 @@ class StorageController:
             except BaseException:
                 if upload_started:
                     with contextlib.suppress(BaseException):
-                        await asyncio.shield(self._client.delete_image(remote_file))
+                        await asyncio.shield(self.delete_image(remote_file))
                 raise
             return
 
@@ -339,7 +345,7 @@ class StorageController:
             content_type="application/octet-stream",
         )
         headers = {"X-SHA256-Sum": sha256} if sha256 is not None else {}
-        await self._client._api_request_form(
+        await self._session.api_request_form(
             hdrs.METH_POST,
             "/download/file",
             data=form,
@@ -352,7 +358,7 @@ class StorageController:
 
     async def get_mounted_image(self) -> GetMountedImageRsp:
         """Get the currently mounted image file."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             "/storage/image/mounted",
             response_model=GetMountedImageRsp,
@@ -366,7 +372,7 @@ class StorageController:
         read_only: bool = False,  # Pro only
     ) -> None:
         """Mount an image file or unmount if file is None."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST,
             "/storage/image/mount",
             data=MountImageReq.model_validate(
@@ -378,17 +384,20 @@ class StorageController:
             ),
         )
 
+    @require_application_version(non_pro="2.3.0", pro="1.1.6")
     async def delete_image(self, file: str) -> None:
         """Delete an image file."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST,
             "/storage/image/delete",
             data=DeleteImageReq(file=file),
         )
 
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.2.1")
     async def get_cdrom_status(self) -> GetCdRomRsp:
         """Check if the mounted image is in CD-ROM mode."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             "/storage/cdrom",
             response_model=GetCdRomRsp,
@@ -396,31 +405,35 @@ class StorageController:
 
     def _image_download_prefix(self) -> str:
         """Return the image download route prefix for the detected hardware."""
-        if self._client._is_hardware_family(HWFamily.PRO):
+        if self._session.is_hardware_family(HWFamily.PRO):
             return "/storage/download"
         return "/download"
 
+    @require_application_version(non_pro="2.1.6")
     async def is_image_download_enabled(self) -> ImageEnabledRsp:
         """Check if the /data partition allows downloads."""
-        prefix = self._client._image_download_prefix()
-        return await self._client._api_request_json(
+        prefix = self._image_download_prefix()
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             f"{prefix}/image/enabled",
             response_model=ImageEnabledRsp,
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def get_image_download_status(self) -> StatusImageRsp:
         """Get the status of an ongoing image download."""
-        prefix = self._client._image_download_prefix()
-        return await self._client._api_request_json(
+        prefix = self._image_download_prefix()
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             f"{prefix}/image/status",
             response_model=StatusImageRsp,
         )
 
+    @require_application_version(non_pro="2.5.0")
+    @require_hardware(HWFamily.NON_PRO)
     async def cancel_image_download(self) -> None:
         """Cancel an active non-Pro image download."""
-        await self._client._api_request_json(hdrs.METH_POST, "/download/image/cancel")
+        await self._session.api_request_json(hdrs.METH_POST, "/download/image/cancel")
 
     async def watch_image_download(
         self, *, poll_interval: float = 1.0
@@ -436,30 +449,51 @@ class StorageController:
             DownloadStatus.CHECKSUM_FAILED,
         }
         while True:
-            status = await self._client.get_image_download_status()
+            status = await self.get_image_download_status()
             yield status
             if status.status in terminal_statuses:
                 return
             await asyncio.sleep(poll_interval)
 
+    @_validate_sha256_argument
+    @require_application_version(non_pro="2.1.6")
     async def download_image(
         self, url: str, *, sha256: str | None = None
     ) -> StatusImageRsp:
         """Start downloading an image from a URL."""
         if sha256 is not None:
             if (
-                self._client._hw_version is None
-                or self._client._hw_version.family is not HWFamily.NON_PRO
+                self._session._hw_version is None
+                or self._session._hw_version.family is not HWFamily.NON_PRO
             ):
                 raise NanoKVMNotSupportedError(
                     "download_image sha256 is only supported on non-Pro hardware"
                 )
-            await self._client._ensure_image_transfer_version("2.5.0")
+            await self._ensure_image_transfer_version("2.5.0")
 
-        prefix = self._client._image_download_prefix()
-        return await self._client._api_request_json(
+        prefix = self._image_download_prefix()
+        return await self._session.api_request_json(
             hdrs.METH_POST,
             f"{prefix}/image",
             response_model=StatusImageRsp,
             data=DownloadImageReq(file=url, sha256sum=sha256),
         )
+
+    async def _ensure_image_transfer_version(self, minimum: str) -> None:
+        """Check an image-transfer firmware minimum using cached device details."""
+        if (
+            self._session._application_version is None
+            and self._session._token is not None
+        ):
+            await self._session.detect_versions()
+
+        if self._session._application_version is not None and not _version_at_least(
+            self._session._application_version, minimum
+        ):
+            family = (
+                "Pro" if self._session.is_hardware_family(HWFamily.PRO) else "non-Pro"
+            )
+            raise NanoKVMNotSupportedError(
+                f"image transfer requires {family} application version >= {minimum} "
+                f"(detected: {self._session._application_version})"
+            )

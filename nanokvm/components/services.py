@@ -1,4 +1,4 @@
-"""Internal services operations for the NanoKVM client."""
+"""Internal services operations for the NanoKVM session."""
 
 from __future__ import annotations
 
@@ -7,16 +7,20 @@ import hashlib
 from os import PathLike
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING
 
 import aiohttp
 from aiohttp import hdrs
 
-from ..compatibility import _version_at_least
+from ..compatibility import (
+    _version_at_least,
+    require_application_version,
+    require_hardware,
+)
 from ..models.common import (
     GetPreviewRsp,
     GetTailscaleStatusRsp,
     GetVersionRsp,
+    HWFamily,
     LoginTailscaleRsp,
     SetPreviewReq,
 )
@@ -31,10 +35,7 @@ from ..models.non_pro import (
     SetUpdateServerReq,
 )
 from ..models.pro import GetKvmadminStatusRsp
-
-if TYPE_CHECKING:
-    from ..client import NanoKVMClient
-
+from .session import SessionController
 
 _OFFLINE_UPDATE_PACKAGE_RE = re.compile(r"^nanokvm_[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz$")
 _OFFLINE_UPDATE_TIMEOUT_SECONDS = 15 * 60
@@ -49,12 +50,13 @@ def _calculate_file_sha256(file_path: Path) -> str:
 class ServiceController:
     """Implement services operations behind the public client facade."""
 
-    def __init__(self, client: NanoKVMClient) -> None:
-        self._client = client
+    def __init__(self, session: SessionController) -> None:
+        self._session = session
 
+    @require_application_version(non_pro="2.1.6")
     async def get_tailscale_status(self) -> GetTailscaleStatusRsp:
         """Get Tailscale status."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             "/extensions/tailscale/status",
             response_model=GetTailscaleStatusRsp,
@@ -62,23 +64,25 @@ class ServiceController:
 
     async def get_application_version(self) -> GetVersionRsp:
         """Get current and latest application versions."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             "/application/version",
             response_model=GetVersionRsp,
         )
 
+    @require_application_version(non_pro="2.2.5")
     async def get_preview_status(self) -> GetPreviewRsp:
         """Check if preview updates are enabled."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             "/application/preview",
             response_model=GetPreviewRsp,
         )
 
+    @require_application_version(non_pro="2.2.5")
     async def set_preview_state(self, enable: bool) -> None:
         """Enable or disable preview updates."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST,
             "/application/preview",
             data=SetPreviewReq(enable=enable),
@@ -86,8 +90,10 @@ class ServiceController:
 
     async def update_application(self) -> None:
         """Trigger the application update process."""
-        await self._client._api_request_json(hdrs.METH_POST, "/application/update")
+        await self._session.api_request_json(hdrs.METH_POST, "/application/update")
 
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.3.1")
     async def update_application_offline(
         self,
         file_path: str | PathLike[str],
@@ -111,8 +117,8 @@ class ServiceController:
                 raise ValueError("SHA-256 checksum does not match the update package")
 
         supports_remote_checksum = (
-            self._client._application_version is None
-            or _version_at_least(self._client._application_version, "2.5.1")
+            self._session._application_version is None
+            or _version_at_least(self._session._application_version, "2.5.1")
         )
         headers = (
             {"X-SHA256-Checksum": checksum}
@@ -120,7 +126,7 @@ class ServiceController:
             else {}
         )
         try:
-            await self._client._upload_file(
+            await self._session.upload_file(
                 "/application/update/offline",
                 package_path,
                 headers=headers,
@@ -132,167 +138,204 @@ class ServiceController:
             # restart-related gateway response as successful too.
             if (
                 err.status != 502
-                or self._client._application_version is None
-                or not _version_at_least(self._client._application_version, "2.5.1")
+                or self._session._application_version is None
+                or not _version_at_least(self._session._application_version, "2.5.1")
             ):
                 raise
 
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.1")
     async def get_update_server(self) -> GetUpdateServerRsp:
         """Get the custom application update-server configuration."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             "/application/update-server",
             response_model=GetUpdateServerRsp,
         )
 
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.1")
     async def set_update_server(
         self,
         enabled: bool,
         url: str,
     ) -> GetUpdateServerRsp:
         """Set and return the custom application update-server configuration."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_POST,
             "/application/update-server",
             response_model=GetUpdateServerRsp,
             data=SetUpdateServerReq(enabled=enabled, url=url),
         )
 
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.0")
     async def get_mcp_config(self) -> GetMCPConfigRsp:
         """Get MCP configuration and coordinated-control state."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             "/mcp/config",
             response_model=GetMCPConfigRsp,
         )
 
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.0")
     async def set_mcp_enabled(self, enabled: bool) -> GetMCPConfigRsp:
         """Enable or disable MCP control."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_POST,
             "/mcp/config",
             response_model=GetMCPConfigRsp,
             data=SetMCPConfigReq(enabled=enabled),
         )
 
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.0")
     async def regenerate_mcp_api_key(self) -> GetMCPConfigRsp:
         """Generate and return a new MCP API key."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_POST,
             "/mcp/key/regenerate",
             response_model=GetMCPConfigRsp,
         )
 
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.0")
     async def get_ai_control_status(self) -> AIControlStatusRsp:
         """Get the current coordinated-control owner and transition state."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             "/ai/control/status",
             response_model=AIControlStatusRsp,
         )
 
+    @require_hardware(HWFamily.NON_PRO)
+    @require_application_version(non_pro="2.5.0")
     async def set_ai_control_mode(self, mode: AIControlMode) -> SetAIControlModeRsp:
         """Select the owner of coordinated input control."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_PUT,
             "/ai/control/mode",
             response_model=SetAIControlModeRsp,
             data=SetAIControlModeReq(mode=mode),
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_install(self) -> None:
         """Install Tailscale."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/tailscale/install"
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_uninstall(self) -> None:
         """Uninstall Tailscale."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/tailscale/uninstall"
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_up(self) -> None:
         """Bring Tailscale up."""
-        await self._client._api_request_json(hdrs.METH_POST, "/extensions/tailscale/up")
+        await self._session.api_request_json(hdrs.METH_POST, "/extensions/tailscale/up")
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_down(self) -> None:
         """Bring Tailscale down."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/tailscale/down"
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_login(self) -> LoginTailscaleRsp:
         """Log in to Tailscale."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_POST,
             "/extensions/tailscale/login",
             response_model=LoginTailscaleRsp,
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_logout(self) -> None:
         """Log out of Tailscale."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/tailscale/logout"
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_start(self) -> None:
         """Start Tailscale service."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/tailscale/start"
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_stop(self) -> None:
         """Stop Tailscale service."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/tailscale/stop"
         )
 
+    @require_application_version(non_pro="2.1.6")
     async def tailscale_restart(self) -> None:
         """Restart Tailscale service."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/tailscale/restart"
         )
 
+    @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.4")
     async def assistant_install(self) -> None:
         """Install assistant dependencies."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/assistant/install"
         )
 
+    @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.4")
     async def assistant_start(self) -> None:
         """Start assistant."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/assistant/start"
         )
 
+    @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.5")
     async def kvmadmin_install(self) -> None:
         """Install kvmadmin."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/kvmadmin/install"
         )
 
+    @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.5")
     async def kvmadmin_uninstall(self) -> None:
         """Uninstall kvmadmin."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/kvmadmin/uninstall"
         )
 
+    @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.5")
     async def kvmadmin_start(self) -> None:
         """Start kvmadmin."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/kvmadmin/start"
         )
 
+    @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.5")
     async def kvmadmin_stop(self) -> None:
         """Stop kvmadmin."""
-        await self._client._api_request_json(
+        await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/kvmadmin/stop"
         )
 
+    @require_hardware(HWFamily.PRO)
+    @require_application_version(pro="1.1.5")
     async def kvmadmin_status(self) -> GetKvmadminStatusRsp:
         """Get kvmadmin status."""
-        return await self._client._api_request_json(
+        return await self._session.api_request_json(
             hdrs.METH_GET,
             "/extensions/kvmadmin/status",
             response_model=GetKvmadminStatusRsp,

@@ -23,7 +23,7 @@ async def test_default_ssl_verification_enabled() -> None:
     """Test that SSL verification is enabled by default."""
     client = NanoKVMClient("https://kvm.local/api/")
 
-    ssl_config = client._create_ssl_context()
+    ssl_config = client._session.create_ssl_context()
     assert ssl_config is True
 
 
@@ -31,7 +31,7 @@ async def test_ssl_verification_disabled() -> None:
     """Test SSL verification can be disabled."""
     client = NanoKVMClient("https://kvm.local/api/", verify_ssl=False)
 
-    ssl_config = client._create_ssl_context()
+    ssl_config = client._session.create_ssl_context()
     assert ssl_config is False
 
 
@@ -46,7 +46,7 @@ async def test_custom_ca_certificate(tmp_path: Path) -> None:
 
         client = NanoKVMClient("https://kvm.local/api/", ssl_ca_cert=str(ca_cert_file))
 
-        ssl_config = client._create_ssl_context()
+        ssl_config = client._session.create_ssl_context()
 
         mock_ssl_context.assert_called_once_with(cafile=str(ca_cert_file))
         assert isinstance(ssl_config, MagicMock)
@@ -59,7 +59,7 @@ async def test_nonexistent_ca_cert_raises_error() -> None:
     )
 
     with pytest.raises(FileNotFoundError):
-        client._create_ssl_context()
+        client._session.create_ssl_context()
 
 
 async def test_context_manager_closes_session_when_ssl_setup_fails() -> None:
@@ -72,10 +72,16 @@ async def test_context_manager_closes_session_when_ssl_setup_fails() -> None:
         with pytest.raises(FileNotFoundError):
             await client.__aenter__()
 
-        assert client._session is None or client._session.closed
+        assert (
+            client._session._http_session is None
+            or client._session._http_session.closed
+        )
     finally:
-        if client._session is not None and not client._session.closed:
-            await client._session.close()
+        if (
+            client._session._http_session is not None
+            and not client._session._http_session.closed
+        ):
+            await client._session._http_session.close()
 
 
 async def test_http_url_works_regardless_of_ssl_config() -> None:
@@ -83,7 +89,7 @@ async def test_http_url_works_regardless_of_ssl_config() -> None:
     client = NanoKVMClient("http://kvm.local/api/", verify_ssl=False)
 
     async with client:
-        assert client._session is not None
+        assert client._session._http_session is not None
 
 
 async def test_session_created_with_tcp_connector() -> None:
@@ -91,20 +97,20 @@ async def test_session_created_with_tcp_connector() -> None:
     client = NanoKVMClient("https://kvm.local/api/")
 
     async with client:
-        assert client._session is not None
-        assert client._session.connector is not None
+        assert client._session._http_session is not None
+        assert client._session._http_session.connector is not None
 
 
 async def test_password_obfuscation_auto_by_default() -> None:
     """Test that password obfuscation defaults to None (auto-detect)."""
     client = NanoKVMClient("https://kvm.local/api/")
-    assert client._use_password_obfuscation is None
+    assert client._session._use_password_obfuscation is None
 
 
 async def test_password_obfuscation_can_be_disabled() -> None:
     """Test that password obfuscation can be disabled."""
     client = NanoKVMClient("https://kvm.local/api/", use_password_obfuscation=False)
-    assert client._use_password_obfuscation is False
+    assert client._session._use_password_obfuscation is False
 
 
 async def test_authenticate_with_plain_text_password() -> None:

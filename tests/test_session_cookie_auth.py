@@ -227,8 +227,8 @@ async def test_failed_reauthentication_cannot_keep_previous_identity(
     async with NanoKVMClient(
         _BASE_URL, token="previous-admin", use_password_obfuscation=True
     ) as client:
-        client._ws = old_ws
-        client._mouse_buttons = 1
+        client._session._ws = old_ws
+        client._session._mouse_buttons = 1
         with aioresponses() as mocked:
             if failure == "credentials":
                 mocked.post(
@@ -247,12 +247,12 @@ async def test_failed_reauthentication_cannot_keep_previous_identity(
             with pytest.raises(error):
                 await client.authenticate("other-user", "synthetic-password")
             assert client.token is None
-            assert client._mouse_buttons == 0
+            assert client._session._mouse_buttons == 0
             old_ws.close.assert_awaited_once()
             with pytest.raises(NanoKVMNotAuthenticatedError):
                 await client.get_account()
             with pytest.raises(NanoKVMNotAuthenticatedError):
-                await client._get_ws()
+                await client._session.get_ws()
             assert len(mocked.requests[("POST", yarl.URL(_LOGIN_URL))]) == 1
 
 
@@ -261,15 +261,15 @@ async def test_reauthentication_clears_transport_even_when_token_is_reissued() -
     old_ws = AsyncMock()
     old_ws.closed = False
     async with NanoKVMClient(_BASE_URL, token="same-token") as client:
-        client._ws = old_ws
-        client._mouse_buttons = 1
+        client._session._ws = old_ws
+        client._session._mouse_buttons = 1
         with aioresponses() as mocked:
             mocked.post(_LOGIN_URL, payload=_login_payload({"token": "same-token"}))
             mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
             await client.authenticate("synthetic-user", "synthetic-password")
         assert client.token == "same-token"
-        assert client._ws is None
-        assert client._mouse_buttons == 0
+        assert client._session._ws is None
+        assert client._session._mouse_buttons == 0
         old_ws.close.assert_awaited_once()
 
 
@@ -309,8 +309,8 @@ async def test_authentication_closes_previous_websocket_before_replacing_identit
         side_effect=[old_ws, new_ws],
     ):
         async with NanoKVMClient(_BASE_URL, token="old-token") as client:
-            client._hw_version = HWVersion.PCIE
-            client._application_version = "2.5.1"
+            client._session._hw_version = HWVersion.PCIE
+            client._session._application_version = "2.5.1"
             await client.mouse_move_rel(0.1, 0.0)
 
             with aioresponses() as mocked:
@@ -325,7 +325,7 @@ async def test_authentication_closes_previous_websocket_before_replacing_identit
 
             assert old_ws.close.await_count == 1
             assert client.token == "new-token"
-            assert client._mouse_buttons == 0
+            assert client._session._mouse_buttons == 0
 
 
 async def test_mjpeg_request_uses_cookie_login_token() -> None:
@@ -362,7 +362,7 @@ async def test_mjpeg_request_uses_cookie_login_token() -> None:
 
     try:
         async with NanoKVMClient(f"http://127.0.0.1:{port}/api/") as client:
-            client._token = "cookie-token"
+            client._session._token = "cookie-token"
             async with asyncio.timeout(2):
                 frames = [frame async for frame in client.mjpeg_stream()]
             assert len(frames) == 1

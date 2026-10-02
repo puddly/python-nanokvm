@@ -136,8 +136,8 @@ async def _device_server() -> AsyncIterator[tuple[str, dict[str, Any]]]:
 
 
 def _mark(client: NanoKVMClient, hardware: HWVersion, version: str) -> None:
-    client._hw_version = hardware
-    client._application_version = version
+    client._session._hw_version = hardware
+    client._session._application_version = version
 
 
 async def test_download_image_accepts_sha256_and_keeps_legacy_route() -> None:
@@ -241,7 +241,9 @@ async def test_image_download_watcher_stops_on_every_terminal_status(
         "http://127.0.0.1:1/api/", token="synthetic-token"
     ) as client:
         status_request = AsyncMock(return_value=_status(terminal))
-        with patch.object(client, "get_image_download_status", status_request):
+        with patch.object(
+            client._storage_controller, "get_image_download_status", status_request
+        ):
             results = [
                 result
                 async for result in client.watch_image_download(poll_interval=0.001)
@@ -262,7 +264,9 @@ async def test_image_download_watcher_polls_until_success_then_stops() -> None:
                 _status(DownloadStatus.SUCCESS),
             ]
         )
-        with patch.object(client, "get_image_download_status", status_request):
+        with patch.object(
+            client._storage_controller, "get_image_download_status", status_request
+        ):
             results = [
                 result
                 async for result in client.watch_image_download(poll_interval=0.001)
@@ -284,7 +288,9 @@ async def test_image_download_watcher_rejects_nonpositive_interval_before_poll()
     ) as client:
         status_request = AsyncMock(return_value=_status(DownloadStatus.IDLE))
         with (
-            patch.object(client, "get_image_download_status", status_request),
+            patch.object(
+                client._storage_controller, "get_image_download_status", status_request
+            ),
             pytest.raises(ValueError, match="poll_interval"),
         ):
             async for _ in client.watch_image_download(poll_interval=0):
@@ -783,13 +789,13 @@ async def test_upload_post_disables_total_timeout_but_keeps_socket_timeouts(
         NanoKVMClient(base_url, token="synthetic-token", request_timeout=17) as client,
     ):
         _mark(client, hardware, "1.2.15" if hardware is HWVersion.PRO else "2.5.2")
-        original_request_form = client._api_request_form
+        original_request_form = client._session.api_request_form
 
         async def record_timeout(*args: Any, **kwargs: Any) -> Any:
             captured_timeouts.append(kwargs.get("timeout"))
             return await original_request_form(*args, **kwargs)
 
-        with patch.object(client, "_api_request_form", new=record_timeout):
+        with patch.object(client._session, "api_request_form", new=record_timeout):
             await client.upload_image(image, chunk_size=1024)
 
     assert len(captured_timeouts) == 1
@@ -820,8 +826,8 @@ async def test_same_client_serializes_upload_preflight_and_transfer(
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         _mark(client, HWVersion.PRO, "1.2.15")
-        original_get_images = client.get_images
-        original_request_form = client._api_request_form
+        original_get_images = client._storage_controller.get_images
+        original_request_form = client._session.api_request_form
 
         async def count_get_images() -> models.GetImagesRsp:
             nonlocal get_images_calls
@@ -837,8 +843,10 @@ async def test_same_client_serializes_upload_preflight_and_transfer(
             return await original_request_form(*args, **kwargs)
 
         with (
-            patch.object(client, "get_images", new=count_get_images),
-            patch.object(client, "_api_request_form", new=pause_first_post),
+            patch.object(
+                client._storage_controller, "get_images", new=count_get_images
+            ),
+            patch.object(client._session, "api_request_form", new=pause_first_post),
         ):
             first_task = asyncio.create_task(client.upload_image(first_image))
             await first_post_started.wait()

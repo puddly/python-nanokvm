@@ -113,8 +113,8 @@ def test_input_resolution_model_parses_response() -> None:
 async def test_get_input_region_uses_non_pro_endpoint_and_parses_response() -> None:
     """Input-region state is read from the non-Pro route."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._hw_version = HWVersion.PCIE
-        client._application_version = "2.5.1"
+        client._session._hw_version = HWVersion.PCIE
+        client._session._application_version = "2.5.1"
 
         with aioresponses() as mocked:
             mocked.get(
@@ -133,8 +133,8 @@ async def test_get_input_region_uses_non_pro_endpoint_and_parses_response() -> N
 async def test_set_input_region_posts_complete_and_partial_payloads() -> None:
     """Input-region updates use aliases and omit only values left as None."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._hw_version = HWVersion.PCIE
-        client._application_version = "2.5.1"
+        client._session._hw_version = HWVersion.PCIE
+        client._session._application_version = "2.5.1"
         url = f"{_BASE_URL}vm/input-region"
 
         with aioresponses() as mocked:
@@ -206,8 +206,8 @@ async def test_set_input_region_posts_complete_and_partial_payloads() -> None:
 async def test_get_input_resolution_uses_non_pro_endpoint() -> None:
     """The current display resolution is read from its dedicated route."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._hw_version = HWVersion.ALPHA
-        client._application_version = "2.5.1"
+        client._session._hw_version = HWVersion.ALPHA
+        client._session._application_version = "2.5.1"
 
         with aioresponses() as mocked:
             mocked.get(
@@ -234,8 +234,8 @@ async def test_get_input_resolution_uses_non_pro_endpoint() -> None:
 async def test_input_region_methods_reject_pro_without_io(method_name: str) -> None:
     """Input-region endpoints are unavailable on Pro hardware."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._hw_version = HWVersion.PRO
-        client._application_version = "9.9.9"
+        client._session._hw_version = HWVersion.PRO
+        client._session._application_version = "9.9.9"
 
         with (
             aioresponses() as mocked,
@@ -258,8 +258,8 @@ async def test_input_region_methods_reject_pro_without_io(method_name: str) -> N
 async def test_input_region_methods_reject_250_without_io(method_name: str) -> None:
     """Input-region endpoints are unavailable before non-Pro 2.5.1."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._hw_version = HWVersion.PCIE
-        client._application_version = "2.5.0"
+        client._session._hw_version = HWVersion.PCIE
+        client._session._application_version = "2.5.0"
 
         with (
             aioresponses() as mocked,
@@ -279,8 +279,8 @@ async def test_input_region_methods_reject_250_without_io(method_name: str) -> N
 async def test_set_input_region_preserves_api_error() -> None:
     """An API error envelope remains a NanoKVMApiError."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._hw_version = HWVersion.PCIE
-        client._application_version = "2.5.1"
+        client._session._hw_version = HWVersion.PCIE
+        client._session._application_version = "2.5.1"
 
         with aioresponses() as mocked:
             mocked.post(

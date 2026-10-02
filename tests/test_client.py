@@ -39,8 +39,8 @@ def _mark_detected(
     hw_version: HWVersion = HWVersion.PCIE,
     application_version: str = "9.9.9",
 ) -> None:
-    client._hw_version = hw_version
-    client._application_version = application_version
+    client._session._hw_version = hw_version
+    client._session._application_version = application_version
 
 
 def _info_payload(application: str, image: str = "1.4.0") -> dict[str, object]:
@@ -83,9 +83,9 @@ async def test_image_download_prefix_by_hardware_family(
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        client._hw_version = hardware
+        client._session._hw_version = hardware
 
-        assert client._image_download_prefix() == expected_prefix
+        assert client._storage_controller._image_download_prefix() == expected_prefix
 
 
 @pytest.mark.parametrize(
@@ -188,7 +188,7 @@ def test_invalid_response_error_does_not_echo_payload() -> None:
     secret = "SYNTHETIC_SECRET_VALUE"
 
     with pytest.raises(NanoKVMInvalidResponseError) as exc_info:
-        client._validate_api_response(
+        client._session.validate_api_response(
             {"msg": "invalid", "data": {"token": secret}},
         )
 
@@ -228,7 +228,7 @@ def test_parse_jpeg_returns_fully_loaded_image() -> None:
     Image.new("RGB", (2, 2), color=(1, 2, 3)).save(image_buffer, format="JPEG")
     client = NanoKVMClient("http://localhost:8888/api/")
 
-    image = client._parse_jpeg_from_bytes(image_buffer.getvalue())
+    image = client._stream_controller.parse_jpeg_from_bytes(image_buffer.getvalue())
 
     assert image.getpixel((0, 0))
     assert getattr(image, "fp", None) is None
@@ -385,7 +385,7 @@ async def test_get_oled_info_raises_for_pro_invalid_file_content() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        client._hw_version = HWVersion.PRO
+        client._session._hw_version = HWVersion.PRO
 
         with aioresponses() as m:
             m.get(
@@ -479,7 +479,7 @@ async def test_get_virtual_device_status_handles_pro_shape() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        client._hw_version = HWVersion.PRO
+        client._session._hw_version = HWVersion.PRO
 
         with aioresponses() as m:
             m.get(
@@ -513,7 +513,7 @@ async def test_update_virtual_device_sends_pro_disk_type() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        client._hw_version = HWVersion.PRO
+        client._session._hw_version = HWVersion.PRO
 
         with aioresponses() as m:
             m.post(
@@ -540,7 +540,7 @@ async def test_set_led_strip_partial_preserves_current_config() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        client._hw_version = HWVersion.PRO
+        client._session._hw_version = HWVersion.PRO
 
         with aioresponses() as m:
             m.get(
@@ -728,7 +728,7 @@ async def test_get_dns_pro_is_not_supported() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        client._hw_version = HWVersion.PRO
+        client._session._hw_version = HWVersion.PRO
 
         with aioresponses() as m:
             with pytest.raises(NanoKVMNotSupportedError) as exc_info:
@@ -743,7 +743,7 @@ async def test_get_dns_old_application_version_is_not_supported() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        client._hw_version = HWVersion.PCIE
+        client._session._hw_version = HWVersion.PCIE
 
         with aioresponses() as m:
             m.get(
@@ -766,7 +766,7 @@ async def test_get_dns_exact_application_version_is_supported() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        client._hw_version = HWVersion.PCIE
+        client._session._hw_version = HWVersion.PCIE
 
         with aioresponses() as m:
             m.get(
@@ -932,7 +932,7 @@ async def test_set_stream_mode_accepts_existing_string_values() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        client._hw_version = HWVersion.PRO
+        client._session._hw_version = HWVersion.PRO
 
         with aioresponses() as m:
             m.post(
@@ -954,11 +954,11 @@ async def test_client_context_manager() -> None:
         "http://localhost:8888/api/", token="test-token"
     ) as client:
         # Verify session is created
-        assert client._session is not None
-        assert not client._session.closed
+        assert client._session._http_session is not None
+        assert not client._session._http_session.closed
 
     # After exiting context, session should be closed
-    assert client._session is None
+    assert client._session._http_session is None
 
 
 async def test_client_context_manager_external_session() -> None:
@@ -973,13 +973,13 @@ async def test_client_context_manager_external_session() -> None:
             client3,
         ):
             # Verify session is created
-            assert client1._session is session
-            assert client2._session is session
-            assert client3._session is session
+            assert client1._session._http_session is session
+            assert client2._session._http_session is session
+            assert client3._session._http_session is session
 
         # Reusing a client with an external session should not close the session
         async with client3:
-            assert client3._session is session
+            assert client3._session._http_session is session
 
         assert not session.closed
 

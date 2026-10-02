@@ -107,7 +107,7 @@ async def test_shared_http_session_keeps_each_client_identity(
             await reader.authenticate("reader", "synthetic-password")
             await admin.authenticate("admin", "synthetic-password")
             assert (await reader.get_account()).username == "reader"
-            ws = await reader._get_ws()
+            ws = await reader._session.get_ws()
             assert await ws.receive_str() == "reader"
             async for frame in reader.mjpeg_stream():
                 assert frame.size == (2, 2)
@@ -127,7 +127,7 @@ async def test_explicit_websocket_token_overrides_stale_cookie(
         async with NanoKVMClient(
             session_server, session=session, token=token
         ) as client:
-            ws = await client._get_ws()
+            ws = await client._session.get_ws()
             assert await ws.receive_str() == token
 
 
@@ -215,7 +215,7 @@ async def test_async_traces_cannot_replace_websocket_identity(
             NanoKVMClient(session_server, session=session) as admin,
         ):
             async with asyncio.timeout(2):
-                ws_pending = asyncio.create_task(reader._get_ws())
+                ws_pending = asyncio.create_task(reader._session.get_ws())
                 await ws_started.wait()
                 login_pending = asyncio.create_task(
                     admin.authenticate("admin", "password")
@@ -249,11 +249,11 @@ async def test_closed_external_session_cannot_open_websocket(
         await session.close()
         try:
             with pytest.raises(RuntimeError, match="Session is closed"):
-                await client._get_ws()
+                await client._session.get_ws()
         finally:
             # Also clean up the accidental connector when testing a regression.
             if (
-                client._ws_session is not None
-                and client._ws_session.connector is not None
+                client._session._ws_session is not None
+                and client._session._ws_session.connector is not None
             ):
-                await client._ws_session.connector.close()
+                await client._session._ws_session.connector.close()

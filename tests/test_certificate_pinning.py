@@ -237,11 +237,11 @@ async def test_websocket_preserves_certificate_pinning(
             ssl_fingerprint=fingerprint if valid_pin else "AB" * 32,
         ) as client:
             if valid_pin:
-                ws = await client._get_ws()
+                ws = await client._session.get_ws()
                 assert await ws.receive_str() == "synthetic-token"
             else:
                 with pytest.raises(aiohttp.ServerFingerprintMismatch):
-                    await client._get_ws()
-            transport = client._ws_session
+                    await client._session.get_ws()
+            transport = client._session._ws_session
         assert transport is not None and transport.closed
         assert session.connector is not None and not session.connector.closed

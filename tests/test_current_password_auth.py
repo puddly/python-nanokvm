@@ -36,8 +36,8 @@ def _prepare_client(
         token="session-token",
         use_password_obfuscation=True,
     )
-    client._hw_version = hardware
-    client._application_version = application
+    client._session._hw_version = hardware
+    client._session._application_version = application
     return client
 
 
@@ -46,13 +46,13 @@ async def test_new_contract_sends_both_obfuscated_passwords_and_clears_session()
 ):
     """2.5.1 changes the authenticated user's password and invalidates sessions."""
     client = _prepare_client()
-    client._use_password_obfuscation = False
+    client._session._use_password_obfuscation = False
     mock_ws = AsyncMock()
     mock_ws.closed = False
 
     async with client:
-        client._ws = mock_ws
-        client._mouse_buttons = 1
+        client._session._ws = mock_ws
+        client._session._mouse_buttons = 1
         with (
             aioresponses() as mocked,
             patch(
@@ -75,9 +75,9 @@ async def test_new_contract_sends_both_obfuscated_passwords_and_clears_session()
                 "password": "encoded-new-password",
             }
             assert client.token is None
-            assert client._mouse_buttons == 0
+            assert client._session._mouse_buttons == 0
             mock_ws.close.assert_awaited_once()
-            assert client._ws is None
+            assert client._session._ws is None
 
 
 async def test_new_contract_requires_current_password_before_sending() -> None:
@@ -159,7 +159,7 @@ async def test_legacy_contract_is_preserved_for_old_and_pro_devices(
 async def test_legacy_contract_preserves_plain_text_password_mode() -> None:
     """The old contract still honors an explicitly selected plain mode."""
     client = _prepare_client(hardware=HWVersion.PCIE, application="2.5.0")
-    client._use_password_obfuscation = False
+    client._session._use_password_obfuscation = False
 
     async with client:
         with aioresponses() as mocked:
@@ -178,7 +178,7 @@ async def test_unknown_application_version_is_not_guessed() -> None:
     """A missing version produces an actionable error instead of guessing."""
     async with _prepare_client(application=None) as client:
         with patch.object(
-            client, "detect_versions", new_callable=AsyncMock
+            client._session, "detect_versions", new_callable=AsyncMock
         ) as detect_versions:
             with pytest.raises(NanoKVMError, match="Application version"):
                 await client.change_password(
@@ -204,7 +204,7 @@ async def test_custom_application_version_is_not_guessed() -> None:
 async def test_password_change_detects_hardware_and_version_when_needed() -> None:
     """An authenticated client can identify the contract through /vm endpoints."""
     async with _prepare_client(hardware=HWVersion.UNKNOWN, application=None) as client:
-        client._hw_version = None
+        client._session._hw_version = None
         with (
             aioresponses() as mocked,
             patch(
