@@ -240,7 +240,12 @@ class MouseController:
         await self.send_ws(lambda ws: ws.send_json(message))
 
     async def mouse_move_abs(self, x: float, y: float) -> None:
-        """Move mouse to absolute position."""
+        """Move mouse to absolute position.
+
+        Args:
+            x: X coordinate (0.0 to 1.0, left to right).
+            y: Y coordinate (0.0 to 1.0, top to bottom).
+        """
         client = self._client
         if not await self.uses_binary_mouse_protocol():
             await self.send_legacy_mouse_event(2, 0, x, y)
@@ -251,7 +256,12 @@ class MouseController:
         await self.send_mouse_report(self.absolute_report())
 
     async def mouse_move_rel(self, dx: float, dy: float) -> None:
-        """Move mouse relative to current position."""
+        """Move mouse relative to current position.
+
+        Args:
+            dx: Horizontal movement (-1.0 to 1.0).
+            dy: Vertical movement (-1.0 to 1.0).
+        """
         client = self._client
         if not await self.uses_binary_mouse_protocol():
             await self.send_legacy_mouse_event(3, 0, dx, dy)
@@ -263,7 +273,13 @@ class MouseController:
         )
 
     async def mouse_down(self, button: MouseButton = MouseButton.LEFT) -> None:
-        """Press a mouse button."""
+        """Press a mouse button.
+
+        Args:
+            button: Mouse button to press (LEFT, RIGHT, MIDDLE, BACK or FORWARD).
+
+        Back and Forward require the binary mouse protocol.
+        """
 
         client = self._client
         if not await self.uses_binary_mouse_protocol():
@@ -292,7 +308,10 @@ class MouseController:
             raise
 
     async def mouse_up(self) -> None:
-        """Release all currently held mouse buttons."""
+        """Release a mouse button.
+
+        The report releases all currently held buttons.
+        """
         client = self._client
         if not await self.uses_binary_mouse_protocol():
             await self.send_legacy_mouse_event(0, 0, 0.0, 0.0)
@@ -308,7 +327,15 @@ class MouseController:
         x: float | None = None,
         y: float | None = None,
     ) -> None:
-        """Click a mouse button at the current position or coordinates."""
+        """Click a mouse button at the current position or coordinates.
+
+        Args:
+            button: Mouse button to click (LEFT, RIGHT, MIDDLE, BACK or FORWARD).
+            x: Optional X coordinate (0.0 to 1.0) for absolute positioning.
+            y: Optional Y coordinate (0.0 to 1.0) for absolute positioning.
+
+        Both coordinates must be provided to reposition the mouse before clicking.
+        """
         if x is not None and y is not None:
             await self.mouse_move_abs(x, y)
             await asyncio.sleep(0.05)
@@ -324,7 +351,14 @@ class MouseController:
                 await self.mouse_up()
 
     async def mouse_scroll(self, dx: float, dy: float) -> None:
-        """Scroll the mouse wheel."""
+        """Scroll the mouse wheel.
+
+        Args:
+            dx: Horizontal scroll amount (-1.0 to 1.0), ignored by the binary
+                mouse protocol.
+            dy: Vertical scroll amount (-1.0 to 1.0); positive scrolls up and
+                negative scrolls down.
+        """
         if not await self.uses_binary_mouse_protocol():
             await self.send_legacy_mouse_event(4, 0, dx, dy)
             return

@@ -1559,41 +1559,19 @@ class NanoKVMClient:
         await self._mouse.send_legacy_mouse_event(event_type, button_state, x, y)
 
     async def mouse_move_abs(self, x: float, y: float) -> None:
-        """
-        Move mouse to absolute position.
-
-        Args:
-            x: X coordinate (0.0 to 1.0, left to right)
-            y: Y coordinate (0.0 to 1.0, top to bottom)
-        """
+        """Move mouse to absolute position."""
         await self._mouse.mouse_move_abs(x, y)
 
     async def mouse_move_rel(self, dx: float, dy: float) -> None:
-        """
-        Move mouse relative to current position.
-
-        Args:
-            dx: Horizontal movement (-1.0 to 1.0)
-            dy: Vertical movement (-1.0 to 1.0)
-        """
+        """Move mouse relative to current position."""
         await self._mouse.mouse_move_rel(dx, dy)
 
     async def mouse_down(self, button: MouseButton = MouseButton.LEFT) -> None:
-        """
-        Press a mouse button.
-
-        Args:
-            button: Mouse button to press (MouseButton.LEFT, MouseButton.RIGHT,
-                MouseButton.MIDDLE, MouseButton.BACK, MouseButton.FORWARD)
-        """
+        """Press a mouse button."""
         await self._mouse.mouse_down(button)
 
     async def mouse_up(self) -> None:
-        """
-        Release a mouse button.
-
-        The report releases all currently held buttons.
-        """
+        """Release all currently held mouse buttons."""
         await self._mouse.mouse_up()
 
     async def mouse_click(
@@ -1602,25 +1580,9 @@ class NanoKVMClient:
         x: float | None = None,
         y: float | None = None,
     ) -> None:
-        """
-        Click a mouse button at current position or specified coordinates.
-
-        Args:
-            button: Mouse button to click (MouseButton.LEFT, MouseButton.RIGHT,
-                MouseButton.MIDDLE, MouseButton.BACK, MouseButton.FORWARD)
-            x: Optional X coordinate (0.0 to 1.0) for absolute positioning
-                before click
-            y: Optional Y coordinate (0.0 to 1.0) for absolute positioning
-                before click
-        """
+        """Click a mouse button at the current position or coordinates."""
         await self._mouse.mouse_click(button, x, y)
 
     async def mouse_scroll(self, dx: float, dy: float) -> None:
-        """
-        Scroll the mouse wheel.
-
-        Args:
-            dx: Horizontal scroll amount (-1.0 to 1.0)
-            dy: Vertical scroll amount (-1.0 to 1.0) # positive=up, negative=down)
-        """
+        """Scroll the mouse wheel."""
         await self._mouse.mouse_scroll(dx, dy)
