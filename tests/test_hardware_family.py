@@ -2,8 +2,8 @@
 
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock
 
+from aioresponses import aioresponses
 import pytest
 
 from nanokvm.client import (
@@ -57,17 +57,20 @@ async def test_hardware_decorator_preserves_exact_version_requirements() -> None
 
 async def test_pro_family_requirement_accepts_future_pro_hardware() -> None:
     """Pro-only operations accept future hardware versions in the Pro family."""
-    request = AsyncMock()
-    client = cast(
-        NanoKVMClient,
-        SimpleNamespace(
-            _hw_version=SimpleNamespace(family=HWFamily.PRO, value="Pro Desk PoE"),
-            _api_request_json=request,
-        ),
-    )
+    async with NanoKVMClient("http://kvm.local/api/", token="test-token") as client:
+        client._hw_version = cast(
+            HWVersion, SimpleNamespace(family=HWFamily.PRO, value="Pro Desk PoE")
+        )
+        with aioresponses() as mocked:
+            mocked.get(
+                "http://kvm.local/api/vm/hdmi/capture",
+                payload={"code": 0, "msg": "success", "data": {"enabled": True}},
+            )
 
-    await NanoKVMClient.get_hdmi_capture(client)
-    request.assert_awaited_once()
+            result = await client.get_hdmi_capture()
+
+            assert result.enabled is True
+            assert len(mocked.requests) == 1
 
 
 async def test_hardware_decorator_family_requirement_requires_detection() -> None:

@@ -30,7 +30,9 @@ from ..models.common import (
     ApiResponseCode,
     ChangePasswordReq,
     ChangePasswordV251Req,
+    GetAccountRsp,
     HWFamily,
+    IsPasswordUpdatedRsp,
     LoginReq,
     LoginRsp,
 )
@@ -514,4 +516,20 @@ class SessionController:
                 username=username,
                 password=password_to_send,
             ),
+        )
+
+    async def is_password_updated(self) -> IsPasswordUpdatedRsp:
+        """Check if the default password has been changed."""
+        return await self._client._api_request_json(
+            hdrs.METH_GET,
+            "/auth/password",
+            response_model=IsPasswordUpdatedRsp,
+        )
+
+    async def get_account(self) -> GetAccountRsp:
+        """Get the configured username."""
+        return await self._client._api_request_json(
+            hdrs.METH_GET,
+            "/auth/account",
+            response_model=GetAccountRsp,
         )

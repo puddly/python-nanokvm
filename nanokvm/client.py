@@ -21,7 +21,7 @@ import ssl
 from typing import Any, Literal, TypeVar, overload
 
 import aiohttp
-from aiohttp import ClientResponse, ClientSession, Fingerprint, hdrs
+from aiohttp import ClientResponse, ClientSession, Fingerprint
 from PIL import Image
 from pydantic import BaseModel
 import yarl
@@ -29,10 +29,12 @@ import yarl
 from .components.hid import PASTE_CHAR_MAP, HidController
 from .components.mouse import MouseController
 from .components.network import NetworkController
+from .components.services import ServiceController
 from .components.session import SessionController
 from .components.storage import ImageTransferProgressCallback, StorageController
 from .components.stream import StreamController
 from .components.system import SystemController
+from .components.video import VideoController
 from .exceptions import (
     NanoKVMApiError,
     NanoKVMAuthenticationFailure,
@@ -526,6 +528,8 @@ class NanoKVMClient:
         self._mouse = MouseController(self, _LOGGER)
         self._stream_controller = StreamController(self, _LOGGER)
         self._storage_controller = StorageController(self)
+        self._services_controller = ServiceController(self)
+        self._video_controller = VideoController(self)
         self._network_controller = NetworkController(self)
         self._system_controller = SystemController(self)
         self._hid_controller = HidController(self)
@@ -795,19 +799,11 @@ class NanoKVMClient:
 
     async def is_password_updated(self) -> IsPasswordUpdatedRsp:
         """Check if the default password has been changed."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/auth/password",
-            response_model=IsPasswordUpdatedRsp,
-        )
+        return await self._session_controller.is_password_updated()
 
     async def get_account(self) -> GetAccountRsp:
         """Get the configured username."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/auth/account",
-            response_model=GetAccountRsp,
-        )
+        return await self._session_controller.get_account()
 
     # ── VM (shared) ─────────────────────────────────────────────────────
 
@@ -942,11 +938,7 @@ class NanoKVMClient:
     @require_application_version(non_pro="2.5.1")
     async def get_input_region(self) -> GetInputRegionRsp:
         """Get the configured non-Pro input region."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/vm/input-region",
-            response_model=GetInputRegionRsp,
-        )
+        return await self._video_controller.get_input_region()
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.5.1")
@@ -966,42 +958,30 @@ class NanoKVMClient:
         selected_region: str | None = None,
     ) -> None:
         """Set the non-Pro input region configuration."""
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/vm/input-region",
-            data=SetInputRegionReq(
-                mode=mode,
-                frame_width=frame_width,
-                frame_height=frame_height,
-                left=left,
-                top=top,
-                width=width,
-                height=height,
-                resolutions=resolutions,
-                selected_resolution=selected_resolution,
-                regions=regions,
-                selected_region=selected_region,
-            ),
+        await self._video_controller.set_input_region(
+            mode,
+            frame_width=frame_width,
+            frame_height=frame_height,
+            left=left,
+            top=top,
+            width=width,
+            height=height,
+            resolutions=resolutions,
+            selected_resolution=selected_resolution,
+            regions=regions,
+            selected_region=selected_region,
         )
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.5.1")
     async def get_input_resolution(self) -> GetInputResolutionRsp:
         """Get the current non-Pro input frame resolution."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/vm/input-resolution",
-            response_model=GetInputResolutionRsp,
-        )
+        return await self._video_controller.get_input_resolution()
 
     @require_hardware(HWFamily.NON_PRO)
     async def set_screen(self, setting: ScreenSettingType, value: int) -> None:
         """Set a non-Pro NanoKVM screen setting."""
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/vm/screen",
-            data=SetScreenReq(type=setting, value=value),
-        )
+        await self._video_controller.set_screen(setting, value)
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.2.6")
@@ -1029,44 +1009,31 @@ class NanoKVMClient:
     @require_application_version(non_pro="2.2.8")
     async def get_hdmi_state(self) -> GetHdmiStateRsp:
         """Get the HDMI state (PCIe variant)."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/vm/hdmi",
-            response_model=GetHdmiStateRsp,
-        )
+        return await self._video_controller.get_hdmi_state()
 
     @require_hardware(HWVersion.PCIE)
     @require_application_version(non_pro="2.1.5")
     async def reset_hdmi(self) -> None:
         """Reset the HDMI connection."""
-        await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/reset")
+        await self._video_controller.reset_hdmi()
 
     @require_hardware(HWVersion.PCIE)
     @require_application_version(non_pro="2.2.8")
     async def enable_hdmi(self) -> None:
         """Enable the HDMI connection."""
-        await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/enable")
+        await self._video_controller.enable_hdmi()
 
     @require_hardware(HWVersion.PCIE)
     @require_application_version(non_pro="2.2.8")
     async def disable_hdmi(self) -> None:
         """Disable the HDMI connection."""
-        await self._api_request_json(hdrs.METH_POST, "/vm/hdmi/disable")
+        await self._video_controller.disable_hdmi()
 
     @require_hardware(HWVersion.PCIE)
     @require_application_version(non_pro="2.5.0")
     async def set_hdmi_idle_timeout(self, minutes: int) -> None:
         """Set the HDMI capture idle timeout in minutes; zero disables it."""
-        if isinstance(minutes, bool) or not isinstance(minutes, int):
-            raise ValueError("minutes must be an integer between 0 and 10080")
-        if not 0 <= minutes <= 10080:
-            raise ValueError("minutes must be between 0 and 10080")
-
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/vm/hdmi/timeout",
-            data=SetHdmiIdleTimeoutReq(minutes=minutes),
-        )
+        await self._video_controller.set_hdmi_idle_timeout(minutes)
 
     # ── VM (Pro only) ──────────────────────────────────────────────────
 
@@ -1091,86 +1058,50 @@ class NanoKVMClient:
     @require_hardware(HWFamily.PRO)
     async def get_hdmi_capture(self) -> GetHdmiCaptureRsp:
         """Get HDMI capture status."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/vm/hdmi/capture",
-            response_model=GetHdmiCaptureRsp,
-        )
+        return await self._video_controller.get_hdmi_capture()
 
     @require_hardware(HWFamily.PRO)
     async def set_hdmi_capture(self, enabled: bool) -> None:
         """Set HDMI capture status."""
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/vm/hdmi/capture",
-            data=SetHdmiCaptureReq(enabled=enabled),
-        )
+        await self._video_controller.set_hdmi_capture(enabled)
 
     @require_hardware(HWFamily.PRO)
     async def get_hdmi_passthrough(self) -> GetHdmiPassthroughRsp:
         """Get HDMI passthrough status."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/vm/hdmi/passthrough",
-            response_model=GetHdmiPassthroughRsp,
-        )
+        return await self._video_controller.get_hdmi_passthrough()
 
     @require_hardware(HWFamily.PRO)
     async def set_hdmi_passthrough(self, enabled: bool) -> None:
         """Set HDMI passthrough status."""
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/vm/hdmi/passthrough",
-            data=SetHdmiPassthroughReq(enabled=enabled),
-        )
+        await self._video_controller.set_hdmi_passthrough(enabled)
 
     @require_hardware(HWFamily.PRO)
     async def get_edid(self) -> GetEdidRsp:
         """Get current EDID."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/vm/edid",
-            response_model=GetEdidRsp,
-        )
+        return await self._video_controller.get_edid()
 
     @require_hardware(HWFamily.PRO)
     async def switch_edid(self, edid: EdidValue) -> None:
         """Switch EDID."""
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/vm/edid",
-            data=SwitchEdidReq(edid=edid),
-        )
+        await self._video_controller.switch_edid(edid)
 
     @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.3")
     async def get_custom_edid_list(self) -> GetCustomEdidListRsp:
         """Get custom EDID list."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/vm/edid/custom",
-            response_model=GetCustomEdidListRsp,
-        )
+        return await self._video_controller.get_custom_edid_list()
 
     @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.3")
     async def upload_edid(self, file_path: str | PathLike[str]) -> UploadEdidRsp:
         """Upload a custom EDID."""
-        return await self._upload_file(
-            "/vm/edid/upload",
-            file_path,
-            response_model=UploadEdidRsp,
-        )
+        return await self._video_controller.upload_edid(file_path)
 
     @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.3")
     async def delete_edid(self, edid: str) -> None:
         """Delete a custom EDID."""
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/vm/edid/delete",
-            data=DeleteEdidReq(edid=edid),
-        )
+        await self._video_controller.delete_edid(edid)
 
     @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.7")
@@ -1430,11 +1361,7 @@ class NanoKVMClient:
     @require_application_version(non_pro="2.1.6")
     async def get_tailscale_status(self) -> GetTailscaleStatusRsp:
         """Get Tailscale status."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/extensions/tailscale/status",
-            response_model=GetTailscaleStatusRsp,
-        )
+        return await self._services_controller.get_tailscale_status()
 
     # ── Network (Pro only) ─────────────────────────────────────────────
 
@@ -1462,49 +1389,28 @@ class NanoKVMClient:
     @require_application_version(pro="1.2.6")
     async def set_rate_control_mode(self, mode: RateControlMode) -> None:
         """Set the stream rate control mode (CBR/VBR)."""
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/stream/rate-control",
-            data=SetRateControlModeReq(mode=mode),
-        )
+        await self._video_controller.set_rate_control_mode(mode)
 
     @require_hardware(HWFamily.PRO)
     async def set_stream_mode(self, mode: StreamMode | str) -> None:
         """Set the stream mode."""
-        stream_mode = mode if isinstance(mode, StreamMode) else StreamMode(mode)
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/stream/mode",
-            data=SetStreamModeReq(mode=stream_mode),
-        )
+        await self._video_controller.set_stream_mode(mode)
 
     @require_hardware(HWFamily.PRO)
     async def set_stream_quality(self, quality: int) -> None:
         """Set the stream quality / bit-rate."""
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/stream/quality",
-            data=SetStreamQualityReq(quality=quality),
-        )
+        await self._video_controller.set_stream_quality(quality)
 
     @require_hardware(HWFamily.PRO)
     async def set_gop(self, gop: int) -> None:
         """Set the stream GOP (Group of Pictures)."""
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/stream/gop",
-            data=SetGopReq(gop=gop),
-        )
+        await self._video_controller.set_gop(gop)
 
     @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.2.8")
     async def set_fps(self, fps: int) -> None:
         """Set the stream FPS."""
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/stream/fps",
-            data=SetFpsReq(fps=fps),
-        )
+        await self._video_controller.set_fps(fps)
 
     # ── Stream (shared) ────────────────────────────────────────────────
 
@@ -1521,33 +1427,21 @@ class NanoKVMClient:
 
     async def get_application_version(self) -> GetVersionRsp:
         """Get current and latest application versions."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/application/version",
-            response_model=GetVersionRsp,
-        )
+        return await self._services_controller.get_application_version()
 
     @require_application_version(non_pro="2.2.5")
     async def get_preview_status(self) -> GetPreviewRsp:
         """Check if preview updates are enabled."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/application/preview",
-            response_model=GetPreviewRsp,
-        )
+        return await self._services_controller.get_preview_status()
 
     @require_application_version(non_pro="2.2.5")
     async def set_preview_state(self, enable: bool) -> None:
         """Enable or disable preview updates."""
-        await self._api_request_json(
-            hdrs.METH_POST,
-            "/application/preview",
-            data=SetPreviewReq(enable=enable),
-        )
+        await self._services_controller.set_preview_state(enable)
 
     async def update_application(self) -> None:
         """Trigger the application update process."""
-        await self._api_request_json(hdrs.METH_POST, "/application/update")
+        await self._services_controller.update_application()
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.3.1")
@@ -1558,57 +1452,15 @@ class NanoKVMClient:
         sha256: str | None = None,
     ) -> None:
         """Install an official non-Pro application package from a local file."""
-        package_path = Path(file_path)
-        if _OFFLINE_UPDATE_PACKAGE_RE.fullmatch(package_path.name) is None:
-            raise ValueError("Update package filename must match nanokvm_X.Y.Z.tar.gz")
-
-        checksum = sha256.strip() if sha256 is not None else ""
-        if checksum and re.fullmatch(r"[0-9a-fA-F]{64}", checksum) is None:
-            raise ValueError("SHA-256 checksum must contain exactly 64 hex characters")
-
-        if checksum:
-            actual_checksum = await asyncio.to_thread(
-                _calculate_file_sha256, package_path
-            )
-            if actual_checksum != checksum.lower():
-                raise ValueError("SHA-256 checksum does not match the update package")
-
-        supports_remote_checksum = (
-            self._application_version is None
-            or _version_at_least(self._application_version, "2.5.1")
+        await self._services_controller.update_application_offline(
+            file_path, sha256=sha256
         )
-        headers = (
-            {"X-SHA256-Checksum": checksum}
-            if checksum and supports_remote_checksum
-            else {}
-        )
-        try:
-            await self._upload_file(
-                "/application/update/offline",
-                package_path,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=_OFFLINE_UPDATE_TIMEOUT_SECONDS),
-            )
-        except aiohttp.ClientResponseError as err:
-            # The device can stop its old HTTP service before the proxy has
-            # forwarded the successful response. Its official UI treats that
-            # restart-related gateway response as successful too.
-            if (
-                err.status != 502
-                or self._application_version is None
-                or not _version_at_least(self._application_version, "2.5.1")
-            ):
-                raise
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.5.1")
     async def get_update_server(self) -> GetUpdateServerRsp:
         """Get the custom application update-server configuration."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/application/update-server",
-            response_model=GetUpdateServerRsp,
-        )
+        return await self._services_controller.get_update_server()
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.5.1")
@@ -1618,12 +1470,7 @@ class NanoKVMClient:
         url: str,
     ) -> GetUpdateServerRsp:
         """Set and return the custom application update-server configuration."""
-        return await self._api_request_json(
-            hdrs.METH_POST,
-            "/application/update-server",
-            response_model=GetUpdateServerRsp,
-            data=SetUpdateServerReq(enabled=enabled, url=url),
-        )
+        return await self._services_controller.set_update_server(enabled, url)
 
     # ── Download ────────────────────────────────────────────────────────
 
@@ -1674,104 +1521,78 @@ class NanoKVMClient:
     @require_application_version(non_pro="2.5.0")
     async def get_mcp_config(self) -> GetMCPConfigRsp:
         """Get MCP configuration and coordinated-control state."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/mcp/config",
-            response_model=GetMCPConfigRsp,
-        )
+        return await self._services_controller.get_mcp_config()
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.5.0")
     async def set_mcp_enabled(self, enabled: bool) -> GetMCPConfigRsp:
         """Enable or disable MCP control."""
-        return await self._api_request_json(
-            hdrs.METH_POST,
-            "/mcp/config",
-            response_model=GetMCPConfigRsp,
-            data=SetMCPConfigReq(enabled=enabled),
-        )
+        return await self._services_controller.set_mcp_enabled(enabled)
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.5.0")
     async def regenerate_mcp_api_key(self) -> GetMCPConfigRsp:
         """Generate and return a new MCP API key."""
-        return await self._api_request_json(
-            hdrs.METH_POST,
-            "/mcp/key/regenerate",
-            response_model=GetMCPConfigRsp,
-        )
+        return await self._services_controller.regenerate_mcp_api_key()
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.5.0")
     async def get_ai_control_status(self) -> AIControlStatusRsp:
         """Get the current coordinated-control owner and transition state."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/ai/control/status",
-            response_model=AIControlStatusRsp,
-        )
+        return await self._services_controller.get_ai_control_status()
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.5.0")
     async def set_ai_control_mode(self, mode: AIControlMode) -> SetAIControlModeRsp:
         """Select the owner of coordinated input control."""
-        return await self._api_request_json(
-            hdrs.METH_PUT,
-            "/ai/control/mode",
-            response_model=SetAIControlModeRsp,
-            data=SetAIControlModeReq(mode=mode),
-        )
+        return await self._services_controller.set_ai_control_mode(mode)
 
     # ── Extensions (shared) ────────────────────────────────────────────
 
     @require_application_version(non_pro="2.1.6")
     async def tailscale_install(self) -> None:
         """Install Tailscale."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/install")
+        await self._services_controller.tailscale_install()
 
     @require_application_version(non_pro="2.1.6")
     async def tailscale_uninstall(self) -> None:
         """Uninstall Tailscale."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/uninstall")
+        await self._services_controller.tailscale_uninstall()
 
     @require_application_version(non_pro="2.1.6")
     async def tailscale_up(self) -> None:
         """Bring Tailscale up."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/up")
+        await self._services_controller.tailscale_up()
 
     @require_application_version(non_pro="2.1.6")
     async def tailscale_down(self) -> None:
         """Bring Tailscale down."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/down")
+        await self._services_controller.tailscale_down()
 
     @require_application_version(non_pro="2.1.6")
     async def tailscale_login(self) -> LoginTailscaleRsp:
         """Log in to Tailscale."""
-        return await self._api_request_json(
-            hdrs.METH_POST,
-            "/extensions/tailscale/login",
-            response_model=LoginTailscaleRsp,
-        )
+        return await self._services_controller.tailscale_login()
 
     @require_application_version(non_pro="2.1.6")
     async def tailscale_logout(self) -> None:
         """Log out of Tailscale."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/logout")
+        await self._services_controller.tailscale_logout()
 
     @require_application_version(non_pro="2.1.6")
     async def tailscale_start(self) -> None:
         """Start Tailscale service."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/start")
+        await self._services_controller.tailscale_start()
 
     @require_application_version(non_pro="2.1.6")
     async def tailscale_stop(self) -> None:
         """Stop Tailscale service."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/stop")
+        await self._services_controller.tailscale_stop()
 
     @require_application_version(non_pro="2.1.6")
     async def tailscale_restart(self) -> None:
         """Restart Tailscale service."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/tailscale/restart")
+        await self._services_controller.tailscale_restart()
 
     # ── Extensions (Pro only) ──────────────────────────────────────────
 
@@ -1779,47 +1600,43 @@ class NanoKVMClient:
     @require_application_version(pro="1.1.4")
     async def assistant_install(self) -> None:
         """Install assistant dependencies."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/assistant/install")
+        await self._services_controller.assistant_install()
 
     @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.1.4")
     async def assistant_start(self) -> None:
         """Start assistant."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/assistant/start")
+        await self._services_controller.assistant_start()
 
     @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.1.5")
     async def kvmadmin_install(self) -> None:
         """Install kvmadmin."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/install")
+        await self._services_controller.kvmadmin_install()
 
     @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.1.5")
     async def kvmadmin_uninstall(self) -> None:
         """Uninstall kvmadmin."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/uninstall")
+        await self._services_controller.kvmadmin_uninstall()
 
     @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.1.5")
     async def kvmadmin_start(self) -> None:
         """Start kvmadmin."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/start")
+        await self._services_controller.kvmadmin_start()
 
     @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.1.5")
     async def kvmadmin_stop(self) -> None:
         """Stop kvmadmin."""
-        await self._api_request_json(hdrs.METH_POST, "/extensions/kvmadmin/stop")
+        await self._services_controller.kvmadmin_stop()
 
     @require_hardware(HWFamily.PRO)
     @require_application_version(pro="1.1.5")
     async def kvmadmin_status(self) -> GetKvmadminStatusRsp:
         """Get kvmadmin status."""
-        return await self._api_request_json(
-            hdrs.METH_GET,
-            "/extensions/kvmadmin/status",
-            response_model=GetKvmadminStatusRsp,
-        )
+        return await self._services_controller.kvmadmin_status()
 
     # ── Mouse (WebSocket) ──────────────────────────────────────────────
 
