@@ -32,6 +32,15 @@ import yarl
 from .components.mouse import MouseController
 from .components.session import SessionController
 from .components.stream import StreamController
+from .exceptions import (
+    NanoKVMApiError,
+    NanoKVMAuthenticationFailure,
+    NanoKVMError,
+    NanoKVMInvalidResponseError,
+    NanoKVMNotAuthenticatedError,
+    NanoKVMNotSupportedError,
+    NanoKVMPermissionError,
+)
 from .models.common import (
     AddShortcutReq,
     ApiResponseCode,
@@ -163,6 +172,149 @@ from .models.pro import (
 )
 from .utils import obfuscate_password as _obfuscate_password
 
+__all__ = [
+    "AIControlMode",
+    "AIControlStatusRsp",
+    "AddShortcutReq",
+    "ApiResponseCode",
+    "ConnectWifiReq",
+    "DNSMode",
+    "DeleteEdidReq",
+    "DeleteImageReq",
+    "DeleteMacReq",
+    "DeleteScriptReq",
+    "DeleteShortcutReq",
+    "DiskType",
+    "DownloadImageReq",
+    "DownloadStatus",
+    "F",
+    "GetAccountRsp",
+    "GetCdRomRsp",
+    "GetCustomEdidListRsp",
+    "GetDNSRsp",
+    "GetEdidRsp",
+    "GetGpioRsp",
+    "GetHardwareRsp",
+    "GetHdmiCaptureRsp",
+    "GetHdmiPassthroughRsp",
+    "GetHdmiStateRsp",
+    "GetHidModeRsp",
+    "GetHostnameRsp",
+    "GetImagesRsp",
+    "GetInfoRsp",
+    "GetInputRegionRsp",
+    "GetInputResolutionRsp",
+    "GetKeyboardLedStatusRsp",
+    "GetKvmadminStatusRsp",
+    "GetLcdTimeFormatRsp",
+    "GetLeaderKeyRsp",
+    "GetLedStripRsp",
+    "GetLowPowerRsp",
+    "GetMCPConfigRsp",
+    "GetMacRsp",
+    "GetMdnsStateRsp",
+    "GetMemoryLimitRsp",
+    "GetMenuBarConfigRsp",
+    "GetMountedImageRsp",
+    "GetMouseJigglerRsp",
+    "GetOLEDRsp",
+    "GetPreviewRsp",
+    "GetSSHStateRsp",
+    "GetScriptsRsp",
+    "GetShortcutsRsp",
+    "GetStaticIPRsp",
+    "GetSwapSizeRsp",
+    "GetTailscaleStatusRsp",
+    "GetTimeStatusRsp",
+    "GetTimeZoneRsp",
+    "GetUpdateServerRsp",
+    "GetVersionRsp",
+    "GetVirtualDeviceRsp",
+    "GetWebTitleRsp",
+    "GetWifiRsp",
+    "GpioType",
+    "HWFamily",
+    "HWVersion",
+    "HidMode",
+    "ImageEnabledRsp",
+    "ImageTransferProgress",
+    "ImageTransferProgressCallback",
+    "InputRegionMode",
+    "IsPasswordUpdatedRsp",
+    "LcdTimeFormat",
+    "LoginTailscaleRsp",
+    "ManualRegion",
+    "MountImageReq",
+    "MouseButton",
+    "MouseController",
+    "MouseJigglerMode",
+    "NanoKVMApiError",
+    "NanoKVMAuthenticationFailure",
+    "NanoKVMClient",
+    "NanoKVMError",
+    "NanoKVMInvalidResponseError",
+    "NanoKVMNotAuthenticatedError",
+    "NanoKVMNotSupportedError",
+    "NanoKVMPermissionError",
+    "OriginalResolution",
+    "PASTE_CHAR_MAP",
+    "PasteReq",
+    "RateControlMode",
+    "RefreshVirtualDeviceReq",
+    "RunScriptReq",
+    "RunScriptRsp",
+    "RunScriptType",
+    "ScanWifiRsp",
+    "ScreenSettingType",
+    "SessionController",
+    "SetAIControlModeReq",
+    "SetAIControlModeRsp",
+    "SetDNSReq",
+    "SetFpsReq",
+    "SetGopReq",
+    "SetGpioReq",
+    "SetHdmiCaptureReq",
+    "SetHdmiIdleTimeoutReq",
+    "SetHdmiPassthroughReq",
+    "SetHidModeReq",
+    "SetHostnameReq",
+    "SetInputRegionReq",
+    "SetLcdTimeFormatReq",
+    "SetLeaderKeyReq",
+    "SetLedStripReq",
+    "SetLowPowerReq",
+    "SetMCPConfigReq",
+    "SetMacNameReq",
+    "SetMemoryLimitReq",
+    "SetMenuBarConfigReq",
+    "SetMouseJigglerReq",
+    "SetOledReq",
+    "SetPreviewReq",
+    "SetRateControlModeReq",
+    "SetScreenReq",
+    "SetStaticIPReq",
+    "SetStreamModeReq",
+    "SetStreamQualityReq",
+    "SetSwapSizeReq",
+    "SetTimeZoneReq",
+    "SetUpdateServerReq",
+    "SetWebTitleReq",
+    "ShortcutKey",
+    "StatusImageRsp",
+    "StreamController",
+    "StreamMode",
+    "SwitchEdidReq",
+    "T",
+    "UpdateVirtualDeviceReq",
+    "UploadEdidRsp",
+    "UploadScriptRsp",
+    "VirtualDevice",
+    "WakeOnLANReq",
+    "obfuscate_password",
+    "require_application_version",
+    "require_hardware",
+]
+
 T = TypeVar("T", bound=BaseModel)
 
 _LOGGER = logging.getLogger(__name__)
@@ -247,53 +399,6 @@ class _ImageProgressPayload(Payload):
 
             if image_file.read(1):
                 raise OSError("image changed while it was being uploaded")
-
-
-class NanoKVMError(Exception):
-    """Base exception for NanoKVM client errors."""
-
-
-class NanoKVMNotAuthenticatedError(NanoKVMError):
-    """Exception for authentication errors."""
-
-
-class NanoKVMPermissionError(NanoKVMError):
-    """Exception for an authenticated request forbidden by the device."""
-
-    def __init__(
-        self,
-        message: str = "NanoKVM permission denied",
-        *,
-        status: int = 403,
-        method: str,
-        path: str,
-    ) -> None:
-        super().__init__(message)
-        self.status = status
-        self.method = method.upper()
-        self.path = path
-
-
-class NanoKVMApiError(NanoKVMError):
-    """Exception for API-level errors reported by the device."""
-
-    def __init__(self, message: str, code: int, msg: str, data: Any | None = None):
-        super().__init__(message)
-        self.code = code
-        self.msg = msg
-        self.data = data
-
-
-class NanoKVMAuthenticationFailure(NanoKVMError):
-    """Exception for authentication failure."""
-
-
-class NanoKVMInvalidResponseError(NanoKVMError):
-    """Exception for unexpected or unparsable responses."""
-
-
-class NanoKVMNotSupportedError(NanoKVMError):
-    """Feature not supported on this hardware variant."""
 
 
 F = TypeVar("F", bound=Callable[..., Coroutine[Any, Any, Any]])

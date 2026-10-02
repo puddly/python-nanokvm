@@ -17,6 +17,14 @@ import aiohttp
 from aiohttp import ClientResponse, ClientSession, Fingerprint, hdrs
 from pydantic import BaseModel, ValidationError
 
+from ..exceptions import (
+    NanoKVMApiError,
+    NanoKVMAuthenticationFailure,
+    NanoKVMError,
+    NanoKVMInvalidResponseError,
+    NanoKVMNotAuthenticatedError,
+    NanoKVMPermissionError,
+)
 from ..models.common import (
     ApiResponse,
     ApiResponseCode,
@@ -94,7 +102,6 @@ class SessionController:
         **kwargs: Any,
     ) -> AsyncGenerator[ClientResponse, None]:
         """Make an authenticated or unauthenticated API request."""
-        from ..client import NanoKVMNotAuthenticatedError, NanoKVMPermissionError
 
         client = self._client
         if expected_generation is not None:
@@ -151,8 +158,6 @@ class SessionController:
         try:
             return await response.json(content_type=None)
         except (json.JSONDecodeError, UnicodeDecodeError, ValidationError):
-            from ..client import NanoKVMInvalidResponseError
-
             raise NanoKVMInvalidResponseError(
                 "Invalid JSON response received"
             ) from None
@@ -206,7 +211,6 @@ class SessionController:
         response_model: type[T] | None = None,
     ) -> T | None:
         """Validate the shared NanoKVM response envelope."""
-        from ..client import NanoKVMApiError, NanoKVMInvalidResponseError
 
         try:
             api_response = ApiResponse[Any].model_validate(raw_response)
@@ -260,12 +264,7 @@ class SessionController:
         self, username: str, password_to_send: str, *, generation: int
     ) -> None:
         """Perform a single authentication attempt with the given password."""
-        from ..client import (
-            _SESSION_COOKIE_NAME,
-            NanoKVMApiError,
-            NanoKVMAuthenticationFailure,
-            NanoKVMInvalidResponseError,
-        )
+        from ..client import _SESSION_COOKIE_NAME
 
         client = self._client
         try:
@@ -318,7 +317,7 @@ class SessionController:
 
     async def authenticate(self, username: str, password: str) -> None:
         """Authenticate and store the session token."""
-        from ..client import NanoKVMAuthenticationFailure, obfuscate_password
+        from ..client import obfuscate_password
 
         client = self._client
         # A failed identity switch must never leave the previous account usable.
@@ -354,7 +353,6 @@ class SessionController:
 
     def check_session_generation(self, generation: int) -> None:
         """Reject an operation superseded by an authentication transition."""
-        from ..client import NanoKVMNotAuthenticatedError
 
         if generation != self._client._session_generation:
             raise NanoKVMNotAuthenticatedError(
@@ -426,12 +424,7 @@ class SessionController:
 
     async def uses_current_password_contract(self) -> bool:
         """Determine whether this device uses the 2.5.1 password contract."""
-        from ..client import (
-            _CURRENT_PASSWORD_MIN_NON_PRO_VERSION,
-            NanoKVMError,
-            NanoKVMNotAuthenticatedError,
-            _parse_version,
-        )
+        from ..client import _CURRENT_PASSWORD_MIN_NON_PRO_VERSION, _parse_version
 
         client = self._client
         if client._hw_version is None and client._token is None:

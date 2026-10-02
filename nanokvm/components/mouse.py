@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING
 import aiohttp
 from aiohttp import ClientSession, hdrs
 
+from ..exceptions import (
+    NanoKVMNotAuthenticatedError,
+    NanoKVMNotSupportedError,
+    NanoKVMPermissionError,
+)
 from ..models.common import HWFamily, MouseButton
 
 if TYPE_CHECKING:
@@ -44,11 +49,7 @@ class MouseController:
 
     async def get_ws(self) -> aiohttp.ClientWebSocketResponse:
         """Get or create WebSocket connection for mouse events."""
-        from ..client import (
-            _SESSION_COOKIE_NAME,
-            NanoKVMNotAuthenticatedError,
-            NanoKVMPermissionError,
-        )
+        from ..client import _SESSION_COOKIE_NAME
 
         client = self._client
         generation = client._session_generation
@@ -265,7 +266,6 @@ class MouseController:
 
     async def mouse_down(self, button: MouseButton = MouseButton.LEFT) -> None:
         """Press a mouse button."""
-        from ..client import NanoKVMNotSupportedError
 
         client = self._client
         if not await self.uses_binary_mouse_protocol():
