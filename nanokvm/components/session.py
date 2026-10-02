@@ -17,6 +17,7 @@ import aiohttp
 from aiohttp import ClientResponse, ClientSession, Fingerprint, hdrs
 from pydantic import BaseModel, ValidationError
 
+from ..compatibility import _parse_version
 from ..exceptions import (
     NanoKVMApiError,
     NanoKVMAuthenticationFailure,
@@ -36,12 +37,16 @@ from ..models.common import (
     LoginReq,
     LoginRsp,
 )
+from ..utils import obfuscate_password
 
 if TYPE_CHECKING:
     from ..client import NanoKVMClient
 
 
 T = TypeVar("T", bound=BaseModel)
+
+_SESSION_COOKIE_NAME = "nano-kvm-token"
+_CURRENT_PASSWORD_MIN_NON_PRO_VERSION = "2.5.1"
 
 
 class SessionController:
@@ -266,8 +271,6 @@ class SessionController:
         self, username: str, password_to_send: str, *, generation: int
     ) -> None:
         """Perform a single authentication attempt with the given password."""
-        from ..client import _SESSION_COOKIE_NAME
-
         client = self._client
         try:
             # NanoKVM 2.5.1 moved the session token from the JSON payload to a
@@ -319,8 +322,6 @@ class SessionController:
 
     async def authenticate(self, username: str, password: str) -> None:
         """Authenticate and store the session token."""
-        from ..client import obfuscate_password
-
         client = self._client
         # A failed identity switch must never leave the previous account usable.
         generation = await client._clear_local_session()
@@ -401,8 +402,6 @@ class SessionController:
 
     def clear_session_cookies(self) -> None:
         """Remove only session cookies whose scope overlaps this device's API."""
-        from ..client import _SESSION_COOKIE_NAME
-
         client = self._client
         if client._session is None:
             return
@@ -426,8 +425,6 @@ class SessionController:
 
     async def uses_current_password_contract(self) -> bool:
         """Determine whether this device uses the 2.5.1 password contract."""
-        from ..client import _CURRENT_PASSWORD_MIN_NON_PRO_VERSION, _parse_version
-
         client = self._client
         if client._hw_version is None and client._token is None:
             raise NanoKVMNotAuthenticatedError("Client is not authenticated")
@@ -465,8 +462,6 @@ class SessionController:
         current_password: str | None = None,
     ) -> None:
         """Change the KVM password for the authenticated account."""
-        from ..client import obfuscate_password
-
         client = self._client
         generation = client._session_generation
         if await client._uses_current_password_contract():

@@ -3,35 +3,41 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import (
-    AsyncGenerator,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Coroutine,
-)
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 import contextlib
-import functools
-import hashlib
 import logging
 from os import PathLike
-from pathlib import Path
-import re
 import ssl
 from typing import Any, Literal, TypeVar, overload
 
-import aiohttp
-from aiohttp import ClientResponse, ClientSession, Fingerprint
+from aiohttp import (
+    ClientResponse,
+    ClientSession,
+    ClientTimeout,
+    ClientWebSocketResponse,
+    Fingerprint,
+    FormData,
+)
 from PIL import Image
 from pydantic import BaseModel
 import yarl
 
+from .compatibility import (
+    F,
+    _version_at_least,
+    require_application_version,
+    require_hardware,
+)
 from .components.hid import PASTE_CHAR_MAP, HidController
 from .components.mouse import MouseController
 from .components.network import NetworkController
 from .components.services import ServiceController
 from .components.session import SessionController
-from .components.storage import ImageTransferProgressCallback, StorageController
+from .components.storage import (
+    ImageTransferProgressCallback,
+    StorageController,
+    _validate_sha256_argument,
+)
 from .components.stream import StreamController
 from .components.system import SystemController
 from .components.video import VideoController
@@ -173,7 +179,7 @@ from .models.pro import (
     SwitchEdidReq,
     UploadEdidRsp,
 )
-from .utils import _validate_sha256, obfuscate_password as _obfuscate_password
+from .utils import obfuscate_password
 
 __all__ = [
     "AIControlMode",
@@ -323,149 +329,6 @@ T = TypeVar("T", bound=BaseModel)
 
 _LOGGER = logging.getLogger(__name__)
 
-_SESSION_COOKIE_NAME = "nano-kvm-token"
-
-
-def obfuscate_password(password: str) -> str:
-    """Keep the password helper available from the client module."""
-    return _obfuscate_password(password)
-
-
-F = TypeVar("F", bound=Callable[..., Coroutine[Any, Any, Any]])
-
-_VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$")
-_BINARY_MOUSE_MIN_NON_PRO_VERSION = "2.3.2"
-_BINARY_MOUSE_MIN_PRO_VERSION = "1.2.6"
-_CURRENT_PASSWORD_MIN_NON_PRO_VERSION = "2.5.1"
-_OFFLINE_UPDATE_PACKAGE_RE = re.compile(r"^nanokvm_[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz$")
-_OFFLINE_UPDATE_TIMEOUT_SECONDS = 15 * 60
-
-
-def _parse_version(version: str) -> tuple[int, ...] | None:
-    """Parse simple semantic app versions; return None for custom/dev builds."""
-    match = _VERSION_RE.fullmatch(version.strip())
-    if match is None:
-        return None
-    return tuple(int(part) for part in match.group(1).split("."))
-
-
-def _version_at_least(version: str, minimum: str) -> bool:
-    """Return True when version is unknown or at least the requested version."""
-    parsed_version = _parse_version(version)
-    parsed_minimum = _parse_version(minimum)
-    if parsed_version is None or parsed_minimum is None:
-        return True
-
-    length = max(len(parsed_version), len(parsed_minimum))
-    normalized_version = parsed_version + (0,) * (length - len(parsed_version))
-    normalized_minimum = parsed_minimum + (0,) * (length - len(parsed_minimum))
-    return normalized_version >= normalized_minimum
-
-
-def _calculate_file_sha256(file_path: Path) -> str:
-    """Calculate a file checksum without loading it into memory."""
-    with file_path.open("rb") as file_obj:
-        return hashlib.file_digest(file_obj, "sha256").hexdigest()
-
-
-def _validate_sha256_argument(func: F) -> F:
-    """Validate a keyword-only ``sha256`` argument before version checks."""
-
-    @functools.wraps(func)
-    async def wrapper(self: NanoKVMClient, *args: Any, **kwargs: Any) -> Any:
-        _validate_sha256(kwargs.get("sha256"))
-        return await func(self, *args, **kwargs)
-
-    return wrapper  # type: ignore[return-value]
-
-
-def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
-    """Restrict a method to specific hardware versions or families."""
-
-    def decorator(func: F) -> F:
-        @functools.wraps(func)
-        async def wrapper(self: NanoKVMClient, *args: Any, **kwargs: Any) -> Any:
-            if self._hw_version is None:
-                raise NanoKVMError(
-                    f"{func.__name__} requires hardware detection; "
-                    f"call detect_hardware() first"
-                )
-            family = self._hw_version.family
-            matches = any(
-                (isinstance(requirement, HWFamily) and family is requirement)
-                or (
-                    isinstance(requirement, HWVersion)
-                    and self._hw_version is requirement
-                )
-                for requirement in requirements
-            )
-            if not matches:
-                allowed = ", ".join(requirement.value for requirement in requirements)
-                if all(
-                    isinstance(requirement, HWFamily) for requirement in requirements
-                ):
-                    detected = (
-                        family.value if family is not None else self._hw_version.value
-                    )
-                    message = (
-                        f"{func.__name__} requires hardware family: {allowed} "
-                        f"(detected: {detected})"
-                    )
-                else:
-                    message = (
-                        f"{func.__name__} requires hardware: {allowed} "
-                        f"(detected: {self._hw_version})"
-                    )
-                raise NanoKVMNotSupportedError(message)
-            return await func(self, *args, **kwargs)
-
-        return wrapper  # type: ignore[return-value]
-
-    return decorator
-
-
-def require_application_version(
-    *,
-    non_pro: str | None = None,
-    pro: str | None = None,
-) -> Callable[[F], F]:
-    """Decorator that restricts a method to minimum application versions."""
-
-    def decorator(func: F) -> F:
-        @functools.wraps(func)
-        async def wrapper(self: NanoKVMClient, *args: Any, **kwargs: Any) -> Any:
-            if self._hw_version is None:
-                if self._token is None:
-                    return await func(self, *args, **kwargs)
-                await self.detect_hardware()
-
-            assert self._hw_version is not None
-            minimum = pro if self._is_hardware_family(HWFamily.PRO) else non_pro
-            if minimum is None:
-                return await func(self, *args, **kwargs)
-
-            if self._application_version is None:
-                if self._token is None:
-                    return await func(self, *args, **kwargs)
-                await self.detect_versions()
-
-            if self._application_version is not None and not _version_at_least(
-                self._application_version, minimum
-            ):
-                hardware_family = (
-                    "Pro" if self._is_hardware_family(HWFamily.PRO) else "non-Pro"
-                )
-                raise NanoKVMNotSupportedError(
-                    f"{func.__name__} requires {hardware_family} application "
-                    f"version >= {minimum} (detected: {self._application_version})"
-                )
-
-            return await func(self, *args, **kwargs)
-
-        return wrapper  # type: ignore[return-value]
-
-    return decorator
-
 
 class NanoKVMClient:
     """Async API client for the NanoKVM."""
@@ -510,7 +373,7 @@ class NanoKVMClient:
         self._session_generation = 0
         self._request_timeout = request_timeout
         self._image_transfer_lock = asyncio.Lock()
-        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._ws: ClientWebSocketResponse | None = None
         self._ws_session: ClientSession | None = None
         self._ws_lock = asyncio.Lock()
         self._mouse_buttons = 0
@@ -591,7 +454,7 @@ class NanoKVMClient:
         path: str,
         *,
         authenticate: bool = True,
-        timeout: aiohttp.ClientTimeout | None = None,
+        timeout: ClientTimeout | None = None,
         expected_generation: int | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[ClientResponse, None]:
@@ -653,7 +516,7 @@ class NanoKVMClient:
         method: str,
         path: str,
         response_model: type[T],
-        data: aiohttp.FormData,
+        data: FormData,
         **kwargs: Any,
     ) -> T: ...
 
@@ -663,7 +526,7 @@ class NanoKVMClient:
         method: str,
         path: str,
         response_model: None = None,
-        data: aiohttp.FormData | None = None,
+        data: FormData | None = None,
         **kwargs: Any,
     ) -> None: ...
 
@@ -672,7 +535,7 @@ class NanoKVMClient:
         method: str,
         path: str,
         response_model: type[T] | None = None,
-        data: aiohttp.FormData | None = None,
+        data: FormData | None = None,
         **kwargs: Any,
     ) -> T | None:
         """Make API request with multipart/form data and parse JSON response."""
@@ -1644,11 +1507,11 @@ class NanoKVMClient:
         """Close and forget the current WebSocket connection."""
         await self._mouse.close_ws()
 
-    async def _invalidate_ws(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+    async def _invalidate_ws(self, ws: ClientWebSocketResponse) -> None:
         """Forget a failed WebSocket without closing a replacement connection."""
         await self._mouse.invalidate_ws(ws)
 
-    async def _get_ws(self) -> aiohttp.ClientWebSocketResponse:
+    async def _get_ws(self) -> ClientWebSocketResponse:
         """Get or create WebSocket connection for mouse events."""
         return await self._mouse.get_ws()
 
@@ -1680,7 +1543,7 @@ class NanoKVMClient:
 
     async def _send_ws(
         self,
-        send: Callable[[aiohttp.ClientWebSocketResponse], Awaitable[None]],
+        send: Callable[[ClientWebSocketResponse], Awaitable[None]],
     ) -> None:
         """Send one mouse message and invalidate the connection on failure."""
         await self._mouse.send_ws(send)

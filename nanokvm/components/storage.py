@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 import contextlib
+import functools
 import inspect
 from os import PathLike
 from pathlib import Path
@@ -16,6 +17,7 @@ import aiohttp
 from aiohttp import hdrs
 from aiohttp.payload import Payload
 
+from ..compatibility import F
 from ..exceptions import NanoKVMNotSupportedError
 from ..models.common import (
     DeleteImageReq,
@@ -108,6 +110,17 @@ class _ImageProgressPayload(Payload):
 
             if image_file.read(1):
                 raise OSError("image changed while it was being uploaded")
+
+
+def _validate_sha256_argument(func: F) -> F:
+    """Validate a keyword-only ``sha256`` argument before version checks."""
+
+    @functools.wraps(func)
+    async def wrapper(self: NanoKVMClient, *args: Any, **kwargs: Any) -> Any:
+        _validate_sha256(kwargs.get("sha256"))
+        return await func(self, *args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
 
 
 class StorageController:

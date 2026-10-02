@@ -116,7 +116,8 @@ async def test_password_change_cannot_switch_accounts_during_account_lookup() ->
         client._hw_version = HWVersion.PCIE
         client._application_version = "2.5.1"
         with patch(
-            "nanokvm.client.obfuscate_password", side_effect=lambda value: value
+            "nanokvm.components.session.obfuscate_password",
+            side_effect=lambda value: value,
         ):
             async with asyncio.timeout(2):
                 pending = asyncio.create_task(

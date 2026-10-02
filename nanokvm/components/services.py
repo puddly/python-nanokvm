@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import aiohttp
 from aiohttp import hdrs
 
+from ..compatibility import _version_at_least
 from ..models.common import (
     GetPreviewRsp,
     GetTailscaleStatusRsp,
@@ -35,31 +36,8 @@ if TYPE_CHECKING:
     from ..client import NanoKVMClient
 
 
-_VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$")
-
 _OFFLINE_UPDATE_PACKAGE_RE = re.compile(r"^nanokvm_[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz$")
 _OFFLINE_UPDATE_TIMEOUT_SECONDS = 15 * 60
-
-
-def _parse_version(version: str) -> tuple[int, ...] | None:
-    """Parse simple semantic app versions; return None for custom/dev builds."""
-    match = _VERSION_RE.fullmatch(version.strip())
-    if match is None:
-        return None
-    return tuple(int(part) for part in match.group(1).split("."))
-
-
-def _version_at_least(version: str, minimum: str) -> bool:
-    """Return True when version is unknown or at least the requested version."""
-    parsed_version = _parse_version(version)
-    parsed_minimum = _parse_version(minimum)
-    if parsed_version is None or parsed_minimum is None:
-        return True
-
-    length = max(len(parsed_version), len(parsed_minimum))
-    normalized_version = parsed_version + (0,) * (length - len(parsed_version))
-    normalized_minimum = parsed_minimum + (0,) * (length - len(parsed_minimum))
-    return normalized_version >= normalized_minimum
 
 
 def _calculate_file_sha256(file_path: Path) -> str:

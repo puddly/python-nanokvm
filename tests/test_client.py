@@ -15,9 +15,8 @@ from nanokvm.client import (
     NanoKVMClient,
     NanoKVMInvalidResponseError,
     NanoKVMNotSupportedError,
-    _parse_version,
-    _version_at_least,
 )
+from nanokvm.compatibility import _parse_version, _version_at_least
 from nanokvm.models import (
     ApiResponseCode,
     DiskType,

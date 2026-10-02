@@ -56,7 +56,7 @@ async def test_new_contract_sends_both_obfuscated_passwords_and_clears_session()
         with (
             aioresponses() as mocked,
             patch(
-                "nanokvm.client.obfuscate_password",
+                "nanokvm.components.session.obfuscate_password",
                 side_effect=lambda value: f"encoded-{value}",
             ),
         ):
@@ -140,7 +140,7 @@ async def test_legacy_contract_is_preserved_for_old_and_pro_devices(
         with (
             aioresponses() as mocked,
             patch(
-                "nanokvm.client.obfuscate_password",
+                "nanokvm.components.session.obfuscate_password",
                 side_effect=lambda value: f"encoded-{value}",
             ),
         ):
@@ -208,7 +208,7 @@ async def test_password_change_detects_hardware_and_version_when_needed() -> Non
         with (
             aioresponses() as mocked,
             patch(
-                "nanokvm.client.obfuscate_password",
+                "nanokvm.components.session.obfuscate_password",
                 side_effect=lambda value: f"encoded-{value}",
             ),
         ):
