@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import os
+import re
 import ssl
 import urllib.parse
 
@@ -85,3 +86,9 @@ async def async_fetch_remote_fingerprint(
     finally:
         writer.close()
         await writer.wait_closed()
+
+
+def _validate_sha256(sha256: str | None) -> None:
+    """Validate an optional SHA-256 checksum before device I/O."""
+    if sha256 is not None and re.fullmatch(r"[0-9a-fA-F]{64}", sha256) is None:
+        raise ValueError("sha256 must contain 64 hexadecimal characters")
