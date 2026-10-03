@@ -37,7 +37,7 @@ async def test_delayed_401_does_not_clear_replacement_session(
             if transport == "json":
                 await client.get_account()
             elif transport == "form":
-                await client._session.api_request_form(
+                await client._session.api_request_json(
                     "POST", "/upload", data=aiohttp.FormData()
                 )
             else:
@@ -92,7 +92,7 @@ async def test_delayed_form_success_is_rejected_after_reauthentication() -> None
                 payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
             )
             pending = asyncio.create_task(
-                client._session.api_request_form(
+                client._session.api_request_json(
                     "POST", "/upload", data=aiohttp.FormData()
                 )
             )

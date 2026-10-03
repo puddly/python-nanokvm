@@ -783,13 +783,14 @@ async def test_upload_post_disables_total_timeout_but_keeps_socket_timeouts(
         NanoKVMClient(base_url, token="synthetic-token", request_timeout=17) as client,
     ):
         _mark(client, hardware, "1.2.15" if hardware is HWVersion.PRO else "2.5.2")
-        original_request_form = client._session.api_request_form
+        original_request = client._session.api_request_json
 
         async def record_timeout(*args: Any, **kwargs: Any) -> Any:
-            captured_timeouts.append(kwargs.get("timeout"))
-            return await original_request_form(*args, **kwargs)
+            if "timeout" in kwargs:
+                captured_timeouts.append(kwargs["timeout"])
+            return await original_request(*args, **kwargs)
 
-        with patch.object(client._session, "api_request_form", new=record_timeout):
+        with patch.object(client._session, "api_request_json", new=record_timeout):
             await client.upload_image(image, chunk_size=1024)
 
     assert len(captured_timeouts) == 1
@@ -821,7 +822,7 @@ async def test_same_client_serializes_upload_preflight_and_transfer(
     ):
         _mark(client, HWVersion.PRO, "1.2.15")
         original_get_images = client.get_images
-        original_request_form = client._session.api_request_form
+        original_request = client._session.api_request_json
 
         async def count_get_images() -> models.GetImagesRsp:
             nonlocal get_images_calls
@@ -830,15 +831,15 @@ async def test_same_client_serializes_upload_preflight_and_transfer(
 
         async def pause_first_post(*args: Any, **kwargs: Any) -> Any:
             nonlocal post_calls
-            post_calls += 1
-            if post_calls == 1:
+            post_calls += args[0] == "POST"
+            if args[0] == "POST" and post_calls == 1:
                 first_post_started.set()
                 await release_first_post.wait()
-            return await original_request_form(*args, **kwargs)
+            return await original_request(*args, **kwargs)
 
         with (
             patch.object(client, "get_images", new=count_get_images),
-            patch.object(client._session, "api_request_form", new=pause_first_post),
+            patch.object(client._session, "api_request_json", new=pause_first_post),
         ):
             first_task = asyncio.create_task(client.upload_image(first_image))
             await first_post_started.wait()

@@ -213,7 +213,7 @@ class SessionController:
         method: str,
         path: str,
         response_model: type[T],
-        data: BaseModel | None = None,
+        data: BaseModel | FormData | None = None,
         **kwargs: Any,
     ) -> T: ...
 
@@ -223,7 +223,7 @@ class SessionController:
         method: str,
         path: str,
         response_model: None = None,
-        data: BaseModel | None = None,
+        data: BaseModel | FormData | None = None,
         **kwargs: Any,
     ) -> None: ...
 
@@ -232,58 +232,21 @@ class SessionController:
         method: str,
         path: str,
         response_model: type[T] | None = None,
-        data: BaseModel | None = None,
+        data: BaseModel | FormData | None = None,
         **kwargs: Any,
     ) -> T | None:
-        """Make an API request and parse its JSON response."""
+        """Make an API request and parse its JSON response.
+
+        A model is sent as a JSON body and ``FormData`` as multipart.
+        """
         _LOGGER.debug("Making API request: %s %s", method, path)
 
-        async with self.request(
-            method,
-            path,
-            json=(
-                data.model_dump(by_alias=True, exclude_none=True)
-                if data is not None
-                else None
-            ),
-            **kwargs,
-        ) as response:
-            raw_response = await self.read_json_response(response)
+        if isinstance(data, BaseModel):
+            kwargs["json"] = data.model_dump(by_alias=True, exclude_none=True)
+        elif data is not None:
+            kwargs["data"] = data
 
-        return self.validate_api_response(raw_response, response_model)
-
-    @overload
-    async def api_request_form(
-        self,
-        method: str,
-        path: str,
-        response_model: type[T],
-        data: FormData,
-        **kwargs: Any,
-    ) -> T: ...
-
-    @overload
-    async def api_request_form(
-        self,
-        method: str,
-        path: str,
-        response_model: None = None,
-        data: FormData | None = None,
-        **kwargs: Any,
-    ) -> None: ...
-
-    async def api_request_form(
-        self,
-        method: str,
-        path: str,
-        response_model: type[T] | None = None,
-        data: FormData | None = None,
-        **kwargs: Any,
-    ) -> T | None:
-        """Make a multipart/form request and parse its JSON response."""
-        _LOGGER.debug("Making API form request: %s %s", method, path)
-
-        async with self.request(method, path, data=data, **kwargs) as response:
+        async with self.request(method, path, **kwargs) as response:
             raw_response = await self.read_json_response(response)
 
         return self.validate_api_response(raw_response, response_model)
@@ -352,7 +315,7 @@ class SessionController:
 
         with upload_path.open("rb") as file_obj:
             form.add_field("file", file_obj, filename=upload_path.name)
-            return await self.api_request_form(
+            return await self.api_request_json(
                 hdrs.METH_POST,
                 path,
                 response_model=response_model,

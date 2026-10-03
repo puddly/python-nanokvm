@@ -302,7 +302,7 @@ class StorageController(Controller):
                             content_type="application/octet-stream",
                         )
                         upload_started = True
-                        await self._session.api_request_form(
+                        await self._session.api_request_json(
                             hdrs.METH_POST,
                             "/storage/image/upload",
                             data=form,
@@ -337,7 +337,7 @@ class StorageController(Controller):
             content_type="application/octet-stream",
         )
         headers = {"X-SHA256-Sum": sha256} if sha256 is not None else {}
-        await self._session.api_request_form(
+        await self._session.api_request_json(
             hdrs.METH_POST,
             "/download/file",
             data=form,
