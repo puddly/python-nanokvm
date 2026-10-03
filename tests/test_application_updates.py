@@ -126,7 +126,7 @@ async def test_update_application_offline_rejects_invalid_checksum_before_io(
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
         _mark_non_pro(client, application_version="2.3.1")
 
-        with aioresponses() as mocked, pytest.raises(ValueError, match="SHA-256"):
+        with aioresponses() as mocked, pytest.raises(ValueError, match="hexadecimal"):
             await client.update_application_offline(package, sha256=sha256)
 
         assert not mocked.requests
