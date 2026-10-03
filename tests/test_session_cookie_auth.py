@@ -19,6 +19,8 @@ from nanokvm.client import (
 )
 from nanokvm.models import HWVersion
 
+from .common import mark_detected
+
 _BASE_URL = "http://kvm.local/api/"
 _LOGIN_URL = f"{_BASE_URL}auth/login"
 _HARDWARE_URL = f"{_BASE_URL}vm/hardware"
@@ -309,8 +311,7 @@ async def test_authentication_closes_previous_websocket_before_replacing_identit
         side_effect=[old_ws, new_ws],
     ):
         async with NanoKVMClient(_BASE_URL, token="old-token") as client:
-            client._session._hw_version = HWVersion.PCIE
-            client._session._application_version = "2.5.1"
+            mark_detected(client, HWVersion.PCIE, "2.5.1")
             await client.mouse_move_rel(0.1, 0.0)
 
             with aioresponses() as mocked:

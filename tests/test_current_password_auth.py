@@ -9,6 +9,8 @@ import yarl
 from nanokvm.client import NanoKVMApiError, NanoKVMClient, NanoKVMError
 from nanokvm.models import HWVersion
 
+from .common import mark_detected
+
 _BASE_URL = "http://kvm.local/api/"
 _ACCOUNT_URL = f"{_BASE_URL}auth/account"
 _PASSWORD_URL = f"{_BASE_URL}auth/password"
@@ -36,8 +38,7 @@ def _prepare_client(
         token="session-token",
         use_password_obfuscation=True,
     )
-    client._session._hw_version = hardware
-    client._session._application_version = application
+    mark_detected(client, hardware, application)
     return client
 
 

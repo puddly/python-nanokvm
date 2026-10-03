@@ -15,6 +15,8 @@ from nanokvm.client import (
 )
 from nanokvm.models import HWVersion, MouseButton
 
+from .common import mark_detected
+
 
 @pytest.fixture
 async def client_with_mock_ws() -> AsyncGenerator[tuple[NanoKVMClient, AsyncMock], Any]:
@@ -28,8 +30,7 @@ async def client_with_mock_ws() -> AsyncGenerator[tuple[NanoKVMClient, AsyncMock
         async with NanoKVMClient(
             "http://localhost:8888/api/", token="test-token"
         ) as client:
-            client._session._hw_version = HWVersion.PCIE
-            client._session._application_version = "2.3.2"
+            mark_detected(client, HWVersion.PCIE, "2.3.2")
             yield client, mock_ws
 
 
@@ -51,8 +52,7 @@ async def legacy_client_with_mock_ws() -> AsyncGenerator[
         async with NanoKVMClient(
             "http://localhost:8888/api/", token="test-token"
         ) as client:
-            client._session._hw_version = HWVersion.PCIE
-            client._session._application_version = "2.3.1"
+            mark_detected(client, HWVersion.PCIE, "2.3.1")
             yield client, mock_ws
 
 
@@ -273,8 +273,7 @@ async def test_concurrent_first_mouse_use_creates_one_websocket() -> None:
         async with NanoKVMClient(
             "http://localhost:8888/api/", token="test-token"
         ) as client:
-            client._session._hw_version = HWVersion.PCIE
-            client._session._application_version = "2.3.2"
+            mark_detected(client, HWVersion.PCIE, "2.3.2")
             first = asyncio.create_task(client.mouse_move_rel(0.1, 0.0))
             await connect_started.wait()
             second = asyncio.create_task(client.mouse_move_rel(0.0, 0.1))
@@ -298,8 +297,7 @@ async def test_mouse_send_reconnects_after_transport_failure() -> None:
         async with NanoKVMClient(
             "http://localhost:8888/api/", token="test-token"
         ) as client:
-            client._session._hw_version = HWVersion.PCIE
-            client._session._application_version = "2.3.2"
+            mark_detected(client, HWVersion.PCIE, "2.3.2")
             with pytest.raises(ConnectionResetError):
                 await client.mouse_move_rel(0.1, 0.0)
             await client.mouse_move_rel(0.1, 0.0)
@@ -321,8 +319,7 @@ async def test_legacy_mouse_send_reconnects_after_transport_failure() -> None:
         async with NanoKVMClient(
             "http://localhost:8888/api/", token="test-token"
         ) as client:
-            client._session._hw_version = HWVersion.PCIE
-            client._session._application_version = "2.3.1"
+            mark_detected(client, HWVersion.PCIE, "2.3.1")
             with pytest.raises(ConnectionResetError):
                 await client.mouse_move_rel(0.1, 0.0)
             await client.mouse_move_rel(0.1, 0.0)
@@ -376,8 +373,7 @@ async def test_pro_mouse_uses_binary_protocol(
 ) -> None:
     """Pro application versions from 1.2.6 use binary HID reports."""
     client, mock_ws = client_with_mock_ws
-    client._session._hw_version = HWVersion.PRO
-    client._session._application_version = "1.2.6"
+    mark_detected(client, HWVersion.PRO, "1.2.6")
 
     await client.mouse_move_abs(0.5, 0.5)
 
@@ -389,8 +385,7 @@ async def test_legacy_pro_mouse_uses_json_protocol(
 ) -> None:
     """Pro application versions before 1.2.6 use the legacy JSON protocol."""
     client, mock_ws = legacy_client_with_mock_ws
-    client._session._hw_version = HWVersion.PRO
-    client._session._application_version = "1.2.5"
+    mark_detected(client, HWVersion.PRO, "1.2.5")
 
     await client.mouse_move_abs(0.5, 0.5)
 
@@ -409,8 +404,7 @@ async def test_context_manager_cleanup() -> None:
         async with NanoKVMClient(
             "http://localhost:8888/api/", token="test-token"
         ) as client:
-            client._session._hw_version = HWVersion.PCIE
-            client._session._application_version = "2.3.2"
+            mark_detected(client, HWVersion.PCIE, "2.3.2")
             await client.mouse_move_abs(0.0, 0.0)
             assert client._session._ws is not None
             assert client._session._http_session is not None
@@ -462,8 +456,7 @@ async def test_failed_press_does_not_press_on_next_movement(failure: str) -> Non
         expected = aiohttp.ClientConnectionError
     ws = AsyncMock(closed=False)
     async with NanoKVMClient("http://kvm.local/api/", token="reader") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.5.1"
+        mark_detected(client, HWVersion.PCIE, "2.5.1")
         with patch(
             "aiohttp.ClientSession.ws_connect", AsyncMock(side_effect=[error, ws])
         ):

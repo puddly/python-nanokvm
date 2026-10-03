@@ -13,6 +13,8 @@ import pytest
 from nanokvm.client import NanoKVMClient, NanoKVMNotAuthenticatedError
 from nanokvm.models import HWVersion
 
+from .common import mark_detected
+
 
 def _ok(data: object = None) -> web.Response:
     return web.json_response({"code": 0, "msg": "ok", "data": data})
@@ -112,8 +114,7 @@ async def test_password_change_cannot_switch_accounts_during_account_lookup() ->
     app.router.add_post("/api/auth/login", login)
     app.router.add_post("/api/auth/password", password)
     async with _server(app) as url, NanoKVMClient(url, token="alice") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.5.1"
+        mark_detected(client, HWVersion.PCIE, "2.5.1")
         with patch(
             "nanokvm.components.session.obfuscate_password",
             side_effect=lambda value: value,

@@ -21,6 +21,8 @@ from nanokvm.models import (
     SetAIControlModeRsp,
 )
 
+from .common import mark_detected
+
 _BASE_URL = "http://localhost:8888/api/"
 _API_KEY = "synthetic-mcp-key"
 
@@ -92,8 +94,7 @@ def test_set_control_mode_model_normalizes_plain_and_wrapped_responses() -> None
 async def test_mcp_management_routes_and_payloads() -> None:
     """Config reads, toggles and key regeneration use the 2.5.0 routes."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.5.0"
+        mark_detected(client, HWVersion.PCIE, "2.5.0")
 
         with aioresponses() as mocked:
             mocked.get(
@@ -130,8 +131,7 @@ async def test_mcp_config_response_does_not_log_api_key(
     """Successful config parsing never writes the MCP credential to logs."""
     caplog.set_level(logging.DEBUG, logger="nanokvm")
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.5.0"
+        mark_detected(client, HWVersion.PCIE, "2.5.0")
 
         with aioresponses() as mocked:
             mocked.get(
@@ -147,8 +147,7 @@ async def test_mcp_config_response_does_not_log_api_key(
 async def test_ai_control_routes_parse_plain_and_wrapped_results() -> None:
     """Status and PUT mode handle both official success payload shapes."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.5.2"
+        mark_detected(client, HWVersion.PCIE, "2.5.2")
 
         with aioresponses() as mocked:
             mocked.get(
@@ -220,8 +219,7 @@ async def test_mcp_methods_reject_unsupported_devices_before_io(
 ) -> None:
     """MCP management is limited to non-Pro application 2.5.0 and later."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = hardware
-        client._session._application_version = version
+        mark_detected(client, hardware, version)
         args: tuple[object, ...] = ()
         if method_name == "set_mcp_enabled":
             args = (True,)
@@ -240,8 +238,7 @@ async def test_mcp_methods_reject_unsupported_devices_before_io(
 async def test_mcp_permission_error_does_not_expose_api_key() -> None:
     """A management 403 uses the shared permission error without credentials."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.5.1"
+        mark_detected(client, HWVersion.PCIE, "2.5.1")
 
         with aioresponses() as mocked:
             mocked.get(f"{_BASE_URL}mcp/config", status=403, body=b'"forbidden"')
@@ -255,8 +252,7 @@ async def test_mcp_permission_error_does_not_expose_api_key() -> None:
 async def test_control_error_message_alias_remains_api_error() -> None:
     """The control router's `message` envelope field remains an API error."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.5.0"
+        mark_detected(client, HWVersion.PCIE, "2.5.0")
 
         with aioresponses() as mocked:
             mocked.put(

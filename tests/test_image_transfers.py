@@ -22,6 +22,8 @@ from nanokvm.client import (
 )
 from nanokvm.models import DownloadStatus, HWVersion, StatusImageRsp
 
+from .common import mark_detected
+
 
 def _status(status: DownloadStatus) -> StatusImageRsp:
     return StatusImageRsp(
@@ -135,11 +137,6 @@ async def _device_server() -> AsyncIterator[tuple[str, dict[str, Any]]]:
         await runner.cleanup()
 
 
-def _mark(client: NanoKVMClient, hardware: HWVersion, version: str) -> None:
-    client._session._hw_version = hardware
-    client._session._application_version = version
-
-
 async def test_download_image_accepts_sha256_and_keeps_legacy_route() -> None:
     """Non-Pro checksum downloads use sha256sum while calls without it stay stable."""
     remote_url = "https://images.example.test/synthetic.iso"
@@ -149,7 +146,7 @@ async def test_download_image_accepts_sha256_and_keeps_legacy_route() -> None:
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PCIE, "2.5.2")
+        mark_detected(client, HWVersion.PCIE, "2.5.2")
         await client.download_image(remote_url, sha256=checksum)
         await client.download_image(remote_url)
 
@@ -168,7 +165,7 @@ async def test_download_image_rejects_checksum_on_pro_before_endpoint_io() -> No
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
         with pytest.raises(NanoKVMNotSupportedError):
             await client.download_image(
                 "https://images.example.test/synthetic.iso", sha256="a" * 64
@@ -183,7 +180,7 @@ async def test_download_image_rejects_checksum_below_250_before_endpoint_io() ->
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PCIE, "2.4.9")
+        mark_detected(client, HWVersion.PCIE, "2.4.9")
         with pytest.raises(NanoKVMNotSupportedError):
             await client.download_image(
                 "https://images.example.test/synthetic.iso", sha256="a" * 64
@@ -201,7 +198,7 @@ async def test_download_image_rejects_malformed_sha256_before_io(
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PCIE, "2.5.2")
+        mark_detected(client, HWVersion.PCIE, "2.5.2")
         with pytest.raises(ValueError, match="64 hexadecimal"):
             await client.download_image(
                 "https://images.example.test/synthetic.iso", sha256=sha256
@@ -216,7 +213,7 @@ async def test_cancel_image_download_uses_non_pro_250_route() -> None:
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PCIE, "2.5.0")
+        mark_detected(client, HWVersion.PCIE, "2.5.0")
         await client.cancel_image_download()
 
     assert [(call["method"], call["path"]) for call in state["calls"]] == [
@@ -306,7 +303,7 @@ async def test_non_pro_upload_streams_file_and_reports_sync_progress(
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PCIE, "2.5.2")
+        mark_detected(client, HWVersion.PCIE, "2.5.2")
 
         def progress(item: models.ImageTransferProgress) -> None:
             events.append(item)
@@ -352,7 +349,7 @@ async def test_pro_upload_sends_chunks_and_accepts_async_progress(
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         state["pro_images"] = [f"/sdcard/{image.name}"]
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
 
         async def progress(item: models.ImageTransferProgress) -> None:
             events.append(item)
@@ -428,7 +425,7 @@ async def test_pro_upload_fills_chunks_after_partial_raw_reads(
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
         await client.upload_image(image, chunk_size=3)
 
     assert state["accepted_uploads"] == [b"abc", b"def"]
@@ -444,7 +441,7 @@ async def test_pro_upload_rejects_existing_basename_before_post(tmp_path: Path) 
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         state["pro_images"] = ["/data/occupied.iso"]
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
         with pytest.raises(FileExistsError):
             await client.upload_image(image, chunk_size=4)
 
@@ -465,7 +462,7 @@ async def test_non_pro_upload_rejects_existing_basename_by_default(
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         state["pro_images"] = ["/data/occupied.iso"]
-        _mark(client, HWVersion.PCIE, "2.5.2")
+        mark_detected(client, HWVersion.PCIE, "2.5.2")
         with pytest.raises(FileExistsError):
             await client.upload_image(image)
 
@@ -486,7 +483,7 @@ async def test_non_pro_upload_can_explicitly_replace_existing_image(
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         state["pro_images"] = ["/data/occupied.iso"]
-        _mark(client, HWVersion.PCIE, "2.5.2")
+        mark_detected(client, HWVersion.PCIE, "2.5.2")
         await client.upload_image(image, overwrite=True)
 
     assert [(call["method"], call["path"]) for call in state["calls"]] == [
@@ -507,7 +504,7 @@ async def test_pro_upload_deletes_existing_image_only_with_explicit_overwrite(
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         state["pro_images"] = ["/data/occupied.iso"]
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
         await client.upload_image(image, chunk_size=4, overwrite=True)
 
     assert [(call["method"], call["path"]) for call in state["calls"]] == [
@@ -539,7 +536,7 @@ async def test_pro_upload_rejects_unlistable_filename_before_io(
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
         with pytest.raises(ValueError, match=message):
             await client.upload_image(image, chunk_size=4)
 
@@ -566,7 +563,7 @@ async def test_pro_upload_detects_source_truncation_or_growth_between_chunks(
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         state["after_pro_upload"] = lambda: image.write_bytes(replacement)
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
         with pytest.raises(OSError, match="image changed"):
             await client.upload_image(
                 image,
@@ -594,7 +591,7 @@ async def test_pro_upload_failure_cleans_partial_remote_image(tmp_path: Path) ->
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         state["upload_http_statuses"] = [200, 500]
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
         with pytest.raises(aiohttp.ClientResponseError):
             await client.upload_image(image, chunk_size=2)
 
@@ -620,7 +617,7 @@ async def test_pro_upload_callback_failure_cleans_partial_and_preserves_error(
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         state["http_status"]["/api/storage/image/delete"] = 500
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
 
         def progress(item: models.ImageTransferProgress) -> None:
             events.append(item)
@@ -650,7 +647,7 @@ async def test_pro_upload_cancellation_cleans_partial_remote_image(
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
 
         async def progress(item: models.ImageTransferProgress) -> None:
             if item.bytes_transferred == 2:
@@ -682,7 +679,7 @@ async def test_empty_upload_is_rejected_before_device_io(
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
         with pytest.raises(ValueError, match="must not be empty"):
             await client.upload_image(image, progress_callback=events.append)
 
@@ -714,7 +711,7 @@ async def test_upload_rejects_unsupported_hardware_or_checksum_before_io(
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         if hardware is not None:
-            _mark(client, hardware, version)
+            mark_detected(client, hardware, version)
         with pytest.raises(NanoKVMNotSupportedError):
             await client.upload_image(image, sha256=sha256)
 
@@ -732,7 +729,7 @@ async def test_upload_validates_path_chunk_size_and_sha_before_io(
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PCIE, "2.5.2")
+        mark_detected(client, HWVersion.PCIE, "2.5.2")
         with pytest.raises(FileNotFoundError):
             await client.upload_image(tmp_path / "missing.iso")
         with pytest.raises(ValueError, match="regular file"):
@@ -761,7 +758,7 @@ async def test_non_pro_upload_rejects_unaccepted_filenames_before_io(
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PCIE, "2.5.2")
+        mark_detected(client, HWVersion.PCIE, "2.5.2")
         with pytest.raises(ValueError):
             await client.upload_image(image)
 
@@ -782,7 +779,9 @@ async def test_upload_post_disables_total_timeout_but_keeps_socket_timeouts(
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token", request_timeout=17) as client,
     ):
-        _mark(client, hardware, "1.2.15" if hardware is HWVersion.PRO else "2.5.2")
+        mark_detected(
+            client, hardware, "1.2.15" if hardware is HWVersion.PRO else "2.5.2"
+        )
         original_request = client._session.api_request_json
 
         async def record_timeout(*args: Any, **kwargs: Any) -> Any:
@@ -820,7 +819,7 @@ async def test_same_client_serializes_upload_preflight_and_transfer(
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PRO, "1.2.15")
+        mark_detected(client, HWVersion.PRO, "1.2.15")
         original_get_images = client.get_images
         original_request = client._session.api_request_json
 
@@ -873,7 +872,7 @@ async def test_image_upload_403_keeps_session_controller_error_classification(
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         state["http_status"]["/api/download/file"] = 403
-        _mark(client, HWVersion.PCIE, "2.5.2")
+        mark_detected(client, HWVersion.PCIE, "2.5.2")
         with pytest.raises(NanoKVMPermissionError) as exc_info:
             await client.upload_image(image)
 
@@ -894,7 +893,7 @@ async def test_rejected_non_pro_upload_does_not_report_100_percent(
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
         state["http_status"]["/api/download/file"] = 500
-        _mark(client, HWVersion.PCIE, "2.5.2")
+        mark_detected(client, HWVersion.PCIE, "2.5.2")
         with pytest.raises(aiohttp.ClientResponseError):
             await client.upload_image(
                 image, chunk_size=2, progress_callback=events.append
@@ -916,7 +915,7 @@ async def test_progress_callback_failure_stops_upload_without_final_update(
         _device_server() as (base_url, state),
         NanoKVMClient(base_url, token="synthetic-token") as client,
     ):
-        _mark(client, HWVersion.PCIE, "2.5.2")
+        mark_detected(client, HWVersion.PCIE, "2.5.2")
 
         def progress(item: models.ImageTransferProgress) -> None:
             events.append(item)

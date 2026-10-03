@@ -12,6 +12,8 @@ from nanokvm.client import (
 )
 from nanokvm.models import GetKeyboardLedStatusRsp, HWVersion
 
+from .common import mark_detected
+
 _BASE_URL = "http://localhost:8888/api/"
 
 
@@ -25,8 +27,7 @@ async def test_get_keyboard_led_status_parses_the_device_response(
         _BASE_URL,
         token="synthetic-token",
     ) as client:
-        client._session._hw_version = hardware
-        client._session._application_version = application
+        mark_detected(client, hardware, application)
         with aioresponses() as mocked:
             mocked.get(
                 f"{_BASE_URL}hid/leds",
@@ -66,8 +67,7 @@ async def test_keyboard_led_status_rejects_unsupported_devices_without_request(
 ) -> None:
     """Unsupported devices fail locally instead of requesting a missing route."""
     async with NanoKVMClient(_BASE_URL, token="synthetic-token") as client:
-        client._session._hw_version = hardware
-        client._session._application_version = application
+        mark_detected(client, hardware, application)
         with aioresponses() as mocked:
             with pytest.raises(NanoKVMNotSupportedError):
                 await client.get_keyboard_led_status()
@@ -111,8 +111,7 @@ async def test_get_keyboard_led_status_preserves_permission_errors() -> None:
         _BASE_URL,
         token="synthetic-token",
     ) as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.5.1"
+        mark_detected(client, HWVersion.PCIE, "2.5.1")
         with aioresponses() as mocked:
             mocked.get(f"{_BASE_URL}hid/leds", status=403, body=b'"forbidden"')
 
