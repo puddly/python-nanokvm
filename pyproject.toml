@@ -27,9 +27,7 @@ exclude = ["tests", "tests.*"]
 
 [project.optional-dependencies]
 testing = [
-    "tomli",
     "coverage[toml]",
-    "cryptography",
     "pytest",
     "pytest-xdist",
     "pytest-asyncio",
