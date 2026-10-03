@@ -24,7 +24,7 @@ class MouseController:
         self._session = session
         self._logger = logger
 
-    async def uses_binary_mouse_protocol(self) -> bool:
+    async def _uses_binary_mouse_protocol(self) -> bool:
         """Select the mouse wire format supported by the connected device."""
         session = self._session
         if session._hw_version is None:
@@ -50,18 +50,18 @@ class MouseController:
         )
 
     @staticmethod
-    def clamp(value: int, minimum: int, maximum: int) -> int:
+    def _clamp(value: int, minimum: int, maximum: int) -> int:
         return max(minimum, min(maximum, value))
 
     @classmethod
-    def relative_value(cls, value: float) -> int:
-        return cls.clamp(round(value * 127), -127, 127)
+    def _relative_value(cls, value: float) -> int:
+        return cls._clamp(round(value * 127), -127, 127)
 
     @classmethod
-    def absolute_value(cls, value: float) -> int:
-        return cls.clamp(round(max(0.0, min(1.0, value)) * 32767), 0, 32767)
+    def _absolute_value(cls, value: float) -> int:
+        return cls._clamp(round(max(0.0, min(1.0, value)) * 32767), 0, 32767)
 
-    def absolute_report(self, wheel: int = 0) -> bytes:
+    def _absolute_report(self, wheel: int = 0) -> bytes:
         session = self._session
         x, y = session._mouse_abs_position
         return bytes(
@@ -71,28 +71,28 @@ class MouseController:
                 (x >> 8) & 0xFF,
                 y & 0xFF,
                 (y >> 8) & 0xFF,
-                self.clamp(wheel, -127, 127) & 0xFF,
+                self._clamp(wheel, -127, 127) & 0xFF,
             )
         )
 
-    def relative_report(self, dx: int = 0, dy: int = 0, wheel: int = 0) -> bytes:
+    def _relative_report(self, dx: int = 0, dy: int = 0, wheel: int = 0) -> bytes:
         session = self._session
         return bytes(
             (
                 session._mouse_buttons,
-                self.clamp(dx, -127, 127) & 0xFF,
-                self.clamp(dy, -127, 127) & 0xFF,
-                self.clamp(wheel, -127, 127) & 0xFF,
+                self._clamp(dx, -127, 127) & 0xFF,
+                self._clamp(dy, -127, 127) & 0xFF,
+                self._clamp(wheel, -127, 127) & 0xFF,
             )
         )
 
-    def report_for_current_mode(self, *, wheel: int = 0) -> bytes:
+    def _report_for_current_mode(self, *, wheel: int = 0) -> bytes:
         """Build a button or wheel report for the active mouse mode."""
         if self._session._mouse_mode == "absolute":
-            return self.absolute_report(wheel)
-        return self.relative_report(wheel=wheel)
+            return self._absolute_report(wheel)
+        return self._relative_report(wheel=wheel)
 
-    async def send_ws(
+    async def _send_ws(
         self,
         send: Callable[[aiohttp.ClientWebSocketResponse], Awaitable[None]],
     ) -> None:
@@ -104,11 +104,11 @@ class MouseController:
             await self._session.invalidate_ws(ws)
             raise
 
-    async def send_mouse_report(self, report: bytes) -> None:
+    async def _send_mouse_report(self, report: bytes) -> None:
         """Send a binary NanoKVM mouse event and HID report."""
-        await self.send_ws(lambda ws: ws.send_bytes(bytes((2,)) + report))
+        await self._send_ws(lambda ws: ws.send_bytes(bytes((2,)) + report))
 
-    async def send_legacy_mouse_event(
+    async def _send_legacy_mouse_event(
         self, event_type: int, button_state: int, x: float, y: float
     ) -> None:
         """Send a mouse event using the pre-2.3.2 JSON wire format."""
@@ -116,8 +116,8 @@ class MouseController:
             x_value = int(x * 32768)
             y_value = int(y * 32768)
         elif event_type == 3:
-            x_value = self.relative_value(x)
-            y_value = self.relative_value(y)
+            x_value = self._relative_value(x)
+            y_value = self._relative_value(y)
         elif event_type == 4:
             x_value = 0
             y_value = 1 if y > 0 else -1 if y < 0 else 0
@@ -127,7 +127,7 @@ class MouseController:
 
         message = [2, event_type, button_state, x_value, y_value]
         self._logger.debug("Sending legacy mouse event: %s", message)
-        await self.send_ws(lambda ws: ws.send_json(message))
+        await self._send_ws(lambda ws: ws.send_json(message))
 
     async def mouse_move_abs(self, x: float, y: float) -> None:
         """Move mouse to absolute position.
@@ -137,13 +137,13 @@ class MouseController:
             y: Y coordinate (0.0 to 1.0, top to bottom).
         """
         session = self._session
-        if not await self.uses_binary_mouse_protocol():
-            await self.send_legacy_mouse_event(2, 0, x, y)
+        if not await self._uses_binary_mouse_protocol():
+            await self._send_legacy_mouse_event(2, 0, x, y)
             return
 
         session._mouse_mode = "absolute"
-        session._mouse_abs_position = (self.absolute_value(x), self.absolute_value(y))
-        await self.send_mouse_report(self.absolute_report())
+        session._mouse_abs_position = (self._absolute_value(x), self._absolute_value(y))
+        await self._send_mouse_report(self._absolute_report())
 
     async def mouse_move_rel(self, dx: float, dy: float) -> None:
         """Move mouse relative to current position.
@@ -153,13 +153,13 @@ class MouseController:
             dy: Vertical movement (-1.0 to 1.0).
         """
         session = self._session
-        if not await self.uses_binary_mouse_protocol():
-            await self.send_legacy_mouse_event(3, 0, dx, dy)
+        if not await self._uses_binary_mouse_protocol():
+            await self._send_legacy_mouse_event(3, 0, dx, dy)
             return
 
         session._mouse_mode = "relative"
-        await self.send_mouse_report(
-            self.relative_report(self.relative_value(dx), self.relative_value(dy))
+        await self._send_mouse_report(
+            self._relative_report(self._relative_value(dx), self._relative_value(dy))
         )
 
     async def mouse_down(self, button: MouseButton = MouseButton.LEFT) -> None:
@@ -172,21 +172,21 @@ class MouseController:
         """
 
         session = self._session
-        if not await self.uses_binary_mouse_protocol():
+        if not await self._uses_binary_mouse_protocol():
             if button in (MouseButton.BACK, MouseButton.FORWARD):
                 raise NanoKVMNotSupportedError(
                     "Back and Forward mouse buttons require the binary mouse protocol"
                 )
-            await self.send_legacy_mouse_event(1, int(button), 0.0, 0.0)
+            await self._send_legacy_mouse_event(1, int(button), 0.0, 0.0)
             return
 
         previous_buttons = session._mouse_buttons
         generation = session._session_generation
         session._mouse_buttons |= int(button)
         pressed_buttons = session._mouse_buttons
-        report = self.report_for_current_mode()
+        report = self._report_for_current_mode()
         try:
-            await self.send_mouse_report(report)
+            await self._send_mouse_report(report)
         except BaseException:
             # Do not turn an unsent press into a drag on the next movement, or
             # overwrite state changed by a newer session or another mouse call.
@@ -203,13 +203,13 @@ class MouseController:
         The report releases all currently held buttons.
         """
         session = self._session
-        if not await self.uses_binary_mouse_protocol():
-            await self.send_legacy_mouse_event(0, 0, 0.0, 0.0)
+        if not await self._uses_binary_mouse_protocol():
+            await self._send_legacy_mouse_event(0, 0, 0.0, 0.0)
             return
 
         session._mouse_buttons = 0
-        report = self.report_for_current_mode()
-        await self.send_mouse_report(report)
+        report = self._report_for_current_mode()
+        await self._send_mouse_report(report)
 
     async def mouse_click(
         self,
@@ -249,11 +249,11 @@ class MouseController:
             dy: Vertical scroll amount (-1.0 to 1.0); positive scrolls up and
                 negative scrolls down.
         """
-        if not await self.uses_binary_mouse_protocol():
-            await self.send_legacy_mouse_event(4, 0, dx, dy)
+        if not await self._uses_binary_mouse_protocol():
+            await self._send_legacy_mouse_event(4, 0, dx, dy)
             return
 
         del dx  # NanoKVM's boot mouse report has a single vertical wheel byte.
-        wheel = self.relative_value(dy)
-        report = self.report_for_current_mode(wheel=wheel)
-        await self.send_mouse_report(report)
+        wheel = self._relative_value(dy)
+        report = self._report_for_current_mode(wheel=wheel)
+        await self._send_mouse_report(report)

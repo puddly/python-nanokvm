@@ -21,7 +21,7 @@ class StreamController:
         self._session = session
         self._logger = logger
 
-    def parse_jpeg_from_bytes(self, data: bytes) -> Image.Image:
+    def _parse_jpeg_from_bytes(self, data: bytes) -> Image.Image:
         """Parse a JPEG image from bytes."""
         with Image.open(io.BytesIO(data), formats=["JPEG"]) as image:
             image.load()
@@ -48,7 +48,7 @@ class StreamController:
 
                 # Process image in executor to avoid blocking async loop.
                 image = await loop.run_in_executor(
-                    None, self.parse_jpeg_from_bytes, data
+                    None, self._parse_jpeg_from_bytes, data
                 )
                 session.check_session_generation(generation)
                 yield image

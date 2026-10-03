@@ -76,7 +76,7 @@ def test_current_mouse_report_uses_selected_mode(
     client._session._mouse_buttons = 3
     client._session._mouse_abs_position = (0x1234, 0x5678)
 
-    assert client._mouse.report_for_current_mode(wheel=wheel) == expected
+    assert client._report_for_current_mode(wheel=wheel) == expected
 
 
 async def test_mouse_move_abs_sends_hid_report(
@@ -346,7 +346,7 @@ async def test_mouse_send_helper_invalidates_failed_websocket() -> None:
             raise ConnectionResetError()
 
         with pytest.raises(ConnectionResetError):
-            await client._mouse.send_ws(send)
+            await client._send_ws(send)
 
     assert client._session._ws is None
     ws.close.assert_awaited_once()
