@@ -27,7 +27,7 @@ from aiohttp import (
 from pydantic import BaseModel, ValidationError
 import yarl
 
-from ..compatibility import _parse_version
+from ..compatibility import _parse_version, _version_at_least
 from ..exceptions import (
     NanoKVMApiError,
     NanoKVMAuthenticationFailure,
@@ -618,6 +618,32 @@ class SessionController:
     def is_hardware_family(self, family: HWFamily) -> bool:
         """Return whether the detected hardware belongs to ``family``."""
         return self._hw_version is not None and self._hw_version.family is family
+
+    async def application_version_at_least(
+        self, *, non_pro: str | None = None, pro: str | None = None
+    ) -> bool:
+        """Return whether the device meets its family's minimum application version.
+
+        Unknown hardware or versions are detected when a token is available and
+        are otherwise treated as supported.
+        """
+        if self._hw_version is None:
+            if self._token is None:
+                return True
+            await self.detect_hardware()
+
+        minimum = pro if self.is_hardware_family(HWFamily.PRO) else non_pro
+        if minimum is None:
+            return True
+
+        if self._application_version is None:
+            if self._token is None:
+                return True
+            await self.detect_versions()
+
+        return self._application_version is None or _version_at_least(
+            self._application_version, minimum
+        )
 
     async def detect_hardware(self) -> None:
         """Detect and store the hardware version."""

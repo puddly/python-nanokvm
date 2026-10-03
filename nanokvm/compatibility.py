@@ -103,32 +103,13 @@ def require_application_version(
     def decorator(func: F) -> F:
         @functools.wraps(func)
         async def wrapper(self: SessionProvider, *args: Any, **kwargs: Any) -> Any:
-            if self._session._hw_version is None:
-                if self._session._token is None:
-                    return await func(self, *args, **kwargs)
-                await self._session.detect_hardware()
-
-            assert self._session._hw_version is not None
-            minimum = pro if self._session.is_hardware_family(HWFamily.PRO) else non_pro
-            if minimum is None:
-                return await func(self, *args, **kwargs)
-
-            if self._session._application_version is None:
-                if self._session._token is None:
-                    return await func(self, *args, **kwargs)
-                await self._session.detect_versions()
-
-            if self._session._application_version is not None and not _version_at_least(
-                self._session._application_version, minimum
+            if not await self._session.application_version_at_least(
+                non_pro=non_pro, pro=pro
             ):
-                hardware_family = (
-                    "Pro"
-                    if self._session.is_hardware_family(HWFamily.PRO)
-                    else "non-Pro"
-                )
+                is_pro = self._session.is_hardware_family(HWFamily.PRO)
                 raise NanoKVMNotSupportedError(
-                    f"{func.__name__} requires {hardware_family} application "
-                    f"version >= {minimum} "
+                    f"{func.__name__} requires {'Pro' if is_pro else 'non-Pro'} "
+                    f"application version >= {pro if is_pro else non_pro} "
                     f"(detected: {self._session._application_version})"
                 )
 

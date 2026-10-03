@@ -17,12 +17,7 @@ import aiohttp
 from aiohttp import hdrs
 from aiohttp.payload import Payload
 
-from ..compatibility import (
-    F,
-    _version_at_least,
-    require_application_version,
-    require_hardware,
-)
+from ..compatibility import F, require_application_version, require_hardware
 from ..exceptions import NanoKVMNotSupportedError
 from ..models.common import (
     DeleteImageReq,
@@ -477,20 +472,9 @@ class StorageController(Controller):
         )
 
     async def _ensure_image_transfer_version(self, minimum: str) -> None:
-        """Check an image-transfer firmware minimum using cached device details."""
-        if (
-            self._session._application_version is None
-            and self._session._token is not None
-        ):
-            await self._session.detect_versions()
-
-        if self._session._application_version is not None and not _version_at_least(
-            self._session._application_version, minimum
-        ):
-            family = (
-                "Pro" if self._session.is_hardware_family(HWFamily.PRO) else "non-Pro"
-            )
+        """Check a non-Pro image-transfer firmware minimum."""
+        if not await self._session.application_version_at_least(non_pro=minimum):
             raise NanoKVMNotSupportedError(
-                f"image transfer requires {family} application version >= {minimum} "
+                f"image transfer requires non-Pro application version >= {minimum} "
                 f"(detected: {self._session._application_version})"
             )
