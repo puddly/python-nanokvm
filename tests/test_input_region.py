@@ -241,7 +241,7 @@ async def test_input_region_methods_reject_pro_without_io(method_name: str) -> N
             aioresponses() as mocked,
             pytest.raises(
                 NanoKVMNotSupportedError,
-                match="hardware family: non-Pro",
+                match="hardware: non-Pro",
             ),
         ):
             if method_name == "set_input_region":

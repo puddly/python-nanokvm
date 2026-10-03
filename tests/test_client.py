@@ -734,7 +734,7 @@ async def test_get_dns_pro_is_not_supported() -> None:
             with pytest.raises(NanoKVMNotSupportedError) as exc_info:
                 await client.get_dns()
 
-            assert "get_dns requires hardware family: non-Pro" in str(exc_info.value)
+            assert "get_dns requires hardware: non-Pro" in str(exc_info.value)
             assert not m.requests
 
 

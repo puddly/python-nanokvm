@@ -68,24 +68,10 @@ def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
             )
             if not matches:
                 allowed = ", ".join(requirement.value for requirement in requirements)
-                if all(
-                    isinstance(requirement, HWFamily) for requirement in requirements
-                ):
-                    detected = (
-                        family.value
-                        if family is not None
-                        else self._session._hw_version.value
-                    )
-                    message = (
-                        f"{func.__name__} requires hardware family: {allowed} "
-                        f"(detected: {detected})"
-                    )
-                else:
-                    message = (
-                        f"{func.__name__} requires hardware: {allowed} "
-                        f"(detected: {self._session._hw_version})"
-                    )
-                raise NanoKVMNotSupportedError(message)
+                raise NanoKVMNotSupportedError(
+                    f"{func.__name__} requires hardware: {allowed} "
+                    f"(detected: {self._session._hw_version})"
+                )
             return await func(self, *args, **kwargs)
 
         return wrapper  # type: ignore[return-value]

@@ -208,7 +208,7 @@ async def test_ai_control_routes_parse_plain_and_wrapped_results() -> None:
 @pytest.mark.parametrize(
     ("hardware", "version", "message"),
     [
-        (HWVersion.PRO, "9.9.9", "hardware family: non-Pro"),
+        (HWVersion.PRO, "9.9.9", "hardware: non-Pro"),
         (HWVersion.PCIE, "2.4.9", "application version >= 2.5.0"),
     ],
 )

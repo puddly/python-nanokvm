@@ -102,5 +102,5 @@ async def test_hardware_decorator_family_requirement_rejects_other_versions(
 
     client = NanoKVMClient("http://kvm.local/api/")
     client._session._hw_version = version
-    with pytest.raises(NanoKVMNotSupportedError, match="hardware family: non-Pro"):
+    with pytest.raises(NanoKVMNotSupportedError, match="hardware: non-Pro"):
         await operation(client)
