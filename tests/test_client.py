@@ -85,7 +85,7 @@ async def test_image_download_prefix_by_hardware_family(
     ) as client:
         client._session._hw_version = hardware
 
-        assert client._storage_controller._image_download_prefix() == expected_prefix
+        assert client._image_download_prefix() == expected_prefix
 
 
 @pytest.mark.parametrize(
@@ -202,7 +202,7 @@ async def test_form_response_is_not_logged(
     script = tmp_path / "test.sh"
     script.write_text("#!/bin/sh\ntrue\n")
     secret = "SYNTHETIC_FORM_VALUE"
-    caplog.set_level(logging.DEBUG, logger="nanokvm.client")
+    caplog.set_level(logging.DEBUG, logger="nanokvm")
 
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
@@ -228,7 +228,7 @@ def test_parse_jpeg_returns_fully_loaded_image() -> None:
     Image.new("RGB", (2, 2), color=(1, 2, 3)).save(image_buffer, format="JPEG")
     client = NanoKVMClient("http://localhost:8888/api/")
 
-    image = client._stream_controller.parse_jpeg_from_bytes(image_buffer.getvalue())
+    image = client._parse_jpeg_from_bytes(image_buffer.getvalue())
 
     assert image.getpixel((0, 0))
     assert getattr(image, "fp", None) is None

@@ -44,7 +44,7 @@ from ..models.common import (
 )
 from ..models.non_pro import GetCdRomRsp
 from ..utils import _validate_sha256
-from .session import SessionController
+from .session import Controller
 
 ImageTransferProgressCallback = Callable[
     [ImageTransferProgress], None | Awaitable[None]
@@ -126,11 +126,8 @@ def _validate_sha256_argument(func: F) -> F:
     return wrapper  # type: ignore[return-value]
 
 
-class StorageController:
+class StorageController(Controller):
     """Implement storage operations behind the public client facade."""
-
-    def __init__(self, session: SessionController) -> None:
-        self._session = session
 
     async def get_scripts(self) -> GetScriptsRsp:
         """Get the list of uploaded scripts."""

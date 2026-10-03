@@ -1,10 +1,9 @@
 """Concurrent authentication must preserve the identity of each operation."""
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import io
-from typing import cast
 from unittest.mock import AsyncMock, patch
 
 from aiohttp import web
@@ -239,7 +238,7 @@ async def test_logout_stops_existing_mjpeg_stream_before_next_frame() -> None:
     app.router.add_post("/api/auth/logout", logout)
     app.router.add_get("/api/stream/mjpeg", mjpeg)
     async with _server(app) as url, NanoKVMClient(url, token="alice") as client:
-        stream = cast(AsyncGenerator[Image.Image, None], client.mjpeg_stream())
+        stream = client.mjpeg_stream()
         pending = asyncio.ensure_future(stream.__anext__())
         async with asyncio.timeout(2):
             await started.wait()

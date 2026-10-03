@@ -140,7 +140,7 @@ async def test_authentication_debug_logs_redact_credentials(
     """Authentication logs must not contain passwords or returned tokens."""
     password = "password-must-not-be-logged"
     token = "token-must-not-be-logged"
-    caplog.set_level(logging.DEBUG, logger="nanokvm.client")
+    caplog.set_level(logging.DEBUG, logger="nanokvm")
 
     async with NanoKVMClient(
         "https://kvm.local/api/", use_password_obfuscation=False

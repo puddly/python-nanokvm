@@ -9,6 +9,45 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .common import WiFiInfo
 
+__all__ = [
+    "DeleteEdidReq",
+    "DiskType",
+    "EdidPreset",
+    "EdidValue",
+    "GetCustomEdidListRsp",
+    "GetEdidRsp",
+    "GetHdmiCaptureRsp",
+    "GetHdmiPassthroughRsp",
+    "GetKvmadminStatusRsp",
+    "GetLcdTimeFormatRsp",
+    "GetLedStripRsp",
+    "GetLowPowerRsp",
+    "GetMenuBarConfigRsp",
+    "GetStaticIPRsp",
+    "GetTimeStatusRsp",
+    "GetTimeZoneRsp",
+    "LcdTimeFormat",
+    "RateControlMode",
+    "RefreshVirtualDeviceReq",
+    "ScanWifiRsp",
+    "SetFpsReq",
+    "SetGopReq",
+    "SetHdmiCaptureReq",
+    "SetHdmiPassthroughReq",
+    "SetLcdTimeFormatReq",
+    "SetLedStripReq",
+    "SetLowPowerReq",
+    "SetMenuBarConfigReq",
+    "SetRateControlModeReq",
+    "SetStaticIPReq",
+    "SetStreamModeReq",
+    "SetStreamQualityReq",
+    "SetTimeZoneReq",
+    "StreamMode",
+    "SwitchEdidReq",
+    "UploadEdidRsp",
+]
+
 
 class DiskType(StrEnum):
     """Virtual Disk types."""

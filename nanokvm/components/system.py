@@ -46,14 +46,11 @@ from ..models.pro import (
     SetMenuBarConfigReq,
     SetTimeZoneReq,
 )
-from .session import SessionController
+from .session import Controller
 
 
-class SystemController:
+class SystemController(Controller):
     """Implement system operations behind the public client facade."""
-
-    def __init__(self, session: SessionController) -> None:
-        self._session = session
 
     async def get_info(self) -> GetInfoRsp:
         """Get general device information."""

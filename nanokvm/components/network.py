@@ -18,14 +18,11 @@ from ..models.common import (
 )
 from ..models.non_pro import DNSMode, GetDNSRsp, SetDNSReq
 from ..models.pro import GetStaticIPRsp, ScanWifiRsp, SetStaticIPReq
-from .session import SessionController
+from .session import Controller
 
 
-class NetworkController:
+class NetworkController(Controller):
     """Implement network operations behind the public client facade."""
-
-    def __init__(self, session: SessionController) -> None:
-        self._session = session
 
     async def get_wifi_status(self) -> GetWifiRsp:
         """Get WiFi status."""

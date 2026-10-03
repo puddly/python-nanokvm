@@ -22,7 +22,7 @@ from ..models.common import (
     SetMouseJigglerReq,
     ShortcutKey,
 )
-from .session import SessionController
+from .session import Controller
 
 PASTE_CHAR_MAP = set(
     "\t\n !\"#$%&'()*+,-./0123456789"
@@ -31,11 +31,8 @@ PASTE_CHAR_MAP = set(
 )
 
 
-class HidController:
+class HidController(Controller):
     """Implement HID operations behind the public client facade."""
-
-    def __init__(self, session: SessionController) -> None:
-        self._session = session
 
     @require_application_version(non_pro="2.2.6")
     async def get_mouse_jiggler_state(self) -> GetMouseJigglerRsp:

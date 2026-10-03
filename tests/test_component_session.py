@@ -1,7 +1,5 @@
 """Domain components share a session without depending on the public facade."""
 
-import logging
-
 import aiohttp
 from aioresponses import aioresponses
 import pytest
@@ -24,7 +22,6 @@ async def test_components_share_permissions_and_external_session() -> None:
             url,
             token="synthetic-token",
             session=http,
-            logger=logging.getLogger(__name__),
         )
         session._hw_version = HWVersion.PCIE
         session._application_version = "2.5.1"

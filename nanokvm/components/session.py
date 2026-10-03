@@ -54,6 +54,8 @@ from ..utils import obfuscate_password
 
 T = TypeVar("T", bound=BaseModel)
 
+_LOGGER = logging.getLogger(__name__)
+
 _SESSION_COOKIE_NAME = "nano-kvm-token"
 _CURRENT_PASSWORD_MIN_NON_PRO_VERSION = "2.5.1"
 
@@ -72,7 +74,6 @@ class SessionController:
         ssl_ca_cert: str | None = None,
         ssl_fingerprint: str | None = None,
         use_password_obfuscation: bool | None = None,
-        logger: logging.Logger,
     ) -> None:
         """Initialize the shared session, transport and device state."""
         self.url = yarl.URL(url)
@@ -96,16 +97,15 @@ class SessionController:
         self._hw_version: HWVersion | None = None
         self._application_version: str | None = None
         self._image_version: str | None = None
-        self._logger = logger
 
     def create_ssl_context(self) -> ssl.SSLContext | Fingerprint | bool:
         """Create and configure SSL context from the client's settings."""
         if self._ssl_fingerprint:
-            self._logger.debug("Using certificate fingerprint pinning")
+            _LOGGER.debug("Using certificate fingerprint pinning")
             return Fingerprint(bytes.fromhex(self._ssl_fingerprint.replace(":", "")))
 
         if not self._verify_ssl:
-            self._logger.warning(
+            _LOGGER.warning(
                 "SSL verification is disabled. This is insecure and should only be "
                 "used for testing with self-signed certificates."
             )
@@ -115,7 +115,7 @@ class SessionController:
             return True
 
         ssl_ctx = ssl.create_default_context(cafile=self._ssl_ca_cert)
-        self._logger.debug("Using custom CA certificate: %s", self._ssl_ca_cert)
+        _LOGGER.debug("Using custom CA certificate: %s", self._ssl_ca_cert)
         return ssl_ctx
 
     async def enter(self) -> None:
@@ -236,7 +236,7 @@ class SessionController:
         **kwargs: Any,
     ) -> T | None:
         """Make an API request and parse its JSON response."""
-        self._logger.debug("Making API request: %s %s", method, path)
+        _LOGGER.debug("Making API request: %s %s", method, path)
 
         async with self.request(
             method,
@@ -281,7 +281,7 @@ class SessionController:
         **kwargs: Any,
     ) -> T | None:
         """Make a multipart/form request and parse its JSON response."""
-        self._logger.debug("Making API form request: %s %s", method, path)
+        _LOGGER.debug("Making API form request: %s %s", method, path)
 
         async with self.request(method, path, data=data, **kwargs) as response:
             raw_response = await self.read_json_response(response)
@@ -300,7 +300,7 @@ class SessionController:
         except ValidationError:
             raise NanoKVMInvalidResponseError("Invalid API response envelope") from None
 
-        self._logger.debug("Got API response: code=%s", api_response.code)
+        _LOGGER.debug("Got API response: code=%s", api_response.code)
 
         if api_response.code != ApiResponseCode.SUCCESS.value:
             raise NanoKVMApiError(
@@ -416,31 +416,31 @@ class SessionController:
         """Authenticate and store the session token."""
         # A failed identity switch must never leave the previous account usable.
         generation = await self.clear_local_session()
-        self._logger.debug("Attempting authentication for user: %s", username)
+        _LOGGER.debug("Attempting authentication for user: %s", username)
 
         if self._use_password_obfuscation is True:
-            self._logger.debug("Using password obfuscation (forced)")
+            _LOGGER.debug("Using password obfuscation (forced)")
             await self.do_authenticate(
                 username, obfuscate_password(password), generation=generation
             )
         elif self._use_password_obfuscation is False:
-            self._logger.debug("Using plain text password (forced)")
+            _LOGGER.debug("Using plain text password (forced)")
             await self.do_authenticate(username, password, generation=generation)
         else:
-            self._logger.debug("Auto-detecting password mode")
+            _LOGGER.debug("Auto-detecting password mode")
             try:
                 await self.do_authenticate(
                     username, obfuscate_password(password), generation=generation
                 )
                 self._use_password_obfuscation = True
-                self._logger.info("Auto-detected obfuscated password mode")
+                _LOGGER.info("Auto-detected obfuscated password mode")
             except NanoKVMAuthenticationFailure:
-                self._logger.debug(
+                _LOGGER.debug(
                     "Obfuscated authentication failed, trying plain text password"
                 )
                 await self.do_authenticate(username, password, generation=generation)
                 self._use_password_obfuscation = False
-                self._logger.info("Auto-detected plain text password mode")
+                _LOGGER.info("Auto-detected plain text password mode")
 
         self.check_session_generation(generation)
         return generation
@@ -623,14 +623,14 @@ class SessionController:
         """Detect and store the hardware version."""
         hw = await self.get_hardware()
         self._hw_version = hw.version
-        self._logger.info("Detected hardware: %s", hw.version)
+        _LOGGER.info("Detected hardware: %s", hw.version)
 
     async def detect_versions(self) -> None:
         """Detect and store image and application versions."""
         info = await self.get_info()
         self._application_version = info.application
         self._image_version = info.image
-        self._logger.info(
+        _LOGGER.info(
             "Detected versions: application=%s image=%s",
             info.application,
             info.image,
@@ -743,3 +743,10 @@ class SessionController:
                     path="/ws",
                 ) from err
             raise
+
+
+class Controller:
+    """Base for endpoint controllers that share one session."""
+
+    def __init__(self, session: SessionController) -> None:
+        self._session = session
