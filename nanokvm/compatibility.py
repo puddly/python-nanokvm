@@ -5,19 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 import functools
 import re
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from .exceptions import NanoKVMError, NanoKVMNotSupportedError
 from .models.common import HWFamily, HWVersion
 
 if TYPE_CHECKING:
-    from .components.session import SessionController
-
-
-class SessionProvider(Protocol):
-    """The shared session used by an endpoint controller."""
-
-    _session: SessionController
+    from .components.session import Controller
 
 
 F = TypeVar("F", bound=Callable[..., Coroutine[Any, Any, Any]])
@@ -51,7 +45,7 @@ def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
-        async def wrapper(self: SessionProvider, *args: Any, **kwargs: Any) -> Any:
+        async def wrapper(self: Controller, *args: Any, **kwargs: Any) -> Any:
             if self._session._hw_version is None:
                 raise NanoKVMError(
                     f"{func.__name__} requires hardware detection; "
@@ -88,7 +82,7 @@ def require_application_version(
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
-        async def wrapper(self: SessionProvider, *args: Any, **kwargs: Any) -> Any:
+        async def wrapper(self: Controller, *args: Any, **kwargs: Any) -> Any:
             if not await self._session.application_version_at_least(
                 non_pro=non_pro, pro=pro
             ):
