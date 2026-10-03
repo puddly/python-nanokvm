@@ -14,21 +14,16 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 SECRET_KEY = b"nanokvm-sipeed-2024"
 
 
-def evp_bytes_to_key_aes256_md5(
-    password: bytes, salt: bytes, *, key_len: int = 32, iv_len: int = 16
-) -> tuple[bytes, bytes]:
-    """OpenSSL's `EVP_BytesToKey` function with a few hardcoded parameters."""
+def evp_bytes_to_key_aes256_md5(password: bytes, salt: bytes) -> tuple[bytes, bytes]:
+    """OpenSSL's `EVP_BytesToKey` for a 32-byte key and 16-byte IV."""
     derived = b""
     block = b""
 
-    while len(derived) < key_len + iv_len:
+    while len(derived) < 48:
         block = hashlib.md5(block + password + salt).digest()
         derived += block
 
-    key = derived[0:key_len]
-    iv = derived[key_len : key_len + iv_len]
-
-    return key, iv
+    return derived[:32], derived[32:48]
 
 
 def openssl_encrypt_aes256cbc_md5(plaintext: bytes, password: bytes) -> bytes:
