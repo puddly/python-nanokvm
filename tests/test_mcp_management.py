@@ -128,7 +128,7 @@ async def test_mcp_config_response_does_not_log_api_key(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Successful config parsing never writes the MCP credential to logs."""
-    caplog.set_level(logging.DEBUG, logger="nanokvm.client")
+    caplog.set_level(logging.DEBUG, logger="nanokvm")
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
         client._session._hw_version = HWVersion.PCIE
         client._session._application_version = "2.5.0"

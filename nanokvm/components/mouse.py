@@ -11,18 +11,16 @@ import aiohttp
 from ..compatibility import _version_at_least
 from ..exceptions import NanoKVMNotSupportedError
 from ..models.common import HWFamily, MouseButton
-from .session import SessionController
+from .session import Controller
+
+_LOGGER = logging.getLogger(__name__)
 
 _BINARY_MOUSE_MIN_NON_PRO_VERSION = "2.3.2"
 _BINARY_MOUSE_MIN_PRO_VERSION = "1.2.6"
 
 
-class MouseController:
+class MouseController(Controller):
     """Own the mouse protocol and its lazily-created WebSocket transport."""
-
-    def __init__(self, session: SessionController, logger: logging.Logger) -> None:
-        self._session = session
-        self._logger = logger
 
     async def _uses_binary_mouse_protocol(self) -> bool:
         """Select the mouse wire format supported by the connected device."""
@@ -126,7 +124,7 @@ class MouseController:
             y_value = int(y)
 
         message = [2, event_type, button_state, x_value, y_value]
-        self._logger.debug("Sending legacy mouse event: %s", message)
+        _LOGGER.debug("Sending legacy mouse event: %s", message)
         await self._send_ws(lambda ws: ws.send_json(message))
 
     async def mouse_move_abs(self, x: float, y: float) -> None:

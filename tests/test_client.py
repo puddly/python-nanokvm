@@ -202,7 +202,7 @@ async def test_form_response_is_not_logged(
     script = tmp_path / "test.sh"
     script.write_text("#!/bin/sh\ntrue\n")
     secret = "SYNTHETIC_FORM_VALUE"
-    caplog.set_level(logging.DEBUG, logger="nanokvm.client")
+    caplog.set_level(logging.DEBUG, logger="nanokvm")
 
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"

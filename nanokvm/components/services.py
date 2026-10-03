@@ -35,7 +35,7 @@ from ..models.non_pro import (
     SetUpdateServerReq,
 )
 from ..models.pro import GetKvmadminStatusRsp
-from .session import SessionController
+from .session import Controller
 
 _OFFLINE_UPDATE_PACKAGE_RE = re.compile(r"^nanokvm_[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz$")
 _OFFLINE_UPDATE_TIMEOUT_SECONDS = 15 * 60
@@ -47,11 +47,8 @@ def _calculate_file_sha256(file_path: Path) -> str:
         return hashlib.file_digest(file_obj, "sha256").hexdigest()
 
 
-class ServiceController:
+class ServiceController(Controller):
     """Implement services operations behind the public client facade."""
-
-    def __init__(self, session: SessionController) -> None:
-        self._session = session
 
     @require_application_version(non_pro="2.1.6")
     async def get_tailscale_status(self) -> GetTailscaleStatusRsp:

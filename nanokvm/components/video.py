@@ -39,14 +39,11 @@ from ..models.pro import (
     SwitchEdidReq,
     UploadEdidRsp,
 )
-from .session import SessionController
+from .session import Controller
 
 
-class VideoController:
+class VideoController(Controller):
     """Implement video operations behind the public client facade."""
-
-    def __init__(self, session: SessionController) -> None:
-        self._session = session
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.5.1")

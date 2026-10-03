@@ -11,15 +11,13 @@ import aiohttp
 from aiohttp import BodyPartReader, MultipartReader, hdrs
 from PIL import Image
 
-from .session import SessionController
+from .session import Controller
+
+_LOGGER = logging.getLogger(__name__)
 
 
-class StreamController:
+class StreamController(Controller):
     """Own MJPEG frame transport and JPEG decoding."""
-
-    def __init__(self, session: SessionController, logger: logging.Logger) -> None:
-        self._session = session
-        self._logger = logger
 
     def _parse_jpeg_from_bytes(self, data: bytes) -> Image.Image:
         """Parse a JPEG image from bytes."""
@@ -43,7 +41,7 @@ class StreamController:
                 assert isinstance(part, BodyPartReader)
                 data = await part.read()
                 if not data:
-                    self._logger.debug("Received empty MJPEG part, ending stream.")
+                    _LOGGER.debug("Received empty MJPEG part, ending stream.")
                     break
 
                 # Process image in executor to avoid blocking async loop.
