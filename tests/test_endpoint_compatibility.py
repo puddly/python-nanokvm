@@ -52,11 +52,11 @@ async def test_methods_reject_unsupported_application_versions(
 ) -> None:
     """Endpoints fail locally when the detected application is too old."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._hw_version = hardware
-        client._application_version = old_version
+        client._session._hw_version = hardware
+        client._session._application_version = old_version
 
         with patch.object(
-            client, "_api_request_json", new_callable=AsyncMock
+            client._session, "api_request_json", new_callable=AsyncMock
         ) as request:
             with pytest.raises(
                 NanoKVMNotSupportedError,
@@ -80,11 +80,11 @@ async def test_methods_accept_first_supported_application_version(
 ) -> None:
     """Endpoints delegate at the first supported application version."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._hw_version = hardware
-        client._application_version = minimum_version
+        client._session._hw_version = hardware
+        client._session._application_version = minimum_version
 
         with patch.object(
-            client, "_api_request_json", new_callable=AsyncMock
+            client._session, "api_request_json", new_callable=AsyncMock
         ) as request:
             await getattr(client, method_name)(*args)
 

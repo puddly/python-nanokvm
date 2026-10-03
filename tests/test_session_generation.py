@@ -37,7 +37,7 @@ async def test_delayed_401_does_not_clear_replacement_session(
             if transport == "json":
                 await client.get_account()
             elif transport == "form":
-                await client._api_request_form(
+                await client._session.api_request_form(
                     "POST", "/upload", data=aiohttp.FormData()
                 )
             else:
@@ -92,7 +92,9 @@ async def test_delayed_form_success_is_rejected_after_reauthentication() -> None
                 payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
             )
             pending = asyncio.create_task(
-                client._api_request_form("POST", "/upload", data=aiohttp.FormData())
+                client._session.api_request_form(
+                    "POST", "/upload", data=aiohttp.FormData()
+                )
             )
             async with asyncio.timeout(2):
                 await started.wait()
@@ -119,7 +121,7 @@ async def test_websocket_401_waiting_for_cleanup_cannot_clear_new_login() -> Non
         status=401,
     )
     async with NanoKVMClient(_URL, token="old-session") as client:
-        original_clear = client._clear_local_session
+        original_clear = client._session.clear_local_session
 
         async def delayed_clear(*args: Any, **kwargs: Any) -> int:
             if asyncio.current_task() is pending:
@@ -128,7 +130,11 @@ async def test_websocket_401_waiting_for_cleanup_cannot_clear_new_login() -> Non
             return await original_clear(*args, **kwargs)
 
         with (
-            patch.object(client, "_clear_local_session", side_effect=delayed_clear),
+            patch.object(
+                client._session,
+                "clear_local_session",
+                side_effect=delayed_clear,
+            ),
             patch("aiohttp.ClientSession.ws_connect", AsyncMock(side_effect=error)),
             aioresponses() as mocked,
         ):
@@ -140,7 +146,7 @@ async def test_websocket_401_waiting_for_cleanup_cannot_clear_new_login() -> Non
                 f"{_URL}vm/hardware",
                 payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
             )
-            pending = asyncio.create_task(client._get_ws())
+            pending = asyncio.create_task(client._session.get_ws())
             async with asyncio.timeout(2):
                 await cleanup_started.wait()
                 try:
@@ -166,8 +172,8 @@ async def test_session_cleanup_does_not_close_new_websocket_while_old_one_closes
     async with NanoKVMClient(_URL, token="old-session") as client:
         old_ws = AsyncMock(closed=False)
         old_ws.close.side_effect = close_old
-        client._ws = old_ws
-        cleanup = asyncio.create_task(client._clear_local_session())
+        client._session._ws = old_ws
+        cleanup = asyncio.create_task(client._session.clear_local_session())
         async with asyncio.timeout(2):
             await closing.wait()
             try:
@@ -189,12 +195,12 @@ async def test_session_cleanup_does_not_close_new_websocket_while_old_one_closes
                 with patch(
                     "aiohttp.ClientSession.ws_connect", AsyncMock(return_value=new_ws)
                 ):
-                    assert await client._get_ws() is new_ws
+                    assert await client._session.get_ws() is new_ws
             finally:
                 finish_close.set()
                 await cleanup
             assert client.token == "new-session"
-            assert client._ws is new_ws
+            assert client._session._ws is new_ws
             new_ws.close.assert_not_awaited()
 
 
@@ -210,8 +216,8 @@ async def test_delayed_session_ending_response_is_rejected(operation: str) -> No
         return CallbackResult(payload={"code": 0, "msg": "ok", "data": None})
 
     async with NanoKVMClient(_URL, token="old-session") as client:
-        client._hw_version = HWVersion.PCIE
-        client._application_version = "2.5.1"
+        client._session._hw_version = HWVersion.PCIE
+        client._session._application_version = "2.5.1"
         with aioresponses() as mocked:
             mocked.get(
                 f"{_URL}auth/account",

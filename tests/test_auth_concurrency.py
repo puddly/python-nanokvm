@@ -113,10 +113,11 @@ async def test_password_change_cannot_switch_accounts_during_account_lookup() ->
     app.router.add_post("/api/auth/login", login)
     app.router.add_post("/api/auth/password", password)
     async with _server(app) as url, NanoKVMClient(url, token="alice") as client:
-        client._hw_version = HWVersion.PCIE
-        client._application_version = "2.5.1"
+        client._session._hw_version = HWVersion.PCIE
+        client._session._application_version = "2.5.1"
         with patch(
-            "nanokvm.client.obfuscate_password", side_effect=lambda value: value
+            "nanokvm.components.session.obfuscate_password",
+            side_effect=lambda value: value,
         ):
             async with asyncio.timeout(2):
                 pending = asyncio.create_task(
@@ -157,7 +158,7 @@ async def test_login_superseded_while_closing_old_websocket_is_not_sent() -> Non
     async with _server(app) as url, NanoKVMClient(url, token="old-session") as client:
         old_ws = AsyncMock(closed=False)
         old_ws.close.side_effect = close
-        client._ws = old_ws
+        client._session._ws = old_ws
         async with asyncio.timeout(2):
             pending = asyncio.create_task(client.authenticate("alice", "password"))
             await closing.wait()

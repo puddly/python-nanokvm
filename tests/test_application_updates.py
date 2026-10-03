@@ -20,8 +20,8 @@ def _mark_non_pro(
     *,
     application_version: str,
 ) -> None:
-    client._hw_version = HWVersion.PCIE
-    client._application_version = application_version
+    client._session._hw_version = HWVersion.PCIE
+    client._session._application_version = application_version
 
 
 async def test_update_application_offline_uploads_package_and_checksum(
@@ -209,8 +209,8 @@ async def test_update_application_offline_rejects_unsupported_devices_before_io(
     package.write_bytes(b"synthetic update package")
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._hw_version = hardware
-        client._application_version = application_version
+        client._session._hw_version = hardware
+        client._session._application_version = application_version
 
         with aioresponses() as mocked, pytest.raises(NanoKVMNotSupportedError):
             await client.update_application_offline(package)
@@ -299,8 +299,8 @@ async def test_update_server_methods_reject_unsupported_devices_before_io(
 ) -> None:
     """Custom servers are available only on non-Pro 2.5.1 and newer."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._hw_version = hardware
-        client._application_version = application_version
+        client._session._hw_version = hardware
+        client._session._application_version = application_version
 
         with aioresponses() as mocked, pytest.raises(NanoKVMNotSupportedError):
             await getattr(client, method_name)(*args)

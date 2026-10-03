@@ -48,7 +48,7 @@ async def test_invalid_response_traceback_and_exception_log_hide_payload(
                 if source == "login-token":
                     await client.authenticate("synthetic-user", "synthetic-password")
                 elif source == "form":
-                    await client._api_request_form(
+                    await client._session.api_request_form(
                         "POST", "/upload", data=aiohttp.FormData()
                     )
                 else:
@@ -77,7 +77,7 @@ async def test_invalid_utf8_response_is_rejected_consistently(transport: str) ->
                 operation = client.get_account()
             elif transport == "form":
                 mocked.post(f"{_URL}upload", body=b"\xff")
-                operation = client._api_request_form(
+                operation = client._session.api_request_form(
                     "POST", "/upload", data=aiohttp.FormData()
                 )
             else:
