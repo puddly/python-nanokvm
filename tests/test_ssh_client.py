@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 import threading
 from typing import Any
 from unittest.mock import Mock, patch
@@ -137,6 +138,44 @@ async def test_authenticate_uses_strict_host_key_policy_by_default() -> None:
     fake_client.load_system_host_keys.assert_called_once_with()
     policy = fake_client.set_missing_host_key_policy.call_args.args[0]
     assert isinstance(policy, paramiko.RejectPolicy)
+
+
+@pytest.mark.asyncio
+async def test_authenticate_reads_host_keys_off_the_event_loop(
+    tmp_path: Path,
+) -> None:
+    loop_thread = threading.get_ident()
+    read_threads: list[int] = []
+    fake_client = Mock()
+    fake_client.load_system_host_keys.side_effect = lambda: read_threads.append(
+        threading.get_ident()
+    )
+    fake_client.load_host_keys.side_effect = lambda _: read_threads.append(
+        threading.get_ident()
+    )
+    known_hosts = tmp_path / "known_hosts"
+    with patch("nanokvm.ssh_client.paramiko.SSHClient", return_value=fake_client):
+        client = NanoKVMSSH("kvm.local", known_hosts=known_hosts)
+        await client.authenticate("synthetic-password")
+
+    fake_client.load_host_keys.assert_called_once_with(str(known_hosts))
+    assert len(read_threads) == 2
+    assert loop_thread not in read_threads
+
+
+@pytest.mark.asyncio
+async def test_authenticate_reports_unreadable_known_hosts_as_connection_error() -> (
+    None
+):
+    fake_client = Mock()
+    fake_client.load_host_keys.side_effect = OSError("No such file")
+    with patch("nanokvm.ssh_client.paramiko.SSHClient", return_value=fake_client):
+        client = NanoKVMSSH("kvm.local", known_hosts="/missing/known_hosts")
+        with pytest.raises(NanoKVMSSHConnectionError, match="No such file"):
+            await client.authenticate("synthetic-password")
+
+    fake_client.connect.assert_not_called()
+    fake_client.close.assert_called_once_with()
 
 
 @pytest.mark.asyncio

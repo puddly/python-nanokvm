@@ -106,7 +106,9 @@ class NanoKVMSSH:
             self._state_generation += 1
             generation = self._state_generation
 
-        try:
+        def connect() -> None:
+            # Host-key files are read here so the event loop never blocks on
+            # file I/O.
             client.load_system_host_keys()
             if self.known_hosts is not None:
                 client.load_host_keys(str(self.known_hosts))
@@ -115,20 +117,20 @@ class NanoKVMSSH:
                 if self.allow_unknown_host_key
                 else paramiko.RejectPolicy()
             )
-            connect_future = loop.run_in_executor(
-                None,
-                lambda: client.connect(
-                    self.host,
-                    port=self.port,
-                    username=self.username,
-                    password=password,
-                    timeout=self.connect_timeout,
-                    banner_timeout=self.banner_timeout,
-                    auth_timeout=self.auth_timeout,
-                    allow_agent=self.allow_agent,
-                    look_for_keys=self.look_for_keys,
-                ),
+            client.connect(
+                self.host,
+                port=self.port,
+                username=self.username,
+                password=password,
+                timeout=self.connect_timeout,
+                banner_timeout=self.banner_timeout,
+                auth_timeout=self.auth_timeout,
+                allow_agent=self.allow_agent,
+                look_for_keys=self.look_for_keys,
             )
+
+        try:
+            connect_future = loop.run_in_executor(None, connect)
             try:
                 await asyncio.shield(connect_future)
             except asyncio.CancelledError:
