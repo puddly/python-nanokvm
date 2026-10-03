@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Self
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .common import WiFiInfo
+from .common import WiFiInfo, _CaseInsensitiveStrEnum
 
 __all__ = [
     "DeleteEdidReq",
@@ -61,19 +61,6 @@ class RateControlMode(StrEnum):
 
     CBR = "cbr"
     VBR = "vbr"
-
-
-class _CaseInsensitiveStrEnum(StrEnum):
-    """String enum with case-insensitive parsing."""
-
-    @classmethod
-    def _missing_(cls, value: object) -> Self | None:
-        if isinstance(value, str):
-            normalized = value.lower()
-            for member in cls:
-                if member.value.lower() == normalized:
-                    return member
-        return None
 
 
 class StreamMode(StrEnum):
