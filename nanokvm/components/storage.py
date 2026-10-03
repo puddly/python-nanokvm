@@ -174,179 +174,168 @@ class StorageController(Controller):
         chunk_size: int = 1024 * 1024,
         overwrite: bool = False,
     ) -> None:
-        """Upload an image, rejecting an existing name unless overwrite is enabled."""
+        """Upload an image, rejecting an existing name unless overwrite is enabled.
+
+        The image is streamed on non-Pro and sent in chunks on Pro.
+        """
         async with self._session._image_transfer_lock:
-            await self._upload_image(
-                file_path,
-                progress_callback=progress_callback,
-                sha256=sha256,
-                chunk_size=chunk_size,
-                overwrite=overwrite,
-            )
-
-    async def _upload_image(
-        self,
-        file_path: str | PathLike[str],
-        *,
-        progress_callback: ImageTransferProgressCallback | None = None,
-        sha256: str | None = None,
-        chunk_size: int = 1024 * 1024,
-        overwrite: bool = False,
-    ) -> None:
-        """Upload a local image, streaming on non-Pro and chunking on Pro."""
-        image_path = Path(file_path)
-        file_stat = image_path.stat()
-        if not stat.S_ISREG(file_stat.st_mode):
-            raise ValueError("file_path must point to a regular file")
-        if (
-            isinstance(chunk_size, bool)
-            or not isinstance(chunk_size, int)
-            or chunk_size <= 0
-        ):
-            raise ValueError("chunk_size must be a positive integer")
-        _validate_sha256(sha256)
-
-        if (
-            self._session._hw_version is None
-            or self._session._hw_version.family is None
-        ):
-            raise NanoKVMNotSupportedError(
-                "upload_image requires detected supported hardware"
-            )
-
-        total_bytes = file_stat.st_size
-        if total_bytes == 0:
-            raise ValueError("file_path must not be empty")
-
-        is_pro = self._session.is_hardware_family(HWFamily.PRO)
-        if is_pro and sha256 is not None:
-            raise NanoKVMNotSupportedError(
-                "upload_image does not support sha256 on NanoKVM Pro"
-            )
-
-        transfer_timeout = aiohttp.ClientTimeout(
-            total=None,
-            sock_connect=self._session._request_timeout,
-            sock_read=self._session._request_timeout,
-        )
-
-        if not is_pro:
-            if ".." in image_path.name:
-                raise ValueError("non-Pro image filename must not contain '..'")
-            if re.fullmatch(r"[A-Za-z0-9._-]+", image_path.name) is None:
-                raise ValueError(
-                    "non-Pro image filename must use ASCII letters, numbers, "
-                    "dot, underscore, or hyphen"
-                )
-            if not image_path.name.lower().endswith(".iso"):
-                raise ValueError("non-Pro image filename must end with .iso")
-
-            await self._ensure_image_transfer_version("2.3.1")
-            if sha256 is not None:
-                await self._ensure_image_transfer_version("2.5.0")
-        else:
-            if not all(
-                character in " -_." or character.isalnum()
-                for character in image_path.name
+            image_path = Path(file_path)
+            file_stat = image_path.stat()
+            if not stat.S_ISREG(file_stat.st_mode):
+                raise ValueError("file_path must point to a regular file")
+            if (
+                isinstance(chunk_size, bool)
+                or not isinstance(chunk_size, int)
+                or chunk_size <= 0
             ):
-                raise ValueError(
-                    "Pro image filename must already be sanitized by firmware rules"
+                raise ValueError("chunk_size must be a positive integer")
+            _validate_sha256(sha256)
+
+            if (
+                self._session._hw_version is None
+                or self._session._hw_version.family is None
+            ):
+                raise NanoKVMNotSupportedError(
+                    "upload_image requires detected supported hardware"
                 )
-            if not image_path.name.lower().endswith((".iso", ".img")):
-                raise ValueError("Pro image filename must end with .iso or .img")
 
-        remote_file = f"/data/{image_path.name}"
-        remote_images = await self.get_images()
-        remote_file_exists = remote_file in remote_images.files
-        if remote_file_exists and not overwrite:
-            raise FileExistsError(
-                f"NanoKVM already contains an image named {image_path.name}"
+            total_bytes = file_stat.st_size
+            if total_bytes == 0:
+                raise ValueError("file_path must not be empty")
+
+            is_pro = self._session.is_hardware_family(HWFamily.PRO)
+            if is_pro and sha256 is not None:
+                raise NanoKVMNotSupportedError(
+                    "upload_image does not support sha256 on NanoKVM Pro"
+                )
+
+            transfer_timeout = aiohttp.ClientTimeout(
+                total=None,
+                sock_connect=self._session._request_timeout,
+                sock_read=self._session._request_timeout,
             )
-        if remote_file_exists and is_pro:
-            await self.delete_image(remote_file)
 
-        await _report_image_transfer_progress(progress_callback, 0, total_bytes)
+            if not is_pro:
+                if ".." in image_path.name:
+                    raise ValueError("non-Pro image filename must not contain '..'")
+                if re.fullmatch(r"[A-Za-z0-9._-]+", image_path.name) is None:
+                    raise ValueError(
+                        "non-Pro image filename must use ASCII letters, numbers, "
+                        "dot, underscore, or hyphen"
+                    )
+                if not image_path.name.lower().endswith(".iso"):
+                    raise ValueError("non-Pro image filename must end with .iso")
 
-        if is_pro:
-            total_chunks = max(1, (total_bytes + chunk_size - 1) // chunk_size)
-            bytes_transferred = 0
-            upload_started = False
-            try:
-                with image_path.open("rb", buffering=0) as image_file:
-                    for chunk_index in range(total_chunks):
-                        expected_size = min(
-                            chunk_size, total_bytes - chunk_index * chunk_size
-                        )
-                        chunk_parts: list[bytes] = []
-                        bytes_read = 0
-                        while bytes_read < expected_size:
-                            part = image_file.read(expected_size - bytes_read)
-                            if not part:
-                                break
-                            chunk_parts.append(part)
-                            bytes_read += len(part)
-                        chunk = b"".join(chunk_parts)
-                        if len(chunk) != expected_size:
-                            raise OSError("image changed while it was being uploaded")
-                        if chunk_index == total_chunks - 1 and image_file.read(1):
-                            raise OSError("image changed while it was being uploaded")
+                await self._ensure_image_transfer_version("2.3.1")
+                if sha256 is not None:
+                    await self._ensure_image_transfer_version("2.5.0")
+            else:
+                if not all(
+                    character in " -_." or character.isalnum()
+                    for character in image_path.name
+                ):
+                    raise ValueError(
+                        "Pro image filename must already be sanitized by firmware rules"
+                    )
+                if not image_path.name.lower().endswith((".iso", ".img")):
+                    raise ValueError("Pro image filename must end with .iso or .img")
 
-                        form = aiohttp.FormData(quote_fields=False)
-                        form.add_field("chunkIndex", str(chunk_index))
-                        form.add_field("chunkSize", str(chunk_size))
-                        form.add_field("totalChunks", str(total_chunks))
-                        form.add_field(
-                            "file",
-                            chunk,
-                            filename=image_path.name,
-                            content_type="application/octet-stream",
-                        )
-                        upload_started = True
-                        await self._session.api_request_json(
-                            hdrs.METH_POST,
-                            "/storage/image/upload",
-                            data=form,
-                            timeout=transfer_timeout,
-                        )
-                        bytes_transferred += len(chunk)
-                        await _report_image_transfer_progress(
-                            progress_callback, bytes_transferred, total_bytes
-                        )
-            except BaseException:
-                if upload_started:
-                    with contextlib.suppress(BaseException):
-                        await asyncio.shield(self.delete_image(remote_file))
-                raise
-            return
+            remote_file = f"/data/{image_path.name}"
+            remote_images = await self.get_images()
+            remote_file_exists = remote_file in remote_images.files
+            if remote_file_exists and not overwrite:
+                raise FileExistsError(
+                    f"NanoKVM already contains an image named {image_path.name}"
+                )
+            if remote_file_exists and is_pro:
+                await self.delete_image(remote_file)
 
-        async def report_progress(bytes_transferred: int) -> None:
+            await _report_image_transfer_progress(progress_callback, 0, total_bytes)
+
+            if is_pro:
+                total_chunks = max(1, (total_bytes + chunk_size - 1) // chunk_size)
+                bytes_transferred = 0
+                upload_started = False
+                try:
+                    with image_path.open("rb", buffering=0) as image_file:
+                        for chunk_index in range(total_chunks):
+                            expected_size = min(
+                                chunk_size, total_bytes - chunk_index * chunk_size
+                            )
+                            chunk_parts: list[bytes] = []
+                            bytes_read = 0
+                            while bytes_read < expected_size:
+                                part = image_file.read(expected_size - bytes_read)
+                                if not part:
+                                    break
+                                chunk_parts.append(part)
+                                bytes_read += len(part)
+                            chunk = b"".join(chunk_parts)
+                            if len(chunk) != expected_size:
+                                raise OSError(
+                                    "image changed while it was being uploaded"
+                                )
+                            if chunk_index == total_chunks - 1 and image_file.read(1):
+                                raise OSError(
+                                    "image changed while it was being uploaded"
+                                )
+
+                            form = aiohttp.FormData(quote_fields=False)
+                            form.add_field("chunkIndex", str(chunk_index))
+                            form.add_field("chunkSize", str(chunk_size))
+                            form.add_field("totalChunks", str(total_chunks))
+                            form.add_field(
+                                "file",
+                                chunk,
+                                filename=image_path.name,
+                                content_type="application/octet-stream",
+                            )
+                            upload_started = True
+                            await self._session.api_request_json(
+                                hdrs.METH_POST,
+                                "/storage/image/upload",
+                                data=form,
+                                timeout=transfer_timeout,
+                            )
+                            bytes_transferred += len(chunk)
+                            await _report_image_transfer_progress(
+                                progress_callback, bytes_transferred, total_bytes
+                            )
+                except BaseException:
+                    if upload_started:
+                        with contextlib.suppress(BaseException):
+                            await asyncio.shield(self.delete_image(remote_file))
+                    raise
+                return
+
+            async def report_progress(bytes_transferred: int) -> None:
+                await _report_image_transfer_progress(
+                    progress_callback, bytes_transferred, total_bytes
+                )
+
+            form = aiohttp.FormData()
+            form.add_field(
+                "file",
+                _ImageProgressPayload(
+                    image_path,
+                    chunk_size=chunk_size,
+                    total_bytes=total_bytes,
+                    report_progress=report_progress,
+                ),
+                filename=image_path.name,
+                content_type="application/octet-stream",
+            )
+            headers = {"X-SHA256-Sum": sha256} if sha256 is not None else {}
+            await self._session.api_request_json(
+                hdrs.METH_POST,
+                "/download/file",
+                data=form,
+                headers=headers,
+                timeout=transfer_timeout,
+            )
             await _report_image_transfer_progress(
-                progress_callback, bytes_transferred, total_bytes
+                progress_callback, total_bytes, total_bytes
             )
-
-        form = aiohttp.FormData()
-        form.add_field(
-            "file",
-            _ImageProgressPayload(
-                image_path,
-                chunk_size=chunk_size,
-                total_bytes=total_bytes,
-                report_progress=report_progress,
-            ),
-            filename=image_path.name,
-            content_type="application/octet-stream",
-        )
-        headers = {"X-SHA256-Sum": sha256} if sha256 is not None else {}
-        await self._session.api_request_json(
-            hdrs.METH_POST,
-            "/download/file",
-            data=form,
-            headers=headers,
-            timeout=transfer_timeout,
-        )
-        await _report_image_transfer_progress(
-            progress_callback, total_bytes, total_bytes
-        )
 
     async def get_mounted_image(self) -> GetMountedImageRsp:
         """Get the currently mounted image file."""
