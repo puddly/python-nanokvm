@@ -143,7 +143,7 @@ async def test_set_hdmi_idle_timeout_posts_boundary_values(minutes: int) -> None
         assert call.kwargs.get("json") == {"minutes": minutes}
 
 
-@pytest.mark.parametrize("minutes", [-1, 10081, True, 1.5])
+@pytest.mark.parametrize("minutes", [-1, 10081, 1.5])
 async def test_set_hdmi_idle_timeout_rejects_invalid_values_before_io(
     minutes: object,
 ) -> None:

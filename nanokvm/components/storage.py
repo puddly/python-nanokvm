@@ -183,11 +183,7 @@ class StorageController(Controller):
             file_stat = image_path.stat()
             if not stat.S_ISREG(file_stat.st_mode):
                 raise ValueError("file_path must point to a regular file")
-            if (
-                isinstance(chunk_size, bool)
-                or not isinstance(chunk_size, int)
-                or chunk_size <= 0
-            ):
+            if chunk_size <= 0:
                 raise ValueError("chunk_size must be a positive integer")
             _validate_sha256(sha256)
 
