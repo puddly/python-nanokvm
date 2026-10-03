@@ -248,11 +248,10 @@ class VideoController(Controller):
     @require_hardware(HWFamily.PRO)
     async def set_stream_mode(self, mode: StreamMode | str) -> None:
         """Set the stream mode."""
-        stream_mode = mode if isinstance(mode, StreamMode) else StreamMode(mode)
         await self._session.api_request_json(
             hdrs.METH_POST,
             "/stream/mode",
-            data=SetStreamModeReq(mode=stream_mode),
+            data=SetStreamModeReq(mode=StreamMode(mode)),
         )
 
     @require_hardware(HWFamily.PRO)
