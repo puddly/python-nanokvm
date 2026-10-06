@@ -323,6 +323,7 @@ async def test_api_error_allows_endpoint_specific_codes() -> None:
                 payload={"code": -6, "msg": "mount image failed", "data": None},
             )
 
+            mark_detected(client, HWVersion.PRO, "1.2.15")
             with pytest.raises(NanoKVMApiError) as exc_info:
                 await client.mount_image("/data/missing.iso", read_only=True)
 
@@ -361,6 +362,7 @@ async def test_mount_image_sends_pro_read_only_flag() -> None:
                 payload={"code": 0, "msg": "success", "data": None},
             )
 
+            mark_detected(client, HWVersion.PRO, "1.2.1")
             await client.mount_image("/data/test.img", read_only=True)
 
             calls = m.requests[
@@ -984,3 +986,15 @@ async def test_request_outside_context_manager_explains_how_to_start() -> None:
     client = NanoKVMClient("http://localhost:8888/api/", token="synthetic-token")
     with pytest.raises(RuntimeError, match="async with NanoKVMClient"):
         await client.get_gpio()
+
+
+async def test_mount_image_read_only_requires_pro_1_2_1() -> None:
+    """Older Pro firmware ignores readOnly, so the client refuses it first."""
+    async with NanoKVMClient(
+        "http://localhost:8888/api/", token="test-token"
+    ) as client:
+        mark_detected(client, HWVersion.PRO, "1.2.0")
+        with aioresponses() as m:
+            with pytest.raises(NanoKVMNotSupportedError, match="1.2.1"):
+                await client.mount_image("/data/test.img", read_only=True)
+            assert not m.requests

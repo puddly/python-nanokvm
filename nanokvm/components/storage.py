@@ -353,7 +353,19 @@ class StorageController(Controller):
         *,
         read_only: bool = False,  # Pro only
     ) -> None:
-        """Mount an image file or unmount if file is None."""
+        """Mount an image file or unmount if file is None.
+
+        ``read_only`` needs NanoKVM Pro application 1.2.1 or newer.
+        """
+        if (
+            file
+            and read_only
+            and not await self._session.application_version_at_least(pro="1.2.1")
+        ):
+            raise NanoKVMNotSupportedError(
+                "mount_image read_only requires Pro application version >= 1.2.1 "
+                f"(detected: {self._session._application_version})"
+            )
         await self._session.api_request_json(
             hdrs.METH_POST,
             "/storage/image/mount",
