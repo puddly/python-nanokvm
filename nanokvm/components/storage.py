@@ -178,6 +178,8 @@ class StorageController(Controller):
         """Upload an image, rejecting an existing name unless overwrite is enabled.
 
         The image is streamed on non-Pro and sent in chunks on Pro.
+        On Pro, overwriting deletes the existing image before the upload
+        starts, so a failed upload leaves neither copy.
         """
         async with self._session._image_transfer_lock:
             image_path = Path(file_path)

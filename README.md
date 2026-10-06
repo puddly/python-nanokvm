@@ -70,6 +70,74 @@ session subclasses and middleware apply only to HTTP requests.
 `NanoKVMApiError` includes the numeric API code. Its original `msg` and `data`
 remain available as attributes but are omitted from automatic diagnostics.
 
+## Hardware and firmware support
+
+Each method knows which hardware and application version it needs. The client
+detects both and raises `NanoKVMNotSupportedError` before sending a request the
+device cannot serve:
+
+```python
+from nanokvm.client import NanoKVMNotSupportedError
+
+try:
+    await client.get_swap_size()
+except NanoKVMNotSupportedError as error:
+    print(error)  # get_swap_size requires hardware: non-Pro (detected: Pro)
+```
+
+Hardware is detected at login, or on the first call when the client was created
+from a stored `token`. Application and image versions are detected on the first
+version-checked call and kept until the session resets (logout, a new login or
+an expired session). After a firmware update on a client that stays logged in,
+call `await client.detect_versions()` to refresh them. Version strings that are
+not plain numbers, such as development builds, are treated as supported.
+
+The HDMI controls (`get_hdmi_state`, `reset_hdmi`, `enable_hdmi`,
+`disable_hdmi`, `set_hdmi_idle_timeout`) are available on PCIe hardware only.
+
+## Images
+
+`upload_image` sends a local image to the device and reports progress:
+
+```python
+def on_progress(progress):
+    print(f"{progress.percentage:.0f}%")
+
+await client.upload_image("debian.iso", progress_callback=on_progress)
+await client.mount_image("/data/debian.iso", cdrom=True)
+```
+
+- Non-Pro devices need application 2.3.1 or newer and accept `.iso` files with
+  ASCII names. Pass `sha256=` (2.5.0 or newer) to have the device verify the
+  upload.
+- NanoKVM Pro accepts `.iso` and `.img` files.
+- An existing image with the same name raises `FileExistsError` unless
+  `overwrite=True`. On NanoKVM Pro, overwriting deletes the existing image
+  before the upload starts, so a failed upload leaves neither copy.
+
+The device can also download an image itself:
+
+```python
+await client.download_image("https://example.com/debian.iso")
+async for status in client.watch_image_download():
+    print(status.status, status.percentage)
+```
+
+`download_image` accepts `sha256=` and `cancel_image_download()` stops a
+download; both need a non-Pro device on 2.5.0 or newer.
+
+## Other non-Pro features
+
+- **Application updates:** `update_application_offline("nanokvm_2.5.1.tar.gz")`
+  installs an official package from a local file (2.3.1 or newer);
+  `get_update_server` and `set_update_server` manage a custom update server
+  (2.5.1 or newer).
+- **MCP and coordinated control** (2.5.0 or newer): `get_mcp_config`,
+  `set_mcp_enabled`, `regenerate_mcp_api_key`, `get_ai_control_status` and
+  `set_ai_control_mode`.
+- **Input region** (2.5.1 or newer): `get_input_region`, `set_input_region` and
+  `get_input_resolution`.
+
 ## SSH
 
 SSH host-key verification is strict by default. Add the device key to the
