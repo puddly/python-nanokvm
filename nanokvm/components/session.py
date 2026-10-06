@@ -157,7 +157,7 @@ class SessionController:
         if authenticate:
             if not self._token:
                 raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-            cookies["nano-kvm-token"] = self._token
+            cookies[_SESSION_COOKIE_NAME] = self._token
 
         if self._http_session is None or self._ssl_config is None:
             raise RuntimeError(_NOT_STARTED)

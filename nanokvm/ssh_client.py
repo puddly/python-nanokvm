@@ -12,7 +12,7 @@ from types import TracebackType
 
 import paramiko
 
-from .client import NanoKVMError
+from .exceptions import NanoKVMError
 
 DEFAULT_SSH_USERNAME = "root"
 
