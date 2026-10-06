@@ -977,3 +977,10 @@ async def test_client_context_manager_external_session() -> None:
         assert not session.closed
 
     assert session.closed
+
+
+async def test_request_outside_context_manager_explains_how_to_start() -> None:
+    """Using the client without 'async with' raises a clear error."""
+    client = NanoKVMClient("http://localhost:8888/api/", token="synthetic-token")
+    with pytest.raises(RuntimeError, match="async with NanoKVMClient"):
+        await client.get_gpio()

@@ -57,6 +57,7 @@ T = TypeVar("T", bound=BaseModel)
 _LOGGER = logging.getLogger(__name__)
 
 _SESSION_COOKIE_NAME = "nano-kvm-token"
+_NOT_STARTED = "NanoKVMClient is not started; use 'async with NanoKVMClient(...)'"
 _CURRENT_PASSWORD_MIN_NON_PRO_VERSION = "2.5.1"
 
 
@@ -158,8 +159,8 @@ class SessionController:
                 raise NanoKVMNotAuthenticatedError("Client is not authenticated")
             cookies["nano-kvm-token"] = self._token
 
-        assert self._http_session is not None
-        assert self._ssl_config is not None
+        if self._http_session is None or self._ssl_config is None:
+            raise RuntimeError(_NOT_STARTED)
 
         self.clear_session_cookies()
         request_headers = {
@@ -684,8 +685,8 @@ class SessionController:
                 scheme = "ws" if self.url.scheme == "http" else "wss"
                 ws_url = self.url.with_scheme(scheme) / "ws"
 
-                assert self._http_session is not None
-                assert self._ssl_config is not None
+                if self._http_session is None or self._ssl_config is None:
+                    raise RuntimeError(_NOT_STARTED)
 
                 # ws_connect cannot override cookies per request. An isolated
                 # jar prevents concurrent requests or async tracing callbacks
