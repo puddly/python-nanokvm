@@ -261,11 +261,10 @@ class SystemController(Controller):
     @require_application_version(pro="1.1.6")
     async def set_lcd_time_format(self, fmt: LcdTimeFormat | str) -> None:
         """Set the LCD time format (12h/24h)."""
-        format_value = fmt if isinstance(fmt, LcdTimeFormat) else LcdTimeFormat(fmt)
         await self._session.api_request_json(
             hdrs.METH_POST,
             "/vm/lcd/time/format",
-            data=SetLcdTimeFormatReq(format=format_value),
+            data=SetLcdTimeFormatReq(format=LcdTimeFormat(fmt)),
         )
 
     @require_hardware(HWFamily.PRO)

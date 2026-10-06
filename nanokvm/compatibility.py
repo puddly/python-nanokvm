@@ -5,19 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 import functools
 import re
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from .exceptions import NanoKVMError, NanoKVMNotSupportedError
 from .models.common import HWFamily, HWVersion
 
 if TYPE_CHECKING:
-    from .components.session import SessionController
-
-
-class SessionProvider(Protocol):
-    """The shared session used by an endpoint controller."""
-
-    _session: SessionController
+    from .components.session import Controller
 
 
 F = TypeVar("F", bound=Callable[..., Coroutine[Any, Any, Any]])
@@ -51,7 +45,7 @@ def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
-        async def wrapper(self: SessionProvider, *args: Any, **kwargs: Any) -> Any:
+        async def wrapper(self: Controller, *args: Any, **kwargs: Any) -> Any:
             if self._session._hw_version is None:
                 raise NanoKVMError(
                     f"{func.__name__} requires hardware detection; "
@@ -68,24 +62,10 @@ def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
             )
             if not matches:
                 allowed = ", ".join(requirement.value for requirement in requirements)
-                if all(
-                    isinstance(requirement, HWFamily) for requirement in requirements
-                ):
-                    detected = (
-                        family.value
-                        if family is not None
-                        else self._session._hw_version.value
-                    )
-                    message = (
-                        f"{func.__name__} requires hardware family: {allowed} "
-                        f"(detected: {detected})"
-                    )
-                else:
-                    message = (
-                        f"{func.__name__} requires hardware: {allowed} "
-                        f"(detected: {self._session._hw_version})"
-                    )
-                raise NanoKVMNotSupportedError(message)
+                raise NanoKVMNotSupportedError(
+                    f"{func.__name__} requires hardware: {allowed} "
+                    f"(detected: {self._session._hw_version})"
+                )
             return await func(self, *args, **kwargs)
 
         return wrapper  # type: ignore[return-value]
@@ -102,33 +82,14 @@ def require_application_version(
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
-        async def wrapper(self: SessionProvider, *args: Any, **kwargs: Any) -> Any:
-            if self._session._hw_version is None:
-                if self._session._token is None:
-                    return await func(self, *args, **kwargs)
-                await self._session.detect_hardware()
-
-            assert self._session._hw_version is not None
-            minimum = pro if self._session.is_hardware_family(HWFamily.PRO) else non_pro
-            if minimum is None:
-                return await func(self, *args, **kwargs)
-
-            if self._session._application_version is None:
-                if self._session._token is None:
-                    return await func(self, *args, **kwargs)
-                await self._session.detect_versions()
-
-            if self._session._application_version is not None and not _version_at_least(
-                self._session._application_version, minimum
+        async def wrapper(self: Controller, *args: Any, **kwargs: Any) -> Any:
+            if not await self._session.application_version_at_least(
+                non_pro=non_pro, pro=pro
             ):
-                hardware_family = (
-                    "Pro"
-                    if self._session.is_hardware_family(HWFamily.PRO)
-                    else "non-Pro"
-                )
+                is_pro = self._session.is_hardware_family(HWFamily.PRO)
                 raise NanoKVMNotSupportedError(
-                    f"{func.__name__} requires {hardware_family} application "
-                    f"version >= {minimum} "
+                    f"{func.__name__} requires {'Pro' if is_pro else 'non-Pro'} "
+                    f"application version >= {pro if is_pro else non_pro} "
                     f"(detected: {self._session._application_version})"
                 )
 

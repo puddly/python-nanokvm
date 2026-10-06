@@ -35,6 +35,7 @@ from ..models.non_pro import (
     SetUpdateServerReq,
 )
 from ..models.pro import GetKvmadminStatusRsp
+from ..utils import _validate_sha256
 from .session import Controller
 
 _OFFLINE_UPDATE_PACKAGE_RE = re.compile(r"^nanokvm_[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz$")
@@ -103,8 +104,7 @@ class ServiceController(Controller):
             raise ValueError("Update package filename must match nanokvm_X.Y.Z.tar.gz")
 
         checksum = sha256.strip() if sha256 is not None else ""
-        if checksum and re.fullmatch(r"[0-9a-fA-F]{64}", checksum) is None:
-            raise ValueError("SHA-256 checksum must contain exactly 64 hex characters")
+        _validate_sha256(checksum or None)
 
         if checksum:
             actual_checksum = await asyncio.to_thread(

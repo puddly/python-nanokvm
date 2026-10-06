@@ -8,9 +8,8 @@ import logging
 
 import aiohttp
 
-from ..compatibility import _version_at_least
 from ..exceptions import NanoKVMNotSupportedError
-from ..models.common import HWFamily, MouseButton
+from ..models.common import MouseButton
 from .session import Controller
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,27 +23,11 @@ class MouseController(Controller):
 
     async def _uses_binary_mouse_protocol(self) -> bool:
         """Select the mouse wire format supported by the connected device."""
-        session = self._session
-        if session._hw_version is None:
-            if session._token is None:
-                # The WebSocket will report the authentication error below.
-                # Keep the current protocol as the safe default when version
-                # detection is not possible.
-                return True
-            await session.detect_hardware()
-
-        if session._application_version is None:
-            if session._token is None:
-                return True
-            await session.detect_versions()
-
-        minimum_version = (
-            _BINARY_MOUSE_MIN_PRO_VERSION
-            if session.is_hardware_family(HWFamily.PRO)
-            else _BINARY_MOUSE_MIN_NON_PRO_VERSION
-        )
-        return session._application_version is None or _version_at_least(
-            session._application_version, minimum_version
+        # Without a token the WebSocket reports the authentication error, so
+        # the current protocol stays the default when detection is impossible.
+        return await self._session.application_version_at_least(
+            non_pro=_BINARY_MOUSE_MIN_NON_PRO_VERSION,
+            pro=_BINARY_MOUSE_MIN_PRO_VERSION,
         )
 
     @staticmethod

@@ -18,6 +18,8 @@ from nanokvm.client import (
 )
 from nanokvm.models import GetAccountRsp, HWVersion
 
+from .common import mark_detected
+
 _BASE_URL = "http://kvm.local/api/"
 
 
@@ -180,8 +182,7 @@ async def test_websocket_403_is_permission_error() -> None:
         side_effect=handshake_error,
     ):
         async with NanoKVMClient(_BASE_URL, token="synthetic-token") as client:
-            client._session._hw_version = HWVersion.PCIE
-            client._session._application_version = "2.5.1"
+            mark_detected(client, HWVersion.PCIE, "2.5.1")
 
             with pytest.raises(NanoKVMPermissionError) as exc_info:
                 await client.mouse_move_rel(0.1, 0.0)
@@ -207,8 +208,7 @@ async def test_websocket_401_clears_session_without_lock_deadlock() -> None:
         side_effect=handshake_error,
     ):
         async with NanoKVMClient(_BASE_URL, token="expired-token") as client:
-            client._session._hw_version = HWVersion.PCIE
-            client._session._application_version = "2.5.1"
+            mark_detected(client, HWVersion.PCIE, "2.5.1")
             client._session._mouse_buttons = 1
 
             with pytest.raises(NanoKVMNotAuthenticatedError):

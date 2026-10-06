@@ -12,16 +12,9 @@ import yarl
 from nanokvm.client import NanoKVMClient, NanoKVMNotSupportedError
 from nanokvm.models import GetUpdateServerRsp, HWVersion, SetUpdateServerReq
 
+from .common import mark_detected
+
 _BASE_URL = "http://localhost:8888/api/"
-
-
-def _mark_non_pro(
-    client: NanoKVMClient,
-    *,
-    application_version: str,
-) -> None:
-    client._session._hw_version = HWVersion.PCIE
-    client._session._application_version = application_version
 
 
 async def test_update_application_offline_uploads_package_and_checksum(
@@ -34,7 +27,7 @@ async def test_update_application_offline_uploads_package_and_checksum(
     url = f"{_BASE_URL}application/update/offline"
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.5.1")
+        mark_detected(client, application_version="2.5.1")
 
         with aioresponses() as mocked:
             mocked.post(
@@ -60,7 +53,7 @@ async def test_update_application_offline_verifies_checksum_on_legacy_firmware(
     url = f"{_BASE_URL}application/update/offline"
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.5.0")
+        mark_detected(client, application_version="2.5.0")
 
         with aioresponses() as mocked:
             mocked.post(
@@ -82,7 +75,7 @@ async def test_update_application_offline_rejects_checksum_mismatch_before_io(
     package.write_bytes(b"synthetic update package")
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.3.1")
+        mark_detected(client, application_version="2.3.1")
 
         with (
             aioresponses() as mocked,
@@ -100,7 +93,7 @@ async def test_update_application_offline_omits_empty_checksum(tmp_path: Path) -
     url = f"{_BASE_URL}application/update/offline"
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.3.1")
+        mark_detected(client, application_version="2.3.1")
 
         with aioresponses() as mocked:
             mocked.post(
@@ -124,9 +117,9 @@ async def test_update_application_offline_rejects_invalid_checksum_before_io(
     package.write_bytes(b"synthetic update package")
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.3.1")
+        mark_detected(client, application_version="2.3.1")
 
-        with aioresponses() as mocked, pytest.raises(ValueError, match="SHA-256"):
+        with aioresponses() as mocked, pytest.raises(ValueError, match="hexadecimal"):
             await client.update_application_offline(package, sha256=sha256)
 
         assert not mocked.requests
@@ -140,7 +133,7 @@ async def test_update_application_offline_rejects_invalid_filename_before_io(
     package.write_bytes(b"synthetic update package")
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.3.1")
+        mark_detected(client, application_version="2.3.1")
 
         with aioresponses() as mocked, pytest.raises(ValueError, match="filename"):
             await client.update_application_offline(package)
@@ -154,7 +147,7 @@ async def test_update_application_offline_accepts_restart_502(tmp_path: Path) ->
     package.write_bytes(b"synthetic update package")
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.5.1")
+        mark_detected(client, application_version="2.5.1")
 
         with aioresponses() as mocked:
             mocked.post(f"{_BASE_URL}application/update/offline", status=502)
@@ -167,7 +160,7 @@ async def test_update_application_offline_preserves_legacy_502(tmp_path: Path) -
     package.write_bytes(b"synthetic update package")
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.5.0")
+        mark_detected(client, application_version="2.5.0")
 
         with aioresponses() as mocked:
             mocked.post(f"{_BASE_URL}application/update/offline", status=502)
@@ -185,7 +178,7 @@ async def test_update_application_offline_preserves_other_http_errors(
     package.write_bytes(b"synthetic update package")
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.3.1")
+        mark_detected(client, application_version="2.3.1")
 
         with aioresponses() as mocked:
             mocked.post(f"{_BASE_URL}application/update/offline", status=500)
@@ -209,8 +202,7 @@ async def test_update_application_offline_rejects_unsupported_devices_before_io(
     package.write_bytes(b"synthetic update package")
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = hardware
-        client._session._application_version = application_version
+        mark_detected(client, hardware, application_version)
 
         with aioresponses() as mocked, pytest.raises(NanoKVMNotSupportedError):
             await client.update_application_offline(package)
@@ -225,7 +217,7 @@ async def test_get_update_server_returns_typed_configuration() -> None:
     )
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.5.1")
+        mark_detected(client, application_version="2.5.1")
 
         with aioresponses() as mocked:
             mocked.get(
@@ -253,7 +245,7 @@ async def test_set_update_server_posts_and_returns_normalized_configuration(
     endpoint = f"{_BASE_URL}application/update-server"
 
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        _mark_non_pro(client, application_version="2.5.1")
+        mark_detected(client, application_version="2.5.1")
 
         with aioresponses() as mocked:
             mocked.post(
@@ -299,8 +291,7 @@ async def test_update_server_methods_reject_unsupported_devices_before_io(
 ) -> None:
     """Custom servers are available only on non-Pro 2.5.1 and newer."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = hardware
-        client._session._application_version = application_version
+        mark_detected(client, hardware, application_version)
 
         with aioresponses() as mocked, pytest.raises(NanoKVMNotSupportedError):
             await getattr(client, method_name)(*args)

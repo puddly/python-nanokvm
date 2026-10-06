@@ -33,14 +33,7 @@ from nanokvm.models import (
     VirtualDevice,
 )
 
-
-def _mark_detected(
-    client: NanoKVMClient,
-    hw_version: HWVersion = HWVersion.PCIE,
-    application_version: str = "9.9.9",
-) -> None:
-    client._session._hw_version = hw_version
-    client._session._application_version = application_version
+from .common import mark_detected
 
 
 def _info_payload(application: str, image: str = "1.4.0") -> dict[str, object]:
@@ -342,7 +335,7 @@ async def test_none_returning_endpoint_preserves_unknown_api_code() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        _mark_detected(client)
+        mark_detected(client)
 
         with aioresponses() as m:
             m.post(
@@ -411,7 +404,7 @@ async def test_set_mouse_jiggler_state_noops_when_already_disabled() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        _mark_detected(client)
+        mark_detected(client)
 
         with aioresponses() as m:
             m.get(
@@ -633,7 +626,7 @@ async def test_get_dns_parses_configuration() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        _mark_detected(client, application_version="2.4.1")
+        mark_detected(client, application_version="2.4.1")
 
         with aioresponses() as m:
             m.get(
@@ -677,7 +670,7 @@ async def test_set_dns_manual_sends_servers() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        _mark_detected(client, application_version="2.4.1")
+        mark_detected(client, application_version="2.4.1")
 
         with aioresponses() as m:
             m.post(
@@ -704,7 +697,7 @@ async def test_set_dns_dhcp_string_sends_empty_servers() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        _mark_detected(client, application_version="2.4.1")
+        mark_detected(client, application_version="2.4.1")
 
         with aioresponses() as m:
             m.post(
@@ -734,7 +727,7 @@ async def test_get_dns_pro_is_not_supported() -> None:
             with pytest.raises(NanoKVMNotSupportedError) as exc_info:
                 await client.get_dns()
 
-            assert "get_dns requires hardware family: non-Pro" in str(exc_info.value)
+            assert "get_dns requires hardware: non-Pro" in str(exc_info.value)
             assert not m.requests
 
 
@@ -798,7 +791,7 @@ async def test_non_pro_application_version_gate_uses_non_pro_minimum() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        _mark_detected(client, application_version="2.3.1")
+        mark_detected(client, application_version="2.3.1")
 
         with aioresponses() as m:
             with pytest.raises(NanoKVMNotSupportedError) as exc_info:
@@ -816,7 +809,7 @@ async def test_pro_application_version_gate_uses_pro_minimum() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        _mark_detected(
+        mark_detected(
             client,
             hw_version=HWVersion.PRO,
             application_version="1.2.7",
@@ -865,7 +858,7 @@ async def test_shortcut_methods_send_expected_payloads() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        _mark_detected(client, application_version="2.3.4")
+        mark_detected(client, application_version="2.3.4")
 
         with aioresponses() as m:
             m.post(
@@ -910,7 +903,7 @@ async def test_tailscale_login_returns_url() -> None:
     async with NanoKVMClient(
         "http://localhost:8888/api/", token="test-token"
     ) as client:
-        _mark_detected(client, application_version="2.1.6")
+        mark_detected(client, application_version="2.1.6")
 
         with aioresponses() as m:
             m.post(

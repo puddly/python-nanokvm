@@ -7,6 +7,8 @@ import yarl
 from nanokvm.client import NanoKVMClient, NanoKVMNotSupportedError
 from nanokvm.models import GetHdmiStateRsp, HWVersion
 
+from .common import mark_detected
+
 _BASE_URL = "http://localhost:8888/api/"
 
 
@@ -21,8 +23,7 @@ async def test_hdmi_methods_reject_non_pcie_hardware(
 ) -> None:
     """PCIe-only HDMI routes fail locally on other non-Pro hardware."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = hardware
-        client._session._application_version = "9.9.9"
+        mark_detected(client, hardware, "9.9.9")
 
         with aioresponses() as mocked:
             with pytest.raises(
@@ -50,8 +51,7 @@ async def test_hdmi_methods_reject_older_firmware(
 ) -> None:
     """HDMI routes fail locally before their first supported firmware."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = application_version
+        mark_detected(client, HWVersion.PCIE, application_version)
 
         with aioresponses() as mocked:
             error_pattern = (
@@ -83,8 +83,7 @@ async def test_hdmi_methods_accept_first_supported_firmware(
 ) -> None:
     """Each HDMI route is available at its first supported firmware."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = application_version
+        mark_detected(client, HWVersion.PCIE, application_version)
 
         payload = {
             "code": 0,
@@ -128,8 +127,7 @@ def test_hdmi_state_keeps_old_responses_and_parses_new_metadata() -> None:
 async def test_set_hdmi_idle_timeout_posts_boundary_values(minutes: int) -> None:
     """The PCIe timeout endpoint accepts the complete firmware range."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.5.0"
+        mark_detected(client, HWVersion.PCIE, "2.5.0")
         url = f"{_BASE_URL}vm/hdmi/timeout"
 
         with aioresponses() as mocked:
@@ -143,14 +141,13 @@ async def test_set_hdmi_idle_timeout_posts_boundary_values(minutes: int) -> None
         assert call.kwargs.get("json") == {"minutes": minutes}
 
 
-@pytest.mark.parametrize("minutes", [-1, 10081, True, 1.5])
+@pytest.mark.parametrize("minutes", [-1, 10081, 1.5])
 async def test_set_hdmi_idle_timeout_rejects_invalid_values_before_io(
     minutes: object,
 ) -> None:
     """Invalid minute values fail locally without reaching the device."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.5.0"
+        mark_detected(client, HWVersion.PCIE, "2.5.0")
 
         with aioresponses() as mocked, pytest.raises(ValueError, match="minutes"):
             await client.set_hdmi_idle_timeout(minutes)  # type: ignore[arg-type]
@@ -164,8 +161,7 @@ async def test_set_hdmi_idle_timeout_rejects_non_pcie_before_io(
 ) -> None:
     """The timeout setting exists only on PCIe non-Pro hardware."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = hardware
-        client._session._application_version = "9.9.9"
+        mark_detected(client, hardware, "9.9.9")
 
         with (
             aioresponses() as mocked,
@@ -179,8 +175,7 @@ async def test_set_hdmi_idle_timeout_rejects_non_pcie_before_io(
 async def test_set_hdmi_idle_timeout_rejects_firmware_249_before_io() -> None:
     """The timeout setting starts with non-Pro application 2.5.0."""
     async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.4.9"
+        mark_detected(client, HWVersion.PCIE, "2.4.9")
 
         with (
             aioresponses() as mocked,

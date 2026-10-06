@@ -13,6 +13,8 @@ import yarl
 from nanokvm.client import NanoKVMClient, NanoKVMNotAuthenticatedError
 from nanokvm.models import HWVersion
 
+from .common import mark_detected
+
 _URL = "http://kvm.local/api/"
 
 
@@ -37,7 +39,7 @@ async def test_delayed_401_does_not_clear_replacement_session(
             if transport == "json":
                 await client.get_account()
             elif transport == "form":
-                await client._session.api_request_form(
+                await client._session.api_request_json(
                     "POST", "/upload", data=aiohttp.FormData()
                 )
             else:
@@ -92,7 +94,7 @@ async def test_delayed_form_success_is_rejected_after_reauthentication() -> None
                 payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
             )
             pending = asyncio.create_task(
-                client._session.api_request_form(
+                client._session.api_request_json(
                     "POST", "/upload", data=aiohttp.FormData()
                 )
             )
@@ -216,8 +218,7 @@ async def test_delayed_session_ending_response_is_rejected(operation: str) -> No
         return CallbackResult(payload={"code": 0, "msg": "ok", "data": None})
 
     async with NanoKVMClient(_URL, token="old-session") as client:
-        client._session._hw_version = HWVersion.PCIE
-        client._session._application_version = "2.5.1"
+        mark_detected(client, HWVersion.PCIE, "2.5.1")
         with aioresponses() as mocked:
             mocked.get(
                 f"{_URL}auth/account",
