@@ -95,8 +95,9 @@ class _ImageProgressPayload(Payload):
         bytes_transferred = 0
         with self._file_path.open("rb") as image_file:
             while bytes_transferred < self._total_bytes:
-                chunk = image_file.read(
-                    min(self._chunk_size, self._total_bytes - bytes_transferred)
+                chunk = await asyncio.to_thread(
+                    image_file.read,
+                    min(self._chunk_size, self._total_bytes - bytes_transferred),
                 )
                 if not chunk:
                     raise OSError("image changed while it was being uploaded")
@@ -261,7 +262,9 @@ class StorageController(Controller):
                             chunk_parts: list[bytes] = []
                             bytes_read = 0
                             while bytes_read < expected_size:
-                                part = image_file.read(expected_size - bytes_read)
+                                part = await asyncio.to_thread(
+                                    image_file.read, expected_size - bytes_read
+                                )
                                 if not part:
                                     break
                                 chunk_parts.append(part)
