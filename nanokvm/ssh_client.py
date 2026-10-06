@@ -12,7 +12,7 @@ from types import TracebackType
 
 import paramiko
 
-from .client import NanoKVMError
+from .exceptions import NanoKVMError
 
 DEFAULT_SSH_USERNAME = "root"
 
@@ -203,7 +203,7 @@ class NanoKVMSSH:
                     f"SSH command exited with status {exit_status}{suffix}"
                 )
             return output.strip()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             execution.cancel()
             raise NanoKVMSSHCommandError(
                 f"SSH command timed out after {timeout} seconds"

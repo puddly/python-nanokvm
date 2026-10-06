@@ -80,7 +80,7 @@ async def _device_server() -> AsyncIterator[tuple[str, dict[str, Any]]]:
                 b"".join(
                     bytes(value)
                     for value in file_values
-                    if isinstance(value, (bytes, bytearray, memoryview))
+                    if isinstance(value, bytes | bytearray | memoryview)
                 )
             )
             if request.path == "/api/storage/image/upload":

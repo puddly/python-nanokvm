@@ -255,3 +255,17 @@ async def test_delayed_session_ending_response_is_rejected(operation: str) -> No
                 ):
                     await pending
             assert client.token == "new-session"
+
+
+async def test_logout_forgets_cached_firmware_versions() -> None:
+    """A later login re-detects versions, so a firmware update is noticed."""
+    async with NanoKVMClient(_URL, token="synthetic-token") as client:
+        mark_detected(client, HWVersion.PCIE, "2.3.0")
+        client._session._image_version = "1.4.0"
+        with aioresponses() as mocked:
+            mocked.post(f"{_URL}auth/logout", payload={"code": 0, "msg": "ok"})
+            await client.logout()
+
+        assert client.application_version is None
+        assert client.image_version is None
+        assert client.hw_version is HWVersion.PCIE

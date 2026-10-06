@@ -95,8 +95,9 @@ class _ImageProgressPayload(Payload):
         bytes_transferred = 0
         with self._file_path.open("rb") as image_file:
             while bytes_transferred < self._total_bytes:
-                chunk = image_file.read(
-                    min(self._chunk_size, self._total_bytes - bytes_transferred)
+                chunk = await asyncio.to_thread(
+                    image_file.read,
+                    min(self._chunk_size, self._total_bytes - bytes_transferred),
                 )
                 if not chunk:
                     raise OSError("image changed while it was being uploaded")
@@ -177,6 +178,8 @@ class StorageController(Controller):
         """Upload an image, rejecting an existing name unless overwrite is enabled.
 
         The image is streamed on non-Pro and sent in chunks on Pro.
+        On Pro, overwriting deletes the existing image before the upload
+        starts, so a failed upload leaves neither copy.
         """
         async with self._session._image_transfer_lock:
             image_path = Path(file_path)
@@ -261,7 +264,9 @@ class StorageController(Controller):
                             chunk_parts: list[bytes] = []
                             bytes_read = 0
                             while bytes_read < expected_size:
-                                part = image_file.read(expected_size - bytes_read)
+                                part = await asyncio.to_thread(
+                                    image_file.read, expected_size - bytes_read
+                                )
                                 if not part:
                                     break
                                 chunk_parts.append(part)
@@ -348,7 +353,19 @@ class StorageController(Controller):
         *,
         read_only: bool = False,  # Pro only
     ) -> None:
-        """Mount an image file or unmount if file is None."""
+        """Mount an image file or unmount if file is None.
+
+        ``read_only`` needs NanoKVM Pro application 1.2.1 or newer.
+        """
+        if (
+            file
+            and read_only
+            and not await self._session.application_version_at_least(pro="1.2.1")
+        ):
+            raise NanoKVMNotSupportedError(
+                "mount_image read_only requires Pro application version >= 1.2.1 "
+                f"(detected: {self._session._application_version})"
+            )
         await self._session.api_request_json(
             hdrs.METH_POST,
             "/storage/image/mount",
