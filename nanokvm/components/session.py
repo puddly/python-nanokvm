@@ -442,6 +442,7 @@ class SessionController:
             self._session_generation += 1
             generation = self._session_generation
             self._token = None
+            self.forget_versions()
             self._mouse_buttons = 0
             self.clear_session_cookies()
             ws = self._ws
@@ -607,6 +608,11 @@ class SessionController:
         return self._application_version is None or _version_at_least(
             self._application_version, minimum
         )
+
+    def forget_versions(self) -> None:
+        """Drop cached firmware versions so the next check detects them again."""
+        self._application_version = None
+        self._image_version = None
 
     async def detect_hardware(self) -> None:
         """Detect and store the hardware version."""

@@ -89,6 +89,7 @@ class ServiceController(Controller):
     async def update_application(self) -> None:
         """Trigger the application update process."""
         await self._session.api_request_json(hdrs.METH_POST, "/application/update")
+        self._session.forget_versions()
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.3.1")
@@ -139,6 +140,7 @@ class ServiceController(Controller):
                 or not _version_at_least(self._session._application_version, "2.5.1")
             ):
                 raise
+        self._session.forget_versions()
 
     @require_hardware(HWFamily.NON_PRO)
     @require_application_version(non_pro="2.5.1")
