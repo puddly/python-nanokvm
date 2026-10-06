@@ -104,3 +104,21 @@ async def test_hardware_decorator_family_requirement_rejects_other_versions(
     client._session._hw_version = version
     with pytest.raises(NanoKVMNotSupportedError, match="hardware: non-Pro"):
         await operation(client)
+
+
+async def test_hardware_decorator_detects_hardware_with_a_token() -> None:
+    """A client built from a stored token detects its hardware on demand."""
+
+    @require_hardware(HWFamily.NON_PRO)
+    async def operation(client: NanoKVMClient) -> str:
+        return "ok"
+
+    url = "http://kvm.local/api/"
+    async with NanoKVMClient(url, token="synthetic-token") as client:
+        with aioresponses() as mocked:
+            mocked.get(
+                f"{url}vm/hardware",
+                payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
+            )
+            assert await operation(client) == "ok"
+        assert client.hw_version is HWVersion.PCIE

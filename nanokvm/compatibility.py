@@ -47,10 +47,13 @@ def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
         @functools.wraps(func)
         async def wrapper(self: Controller, *args: Any, **kwargs: Any) -> Any:
             if self._session._hw_version is None:
-                raise NanoKVMError(
-                    f"{func.__name__} requires hardware detection; "
-                    f"call detect_hardware() first"
-                )
+                if self._session._token is None:
+                    raise NanoKVMError(
+                        f"{func.__name__} requires hardware detection; "
+                        f"authenticate or call detect_hardware() first"
+                    )
+                await self._session.detect_hardware()
+            assert self._session._hw_version is not None
             family = self._session._hw_version.family
             matches = any(
                 (isinstance(requirement, HWFamily) and family is requirement)
