@@ -203,7 +203,7 @@ class NanoKVMSSH:
                     f"SSH command exited with status {exit_status}{suffix}"
                 )
             return output.strip()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             execution.cancel()
             raise NanoKVMSSHCommandError(
                 f"SSH command timed out after {timeout} seconds"

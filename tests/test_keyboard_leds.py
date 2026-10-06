@@ -1,6 +1,6 @@
 """Tests for remote keyboard LED status."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from aioresponses import aioresponses
 import pytest
@@ -50,7 +50,7 @@ async def test_get_keyboard_led_status_parses_the_device_response(
     assert status.caps_lock is False
     assert status.scroll_lock is True
     assert status.known is True
-    assert status.updated_at == datetime(2026, 9, 13, 12, 34, 56, tzinfo=timezone.utc)
+    assert status.updated_at == datetime(2026, 9, 13, 12, 34, 56, tzinfo=UTC)
 
 
 @pytest.mark.parametrize(
