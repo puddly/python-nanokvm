@@ -18,7 +18,7 @@ from nanokvm.client import (
 )
 from nanokvm.models import GetAccountRsp, HWVersion
 
-from .common import mark_detected
+from .common import info_payload, mark_detected
 
 _BASE_URL = "http://kvm.local/api/"
 
@@ -30,20 +30,6 @@ def _websocket_request_info() -> aiohttp.RequestInfo:
         "GET",
         CIMultiDictProxy(CIMultiDict()),
     )
-
-
-def _info_payload() -> dict[str, object]:
-    return {
-        "code": 0,
-        "msg": "success",
-        "data": {
-            "ips": [],
-            "mdns": "kvm.local",
-            "image": "v1.4.0",
-            "application": "2.5.1",
-            "deviceKey": "synthetic-device-key",
-        },
-    }
 
 
 async def test_get_account_exposes_known_role() -> None:
@@ -102,7 +88,7 @@ async def test_permission_error_does_not_invalidate_session_or_retry_login() -> 
     async with NanoKVMClient(_BASE_URL, token="synthetic-token") as client:
         with aioresponses() as mocked:
             mocked.get(f"{_BASE_URL}storage/image", status=403, body=b'"forbidden"')
-            mocked.get(f"{_BASE_URL}vm/info", payload=_info_payload())
+            mocked.get(f"{_BASE_URL}vm/info", payload=info_payload())
 
             with pytest.raises(NanoKVMPermissionError):
                 await client.get_images()

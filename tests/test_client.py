@@ -33,21 +33,7 @@ from nanokvm.models import (
     VirtualDevice,
 )
 
-from .common import mark_detected
-
-
-def _info_payload(application: str, image: str = "1.4.0") -> dict[str, object]:
-    return {
-        "code": 0,
-        "msg": "success",
-        "data": {
-            "ips": [],
-            "mdns": "kvm.local",
-            "image": image,
-            "application": application,
-            "deviceKey": "device-key",
-        },
-    }
+from .common import info_payload, mark_detected
 
 
 def test_version_parser() -> None:
@@ -303,7 +289,7 @@ async def test_detect_versions_stores_application_and_image() -> None:
         with aioresponses() as m:
             m.get(
                 "http://localhost:8888/api/vm/info",
-                payload=_info_payload(application="2.4.1", image="1.4.0"),
+                payload=info_payload(application="2.4.1", image="1.4.0"),
             )
 
             await client.detect_versions()
@@ -743,7 +729,7 @@ async def test_get_dns_old_application_version_is_not_supported() -> None:
         with aioresponses() as m:
             m.get(
                 "http://localhost:8888/api/vm/info",
-                payload=_info_payload(application="2.4.0"),
+                payload=info_payload(application="2.4.0"),
             )
 
             with pytest.raises(NanoKVMNotSupportedError) as exc_info:
@@ -766,7 +752,7 @@ async def test_get_dns_exact_application_version_is_supported() -> None:
         with aioresponses() as m:
             m.get(
                 "http://localhost:8888/api/vm/info",
-                payload=_info_payload(application="2.4.1"),
+                payload=info_payload(application="2.4.1"),
             )
             m.get(
                 "http://localhost:8888/api/network/dns",

@@ -12,3 +12,20 @@ def mark_detected(
     """Preset the hardware and application version a client would detect."""
     client._session._hw_version = hw_version
     client._session._application_version = application_version
+
+
+def info_payload(
+    application: str = "2.5.1", image: str = "v1.4.0"
+) -> dict[str, object]:
+    """Build a successful ``/vm/info`` response envelope."""
+    return {
+        "code": 0,
+        "msg": "success",
+        "data": {
+            "ips": [],
+            "mdns": "kvm.local",
+            "image": image,
+            "application": application,
+            "deviceKey": "synthetic-device-key",
+        },
+    }

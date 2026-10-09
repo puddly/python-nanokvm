@@ -19,7 +19,7 @@ from nanokvm.client import (
 )
 from nanokvm.models import HWVersion
 
-from .common import mark_detected
+from .common import info_payload, mark_detected
 
 _BASE_URL = "http://kvm.local/api/"
 _LOGIN_URL = f"{_BASE_URL}auth/login"
@@ -35,20 +35,6 @@ _HARDWARE_PAYLOAD = {
 
 def _login_payload(data: object = None) -> dict[str, object]:
     return {"code": 0, "msg": "success", "data": data}
-
-
-def _info_payload() -> dict[str, object]:
-    return {
-        "code": 0,
-        "msg": "success",
-        "data": {
-            "ips": [],
-            "mdns": "kvm.local",
-            "image": "v1.4.0",
-            "application": "2.5.1",
-            "deviceKey": "synthetic-device-key",
-        },
-    }
 
 
 async def test_cookie_only_login_accepts_null_data_and_uses_fresh_cookie() -> None:
@@ -285,7 +271,7 @@ async def test_authentication_uses_received_token_for_http_requests() -> None:
                 headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/"},
             )
             mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
-            mocked.get(_INFO_URL, payload=_info_payload())
+            mocked.get(_INFO_URL, payload=info_payload())
 
             await client.authenticate("synthetic-user", "synthetic-password")
             await client.get_info()
