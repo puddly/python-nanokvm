@@ -382,29 +382,27 @@ class SessionController:
         generation = await self.clear_local_session()
         _LOGGER.debug("Attempting authentication for user: %s", username)
 
-        if self._use_password_obfuscation is True:
-            _LOGGER.debug("Using password obfuscation (forced)")
-            await self.do_authenticate(
-                username, obfuscate_password(password), generation=generation
+        # Unknown mode: try obfuscated first, then plain text, and remember
+        # whichever the device accepts.
+        forced = self._use_password_obfuscation
+        modes = (True, False) if forced is None else (forced,)
+        for obfuscate in modes:
+            _LOGGER.debug(
+                "Authenticating with %s password",
+                "obfuscated" if obfuscate else "plain text",
             )
-        elif self._use_password_obfuscation is False:
-            _LOGGER.debug("Using plain text password (forced)")
-            await self.do_authenticate(username, password, generation=generation)
-        else:
-            _LOGGER.debug("Auto-detecting password mode")
             try:
                 await self.do_authenticate(
-                    username, obfuscate_password(password), generation=generation
+                    username,
+                    obfuscate_password(password) if obfuscate else password,
+                    generation=generation,
                 )
-                self._use_password_obfuscation = True
-                _LOGGER.info("Auto-detected obfuscated password mode")
             except NanoKVMAuthenticationFailure:
-                _LOGGER.debug(
-                    "Obfuscated authentication failed, trying plain text password"
-                )
-                await self.do_authenticate(username, password, generation=generation)
-                self._use_password_obfuscation = False
-                _LOGGER.info("Auto-detected plain text password mode")
+                if obfuscate is modes[-1]:
+                    raise
+            else:
+                self._use_password_obfuscation = obfuscate
+                break
 
         self.check_session_generation(generation)
         return generation
