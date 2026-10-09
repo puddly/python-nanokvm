@@ -306,44 +306,27 @@ class SystemController(Controller):
         brightness: int | None = None,
     ) -> None:
         """Set LED strip configuration."""
-        if all(
-            value is None
-            for value in (on, horizontal_count, vertical_count, brightness)
-        ):
+        settings = {
+            "on": on,
+            "hor": horizontal_count,
+            "ver": vertical_count,
+            "brightness": brightness,
+        }
+        if all(value is None for value in settings.values()):
             raise ValueError("At least one LED strip setting must be provided")
 
-        if any(
-            value is None
-            for value in (on, horizontal_count, vertical_count, brightness)
-        ):
-            current = await self.get_led_strip()
-            on = current.on if on is None else on
-            horizontal_count = (
-                current.horizontal_count
-                if horizontal_count is None
-                else horizontal_count
-            )
-            vertical_count = (
-                current.vertical_count if vertical_count is None else vertical_count
-            )
-            brightness = current.brightness if brightness is None else brightness
-
-        assert on is not None
-        assert horizontal_count is not None
-        assert vertical_count is not None
-        assert brightness is not None
+        if None in settings.values():
+            # Unset values keep what the device currently reports.
+            current = (await self.get_led_strip()).model_dump(by_alias=True)
+            settings = {
+                key: current[key] if value is None else value
+                for key, value in settings.items()
+            }
 
         await self._session.api_request_json(
             hdrs.METH_POST,
             "/vm/ledstrip/set",
-            data=SetLedStripReq.model_validate(
-                {
-                    "on": on,
-                    "hor": horizontal_count,
-                    "ver": vertical_count,
-                    "brightness": brightness,
-                }
-            ),
+            data=SetLedStripReq.model_validate(settings),
         )
 
     @require_hardware(HWFamily.PRO)
