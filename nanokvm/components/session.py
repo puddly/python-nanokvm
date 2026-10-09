@@ -58,7 +58,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _SESSION_COOKIE_NAME = "nano-kvm-token"
 _NOT_STARTED = "NanoKVMClient is not started; use 'async with NanoKVMClient(...)'"
-_CURRENT_PASSWORD_MIN_NON_PRO_VERSION = "2.5.1"
+_CURRENT_PASSWORD_MIN_NON_PRO_VERSION = (2, 5, 1)
 
 
 class SessionController:
@@ -490,19 +490,13 @@ class SessionController:
                 raise NanoKVMNotAuthenticatedError("Client is not authenticated")
             await self.detect_versions()
 
-        if self._application_version is None:
+        parsed_version = _parse_version(self._application_version or "")
+        if parsed_version is None:
             raise NanoKVMError(
                 "Application version must be identified before changing the password"
             )
 
-        parsed_version = _parse_version(self._application_version)
-        minimum_version = _parse_version(_CURRENT_PASSWORD_MIN_NON_PRO_VERSION)
-        if parsed_version is None or minimum_version is None:
-            raise NanoKVMError(
-                "Application version must be identified before changing the password"
-            )
-
-        return parsed_version >= minimum_version
+        return parsed_version >= _CURRENT_PASSWORD_MIN_NON_PRO_VERSION
 
     async def change_password(
         self,
