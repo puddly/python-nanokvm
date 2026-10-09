@@ -82,7 +82,6 @@ __all__ = [
     "Shortcut",
     "ShortcutKey",
     "StatusImageRsp",
-    "TailscaleAction",
     "TailscaleState",
     "UpdateVirtualDeviceReq",
     "UploadScriptRsp",
@@ -139,20 +138,6 @@ class TailscaleState(StrEnum):
     NOT_LOGIN = "notLogin"
     STOPPED = "stopped"
     RUNNING = "running"
-
-
-class TailscaleAction(StrEnum):
-    """Tailscale Service action."""
-
-    INSTALL = "install"
-    UNINSTALL = "uninstall"
-    UP = "up"
-    DOWN = "down"
-    LOGIN = "login"
-    LOGOUT = "logout"
-    START = "start"
-    STOP = "stop"
-    RESTART = "restart"
 
 
 class DownloadStatus(StrEnum):
