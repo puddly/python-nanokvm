@@ -88,41 +88,41 @@ async def test_new_contract_requires_current_password_before_sending() -> None:
             await client.change_password("synthetic-user", "new-password")
 
 
-async def test_new_contract_rejects_a_different_authenticated_username() -> None:
+async def test_new_contract_rejects_a_different_authenticated_username(
+    mocked: aioresponses,
+) -> None:
     """The body username cannot be used to change another account's password."""
     async with _prepare_client() as client:
-        with aioresponses() as mocked:
-            mocked.get(_ACCOUNT_URL, payload=_account_payload("authenticated-user"))
+        mocked.get(_ACCOUNT_URL, payload=_account_payload("authenticated-user"))
 
-            with pytest.raises(ValueError, match="authenticated account"):
-                await client.change_password(
-                    "other-user",
-                    "new-password",
-                    current_password="current-password",
-                )
-
-            assert ("POST", yarl.URL(_PASSWORD_URL)) not in mocked.requests
-
-
-async def test_new_contract_preserves_api_error_codes() -> None:
-    """An incorrect current password remains a device API error."""
-    async with _prepare_client() as client:
-        with aioresponses() as mocked:
-            mocked.get(_ACCOUNT_URL, payload=_account_payload())
-            mocked.post(
-                _PASSWORD_URL,
-                payload={"code": -3, "msg": "current password incorrect", "data": None},
+        with pytest.raises(ValueError, match="authenticated account"):
+            await client.change_password(
+                "other-user",
+                "new-password",
+                current_password="current-password",
             )
 
-            with pytest.raises(NanoKVMApiError) as exc_info:
-                await client.change_password(
-                    "synthetic-user",
-                    "new-password",
-                    current_password="wrong-password",
-                )
+        assert ("POST", yarl.URL(_PASSWORD_URL)) not in mocked.requests
 
-            assert exc_info.value.code == -3
-            assert client.token == "session-token"
+
+async def test_new_contract_preserves_api_error_codes(mocked: aioresponses) -> None:
+    """An incorrect current password remains a device API error."""
+    async with _prepare_client() as client:
+        mocked.get(_ACCOUNT_URL, payload=_account_payload())
+        mocked.post(
+            _PASSWORD_URL,
+            payload={"code": -3, "msg": "current password incorrect", "data": None},
+        )
+
+        with pytest.raises(NanoKVMApiError) as exc_info:
+            await client.change_password(
+                "synthetic-user",
+                "new-password",
+                current_password="wrong-password",
+            )
+
+        assert exc_info.value.code == -3
+        assert client.token == "session-token"
 
 
 @pytest.mark.parametrize(
@@ -157,22 +157,23 @@ async def test_legacy_contract_is_preserved_for_old_and_pro_devices(
             assert ("GET", yarl.URL(_ACCOUNT_URL)) not in mocked.requests
 
 
-async def test_legacy_contract_preserves_plain_text_password_mode() -> None:
+async def test_legacy_contract_preserves_plain_text_password_mode(
+    mocked: aioresponses,
+) -> None:
     """The old contract still honors an explicitly selected plain mode."""
     client = _prepare_client(hardware=HWVersion.PCIE, application="2.5.0")
     client._session._use_password_obfuscation = False
 
     async with client:
-        with aioresponses() as mocked:
-            mocked.post(_PASSWORD_URL, payload=_success_payload())
+        mocked.post(_PASSWORD_URL, payload=_success_payload())
 
-            await client.change_password("synthetic-user", "new-password")
+        await client.change_password("synthetic-user", "new-password")
 
-            calls = mocked.requests[("POST", yarl.URL(_PASSWORD_URL))]
-            assert calls[0].kwargs.get("json") == {
-                "username": "synthetic-user",
-                "password": "new-password",
-            }
+        calls = mocked.requests[("POST", yarl.URL(_PASSWORD_URL))]
+        assert calls[0].kwargs.get("json") == {
+            "username": "synthetic-user",
+            "password": "new-password",
+        }
 
 
 async def test_unknown_application_version_is_not_guessed() -> None:

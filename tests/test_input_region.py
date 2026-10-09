@@ -16,9 +16,7 @@ from nanokvm.models import (
     SetInputRegionReq,
 )
 
-from .common import mark_detected
-
-_BASE_URL = "http://localhost:8888/api/"
+from .common import BASE_URL, mark_detected
 
 
 def test_input_region_models_parse_aliases_and_off_defaults() -> None:
@@ -112,180 +110,179 @@ def test_input_resolution_model_parses_response() -> None:
     ) == GetInputResolutionRsp(width=1920, height=1080)
 
 
-async def test_get_input_region_uses_non_pro_endpoint_and_parses_response() -> None:
+async def test_get_input_region_uses_non_pro_endpoint_and_parses_response(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
     """Input-region state is read from the non-Pro route."""
-    async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        mark_detected(client, HWVersion.PCIE, "2.5.1")
+    mark_detected(client, HWVersion.PCIE, "2.5.1")
 
-        with aioresponses() as mocked:
-            mocked.get(
-                f"{_BASE_URL}vm/input-region",
-                payload={"code": 0, "msg": "success", "data": {"mode": "off"}},
-            )
+    mocked.get(
+        f"{BASE_URL}vm/input-region",
+        payload={"code": 0, "msg": "success", "data": {"mode": "off"}},
+    )
 
-            result = await client.get_input_region()
+    result = await client.get_input_region()
 
-        assert result == GetInputRegionRsp(mode=InputRegionMode.OFF)
-        assert (
-            len(mocked.requests[("GET", yarl.URL(f"{_BASE_URL}vm/input-region"))]) == 1
-        )
+    assert result == GetInputRegionRsp(mode=InputRegionMode.OFF)
+    assert len(mocked.requests[("GET", yarl.URL(f"{BASE_URL}vm/input-region"))]) == 1
 
 
-async def test_set_input_region_posts_complete_and_partial_payloads() -> None:
+async def test_set_input_region_posts_complete_and_partial_payloads(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
     """Input-region updates use aliases and omit only values left as None."""
-    async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        mark_detected(client, HWVersion.PCIE, "2.5.1")
-        url = f"{_BASE_URL}vm/input-region"
+    mark_detected(client, HWVersion.PCIE, "2.5.1")
+    url = f"{BASE_URL}vm/input-region"
 
-        with aioresponses() as mocked:
-            mocked.post(url, payload={"code": 0, "msg": "success", "data": None})
-            mocked.post(url, payload={"code": 0, "msg": "success", "data": None})
+    mocked.post(url, payload={"code": 0, "msg": "success", "data": None})
+    mocked.post(url, payload={"code": 0, "msg": "success", "data": None})
 
-            await client.set_input_region(
-                InputRegionMode.MANUAL,
+    await client.set_input_region(
+        InputRegionMode.MANUAL,
+        frame_width=1920,
+        frame_height=1080,
+        left=10,
+        top=20,
+        width=800,
+        height=600,
+        resolutions=[OriginalResolution(width=1920, height=1080)],
+        selected_resolution="1920x1080",
+        regions=[
+            ManualRegion(
                 frame_width=1920,
                 frame_height=1080,
                 left=10,
                 top=20,
                 width=800,
                 height=600,
-                resolutions=[OriginalResolution(width=1920, height=1080)],
-                selected_resolution="1920x1080",
-                regions=[
-                    ManualRegion(
-                        frame_width=1920,
-                        frame_height=1080,
-                        left=10,
-                        top=20,
-                        width=800,
-                        height=600,
-                    )
-                ],
-                selected_region="800x600",
             )
-            await client.set_input_region(
-                InputRegionMode.AUTO,
-                resolutions=[],
-                selected_resolution="",
-                regions=[],
-                selected_region="",
-            )
+        ],
+        selected_region="800x600",
+    )
+    await client.set_input_region(
+        InputRegionMode.AUTO,
+        resolutions=[],
+        selected_resolution="",
+        regions=[],
+        selected_region="",
+    )
 
-        calls = mocked.requests[("POST", yarl.URL(url))]
-        assert calls[0].kwargs.get("json") == {
-            "mode": "manual",
-            "frameWidth": 1920,
-            "frameHeight": 1080,
-            "left": 10,
-            "top": 20,
-            "width": 800,
-            "height": 600,
-            "resolutions": [{"width": 1920, "height": 1080}],
-            "selectedResolution": "1920x1080",
-            "regions": [
-                {
-                    "frameWidth": 1920,
-                    "frameHeight": 1080,
-                    "left": 10,
-                    "top": 20,
-                    "width": 800,
-                    "height": 600,
-                }
-            ],
-            "selectedRegion": "800x600",
-        }
-        assert calls[1].kwargs.get("json") == {
-            "mode": "auto",
-            "resolutions": [],
-            "selectedResolution": "",
-            "regions": [],
-            "selectedRegion": "",
-        }
+    calls = mocked.requests[("POST", yarl.URL(url))]
+    assert calls[0].kwargs.get("json") == {
+        "mode": "manual",
+        "frameWidth": 1920,
+        "frameHeight": 1080,
+        "left": 10,
+        "top": 20,
+        "width": 800,
+        "height": 600,
+        "resolutions": [{"width": 1920, "height": 1080}],
+        "selectedResolution": "1920x1080",
+        "regions": [
+            {
+                "frameWidth": 1920,
+                "frameHeight": 1080,
+                "left": 10,
+                "top": 20,
+                "width": 800,
+                "height": 600,
+            }
+        ],
+        "selectedRegion": "800x600",
+    }
+    assert calls[1].kwargs.get("json") == {
+        "mode": "auto",
+        "resolutions": [],
+        "selectedResolution": "",
+        "regions": [],
+        "selectedRegion": "",
+    }
 
 
-async def test_get_input_resolution_uses_non_pro_endpoint() -> None:
+async def test_get_input_resolution_uses_non_pro_endpoint(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
     """The current display resolution is read from its dedicated route."""
-    async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        mark_detected(client, HWVersion.ALPHA, "2.5.1")
+    mark_detected(client, HWVersion.ALPHA, "2.5.1")
 
-        with aioresponses() as mocked:
-            mocked.get(
-                f"{_BASE_URL}vm/input-resolution",
-                payload={
-                    "code": 0,
-                    "msg": "success",
-                    "data": {"width": 1920, "height": 1080},
-                },
-            )
+    mocked.get(
+        f"{BASE_URL}vm/input-resolution",
+        payload={
+            "code": 0,
+            "msg": "success",
+            "data": {"width": 1920, "height": 1080},
+        },
+    )
 
-            result = await client.get_input_resolution()
+    result = await client.get_input_resolution()
 
-        assert result == GetInputResolutionRsp(width=1920, height=1080)
-        assert (
-            len(mocked.requests[("GET", yarl.URL(f"{_BASE_URL}vm/input-resolution"))])
-            == 1
-        )
+    assert result == GetInputResolutionRsp(width=1920, height=1080)
+    assert (
+        len(mocked.requests[("GET", yarl.URL(f"{BASE_URL}vm/input-resolution"))]) == 1
+    )
 
 
 @pytest.mark.parametrize(
     "method_name", ["get_input_region", "set_input_region", "get_input_resolution"]
 )
-async def test_input_region_methods_reject_pro_without_io(method_name: str) -> None:
+async def test_input_region_methods_reject_pro_without_io(
+    method_name: str, client: NanoKVMClient
+) -> None:
     """Input-region endpoints are unavailable on Pro hardware."""
-    async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        mark_detected(client, HWVersion.PRO, "9.9.9")
+    mark_detected(client, HWVersion.PRO, "9.9.9")
 
-        with (
-            aioresponses() as mocked,
-            pytest.raises(
-                NanoKVMNotSupportedError,
-                match="hardware: non-Pro",
-            ),
-        ):
-            if method_name == "set_input_region":
-                await getattr(client, method_name)(InputRegionMode.OFF)
-            else:
-                await getattr(client, method_name)()
+    with (
+        aioresponses() as mocked,
+        pytest.raises(
+            NanoKVMNotSupportedError,
+            match="hardware: non-Pro",
+        ),
+    ):
+        if method_name == "set_input_region":
+            await getattr(client, method_name)(InputRegionMode.OFF)
+        else:
+            await getattr(client, method_name)()
 
-        assert not mocked.requests
+    assert not mocked.requests
 
 
 @pytest.mark.parametrize(
     "method_name", ["get_input_region", "set_input_region", "get_input_resolution"]
 )
-async def test_input_region_methods_reject_250_without_io(method_name: str) -> None:
+async def test_input_region_methods_reject_250_without_io(
+    method_name: str, client: NanoKVMClient
+) -> None:
     """Input-region endpoints are unavailable before non-Pro 2.5.1."""
-    async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        mark_detected(client, HWVersion.PCIE, "2.5.0")
+    mark_detected(client, HWVersion.PCIE, "2.5.0")
 
-        with (
-            aioresponses() as mocked,
-            pytest.raises(
-                NanoKVMNotSupportedError,
-                match=rf"{method_name} requires non-Pro application version >= 2.5.1",
-            ),
-        ):
-            if method_name == "set_input_region":
-                await getattr(client, method_name)(InputRegionMode.OFF)
-            else:
-                await getattr(client, method_name)()
+    with (
+        aioresponses() as mocked,
+        pytest.raises(
+            NanoKVMNotSupportedError,
+            match=rf"{method_name} requires non-Pro application version >= 2.5.1",
+        ),
+    ):
+        if method_name == "set_input_region":
+            await getattr(client, method_name)(InputRegionMode.OFF)
+        else:
+            await getattr(client, method_name)()
 
-        assert not mocked.requests
+    assert not mocked.requests
 
 
-async def test_set_input_region_preserves_api_error() -> None:
+async def test_set_input_region_preserves_api_error(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
     """An API error envelope remains a NanoKVMApiError."""
-    async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        mark_detected(client, HWVersion.PCIE, "2.5.1")
+    mark_detected(client, HWVersion.PCIE, "2.5.1")
 
-        with aioresponses() as mocked:
-            mocked.post(
-                f"{_BASE_URL}vm/input-region",
-                payload={"code": -1, "msg": "invalid input region", "data": None},
-            )
+    mocked.post(
+        f"{BASE_URL}vm/input-region",
+        payload={"code": -1, "msg": "invalid input region", "data": None},
+    )
 
-            with pytest.raises(NanoKVMApiError) as exc_info:
-                await client.set_input_region(InputRegionMode.MANUAL)
+    with pytest.raises(NanoKVMApiError) as exc_info:
+        await client.set_input_region(InputRegionMode.MANUAL)
 
-        assert exc_info.value.code == -1
-        assert exc_info.value.msg == "invalid input region"
+    assert exc_info.value.code == -1
+    assert exc_info.value.msg == "invalid input region"

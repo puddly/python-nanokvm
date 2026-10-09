@@ -12,39 +12,38 @@ from nanokvm.client import (
 )
 from nanokvm.models import GetKeyboardLedStatusRsp, HWVersion
 
-from .common import mark_detected
-
-_BASE_URL = "http://localhost:8888/api/"
+from .common import BASE_URL, mark_detected
 
 
 @pytest.mark.parametrize("hardware", [HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE])
 @pytest.mark.parametrize("application", ["2.5.0", "2.5.1"])
 async def test_get_keyboard_led_status_parses_the_device_response(
-    hardware: HWVersion, application: str
+    hardware: HWVersion,
+    application: str,
+    mocked: aioresponses,
 ) -> None:
     """Read all keyboard LED states and the host timestamp."""
     async with NanoKVMClient(
-        _BASE_URL,
+        BASE_URL,
         token="synthetic-token",
     ) as client:
         mark_detected(client, hardware, application)
-        with aioresponses() as mocked:
-            mocked.get(
-                f"{_BASE_URL}hid/leds",
-                payload={
-                    "code": 0,
-                    "msg": "success",
-                    "data": {
-                        "numLock": True,
-                        "capsLock": False,
-                        "scrollLock": True,
-                        "known": True,
-                        "updatedAt": "2026-09-13T12:34:56Z",
-                    },
+        mocked.get(
+            f"{BASE_URL}hid/leds",
+            payload={
+                "code": 0,
+                "msg": "success",
+                "data": {
+                    "numLock": True,
+                    "capsLock": False,
+                    "scrollLock": True,
+                    "known": True,
+                    "updatedAt": "2026-09-13T12:34:56Z",
                 },
-            )
+            },
+        )
 
-            status = await client.get_keyboard_led_status()
+        status = await client.get_keyboard_led_status()
 
     assert status.num_lock is True
     assert status.caps_lock is False
@@ -63,15 +62,16 @@ async def test_get_keyboard_led_status_parses_the_device_response(
     ],
 )
 async def test_keyboard_led_status_rejects_unsupported_devices_without_request(
-    hardware: HWVersion, application: str
+    hardware: HWVersion,
+    application: str,
+    mocked: aioresponses,
 ) -> None:
     """Unsupported devices fail locally instead of requesting a missing route."""
-    async with NanoKVMClient(_BASE_URL, token="synthetic-token") as client:
+    async with NanoKVMClient(BASE_URL, token="synthetic-token") as client:
         mark_detected(client, hardware, application)
-        with aioresponses() as mocked:
-            with pytest.raises(NanoKVMNotSupportedError):
-                await client.get_keyboard_led_status()
-            assert not mocked.requests
+        with pytest.raises(NanoKVMNotSupportedError):
+            await client.get_keyboard_led_status()
+        assert not mocked.requests
 
 
 def test_keyboard_led_status_preserves_unknown_state() -> None:
@@ -105,18 +105,19 @@ def test_keyboard_led_status_normalizes_empty_update_timestamp() -> None:
     assert status.updated_at is None
 
 
-async def test_get_keyboard_led_status_preserves_permission_errors() -> None:
+async def test_get_keyboard_led_status_preserves_permission_errors(
+    mocked: aioresponses,
+) -> None:
     """A forbidden LED query is classified by the shared HTTP error handling."""
     async with NanoKVMClient(
-        _BASE_URL,
+        BASE_URL,
         token="synthetic-token",
     ) as client:
         mark_detected(client, HWVersion.PCIE, "2.5.1")
-        with aioresponses() as mocked:
-            mocked.get(f"{_BASE_URL}hid/leds", status=403, body=b'"forbidden"')
+        mocked.get(f"{BASE_URL}hid/leds", status=403, body=b'"forbidden"')
 
-            with pytest.raises(NanoKVMPermissionError) as exc_info:
-                await client.get_keyboard_led_status()
+        with pytest.raises(NanoKVMPermissionError) as exc_info:
+            await client.get_keyboard_led_status()
 
     assert exc_info.value.status == 403
     assert exc_info.value.method == "GET"

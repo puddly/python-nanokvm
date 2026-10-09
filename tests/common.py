@@ -3,6 +3,8 @@
 from nanokvm.client import NanoKVMClient
 from nanokvm.models import HWVersion
 
+BASE_URL = "http://localhost:8888/api/"
+
 
 def mark_detected(
     client: NanoKVMClient,

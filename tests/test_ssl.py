@@ -113,29 +113,29 @@ async def test_password_obfuscation_can_be_disabled() -> None:
     assert client._session._use_password_obfuscation is False
 
 
-async def test_authenticate_with_plain_text_password() -> None:
+async def test_authenticate_with_plain_text_password(mocked: aioresponses) -> None:
     """Test authentication with plain text password (newer NanoKVM)."""
     async with NanoKVMClient(
         "https://kvm.local/api/", use_password_obfuscation=False
     ) as client:
-        with aioresponses() as m:
-            m.post(
-                "https://kvm.local/api/auth/login",
-                payload={"code": 0, "msg": "success", "data": {"token": "abc123"}},
-            )
-            m.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        mocked.post(
+            "https://kvm.local/api/auth/login",
+            payload={"code": 0, "msg": "success", "data": {"token": "abc123"}},
+        )
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
-            await client.authenticate("root", "password123")
+        await client.authenticate("root", "password123")
 
-            calls = m.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
-            assert len(calls) == 1
-            request_json = calls[0].kwargs.get("json")
-            assert request_json["username"] == "root"
-            assert request_json["password"] == "password123"
+        calls = mocked.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
+        assert len(calls) == 1
+        request_json = calls[0].kwargs.get("json")
+        assert request_json["username"] == "root"
+        assert request_json["password"] == "password123"
 
 
 async def test_authentication_debug_logs_redact_credentials(
     caplog: pytest.LogCaptureFixture,
+    mocked: aioresponses,
 ) -> None:
     """Authentication logs must not contain passwords or returned tokens."""
     password = "password-must-not-be-logged"
@@ -145,154 +145,148 @@ async def test_authentication_debug_logs_redact_credentials(
     async with NanoKVMClient(
         "https://kvm.local/api/", use_password_obfuscation=False
     ) as client:
-        with aioresponses() as m:
-            m.post(
-                "https://kvm.local/api/auth/login",
-                payload={"code": 0, "msg": "success", "data": {"token": token}},
-            )
-            m.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        mocked.post(
+            "https://kvm.local/api/auth/login",
+            payload={"code": 0, "msg": "success", "data": {"token": token}},
+        )
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
-            await client.authenticate("root", password)
+        await client.authenticate("root", password)
 
     assert password not in caplog.text
     assert token not in caplog.text
 
 
-async def test_authenticate_with_obfuscated_password() -> None:
+async def test_authenticate_with_obfuscated_password(mocked: aioresponses) -> None:
     """Test authentication with obfuscated password (older NanoKVM)."""
     async with NanoKVMClient(
         "https://kvm.local/api/", use_password_obfuscation=True
     ) as client:
-        with aioresponses() as m:
-            m.post(
-                "https://kvm.local/api/auth/login",
-                payload={"code": 0, "msg": "success", "data": {"token": "abc123"}},
-            )
-            m.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        mocked.post(
+            "https://kvm.local/api/auth/login",
+            payload={"code": 0, "msg": "success", "data": {"token": "abc123"}},
+        )
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
-            await client.authenticate("root", "password123")
+        await client.authenticate("root", "password123")
 
-            calls = m.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
-            assert len(calls) == 1
-            request_json = calls[0].kwargs.get("json")
-            assert request_json["username"] == "root"
-            assert request_json["password"].startswith("U2FsdGVkX1")
-            assert request_json["password"] != "password123"
+        calls = mocked.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
+        assert len(calls) == 1
+        request_json = calls[0].kwargs.get("json")
+        assert request_json["username"] == "root"
+        assert request_json["password"].startswith("U2FsdGVkX1")
+        assert request_json["password"] != "password123"
 
 
-async def test_auto_detect_obfuscation_succeeds() -> None:
+async def test_auto_detect_obfuscation_succeeds(mocked: aioresponses) -> None:
     """Test auto-detect succeeds with obfuscated password on first attempt."""
     async with NanoKVMClient("https://kvm.local/api/") as client:
-        with aioresponses() as m:
-            m.post(
-                "https://kvm.local/api/auth/login",
-                payload={
-                    "code": 0,
-                    "msg": "success",
-                    "data": {"token": "abc123"},
-                },
-            )
-            m.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        mocked.post(
+            "https://kvm.local/api/auth/login",
+            payload={
+                "code": 0,
+                "msg": "success",
+                "data": {"token": "abc123"},
+            },
+        )
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
-            await client.authenticate("root", "password123")
+        await client.authenticate("root", "password123")
 
-            calls = m.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
-            assert len(calls) == 1
-            request_json = calls[0].kwargs.get("json")
-            assert request_json["password"].startswith("U2FsdGVkX1")
-            assert client.token == "abc123"
+        calls = mocked.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
+        assert len(calls) == 1
+        request_json = calls[0].kwargs.get("json")
+        assert request_json["password"].startswith("U2FsdGVkX1")
+        assert client.token == "abc123"
 
 
-async def test_auto_detect_fallback_to_plain_text() -> None:
+async def test_auto_detect_fallback_to_plain_text(mocked: aioresponses) -> None:
     """Test auto-detect falls back to plain text after obfuscated fails."""
     async with NanoKVMClient("https://kvm.local/api/") as client:
-        with aioresponses() as m:
-            # First call: obfuscated fails with code -2
-            m.post(
-                "https://kvm.local/api/auth/login",
-                payload={
-                    "code": -2,
-                    "msg": "invalid username or password",
-                    "data": None,
-                },
-            )
-            # Second call: plain text succeeds
-            m.post(
-                "https://kvm.local/api/auth/login",
-                payload={
-                    "code": 0,
-                    "msg": "success",
-                    "data": {"token": "abc123"},
-                },
-            )
-            m.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        # First call: obfuscated fails with code -2
+        mocked.post(
+            "https://kvm.local/api/auth/login",
+            payload={
+                "code": -2,
+                "msg": "invalid username or password",
+                "data": None,
+            },
+        )
+        # Second call: plain text succeeds
+        mocked.post(
+            "https://kvm.local/api/auth/login",
+            payload={
+                "code": 0,
+                "msg": "success",
+                "data": {"token": "abc123"},
+            },
+        )
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
-            await client.authenticate("root", "password123")
+        await client.authenticate("root", "password123")
 
-            calls = m.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
-            assert len(calls) == 2
-            # First attempt: obfuscated
-            assert calls[0].kwargs.get("json")["password"].startswith("U2FsdGVkX1")
-            # Second attempt: plain text
-            assert calls[1].kwargs.get("json")["password"] == "password123"
-            assert client.token == "abc123"
+        calls = mocked.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
+        assert len(calls) == 2
+        # First attempt: obfuscated
+        assert calls[0].kwargs.get("json")["password"].startswith("U2FsdGVkX1")
+        # Second attempt: plain text
+        assert calls[1].kwargs.get("json")["password"] == "password123"
+        assert client.token == "abc123"
 
 
-async def test_auto_detect_both_fail() -> None:
+async def test_auto_detect_both_fail(mocked: aioresponses) -> None:
     """Test auto-detect raises NanoKVMAuthenticationFailure when both fail."""
     async with NanoKVMClient("https://kvm.local/api/") as client:
-        with aioresponses() as m:
-            # First call: obfuscated fails
-            m.post(
-                "https://kvm.local/api/auth/login",
-                payload={
-                    "code": -2,
-                    "msg": "invalid username or password",
-                    "data": None,
-                },
-            )
-            # Second call: plain text also fails
-            m.post(
-                "https://kvm.local/api/auth/login",
-                payload={
-                    "code": -2,
-                    "msg": "invalid username or password",
-                    "data": None,
-                },
-            )
+        # First call: obfuscated fails
+        mocked.post(
+            "https://kvm.local/api/auth/login",
+            payload={
+                "code": -2,
+                "msg": "invalid username or password",
+                "data": None,
+            },
+        )
+        # Second call: plain text also fails
+        mocked.post(
+            "https://kvm.local/api/auth/login",
+            payload={
+                "code": -2,
+                "msg": "invalid username or password",
+                "data": None,
+            },
+        )
 
-            with pytest.raises(NanoKVMAuthenticationFailure):
-                await client.authenticate("root", "wrong_password")
+        with pytest.raises(NanoKVMAuthenticationFailure):
+            await client.authenticate("root", "wrong_password")
 
 
-async def test_full_client_lifecycle_with_ssl() -> None:
+async def test_full_client_lifecycle_with_ssl(mocked: aioresponses) -> None:
     """Test full client lifecycle with SSL configuration."""
     async with NanoKVMClient(
         "https://kvm.local/api/", token="test-token", verify_ssl=True
     ) as client:
-        with aioresponses() as m:
-            m.get(
-                "https://kvm.local/api/vm/info",
-                payload={
-                    "code": 0,
-                    "msg": "success",
-                    "data": {
-                        "ips": [
-                            {
-                                "name": "eth0",
-                                "addr": "192.168.1.100",
-                                "version": "4",
-                                "type": "ethernet",
-                            }
-                        ],
-                        "mdns": "kvm.local",
-                        "image": "v1.0.0",
-                        "application": "v2.1.0",
-                        "deviceKey": "abc123",
-                    },
+        mocked.get(
+            "https://kvm.local/api/vm/info",
+            payload={
+                "code": 0,
+                "msg": "success",
+                "data": {
+                    "ips": [
+                        {
+                            "name": "eth0",
+                            "addr": "192.168.1.100",
+                            "version": "4",
+                            "type": "ethernet",
+                        }
+                    ],
+                    "mdns": "kvm.local",
+                    "image": "v1.0.0",
+                    "application": "v2.1.0",
+                    "deviceKey": "abc123",
                 },
-            )
+            },
+        )
 
-            info = await client.get_info()
-            assert len(info.ips) == 1
-            assert info.ips[0].addr == "192.168.1.100"
+        info = await client.get_info()
+        assert len(info.ips) == 1
+        assert info.ips[0].addr == "192.168.1.100"

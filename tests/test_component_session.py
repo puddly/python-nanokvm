@@ -61,20 +61,19 @@ async def test_components_share_permissions_and_external_session() -> None:
         assert not http.closed
 
 
-async def test_mutating_public_url_updates_all_components() -> None:
+async def test_mutating_public_url_updates_all_components(mocked: aioresponses) -> None:
     """The writable URL still controls both metadata and domain requests."""
     old_url = "http://old-kvm.local/api/"
     new_url = "http://new-kvm.local/api/"
     async with NanoKVMClient(old_url, token="synthetic-token") as client:
         client.url = yarl.URL(new_url)
-        with aioresponses() as mocked:
-            mocked.get(
-                f"{new_url}vm/hardware",
-                payload={"code": 0, "msg": "ok", "data": {"version": "Pro"}},
-            )
-            mocked.get(
-                f"{new_url}network/wol/mac",
-                payload={"code": 0, "msg": "ok", "data": {"macs": []}},
-            )
-            assert (await client.get_hardware()).version is HWVersion.PRO
-            assert (await client.get_wol_macs()).macs == []
+        mocked.get(
+            f"{new_url}vm/hardware",
+            payload={"code": 0, "msg": "ok", "data": {"version": "Pro"}},
+        )
+        mocked.get(
+            f"{new_url}network/wol/mac",
+            payload={"code": 0, "msg": "ok", "data": {"macs": []}},
+        )
+        assert (await client.get_hardware()).version is HWVersion.PRO
+        assert (await client.get_wol_macs()).macs == []

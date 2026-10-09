@@ -23,6 +23,7 @@ _URL = "http://kvm.local/api/"
 async def test_delayed_401_does_not_clear_replacement_session(
     transport: str,
     new_token: str,
+    mocked: aioresponses,
 ) -> None:
     """Even an identical reissued token belongs to a new login generation."""
     started = asyncio.Event()
@@ -46,34 +47,35 @@ async def test_delayed_401_does_not_clear_replacement_session(
                 async for _ in client.mjpeg_stream():
                     pass
 
-        with aioresponses() as mocked:
-            if transport == "json":
-                mocked.get(f"{_URL}auth/account", callback=delayed_401)
-            elif transport == "form":
-                mocked.post(f"{_URL}upload", callback=delayed_401)
-            else:
-                mocked.get(f"{_URL}stream/mjpeg", callback=delayed_401)
-            mocked.post(
-                f"{_URL}auth/login",
-                payload={"code": 0, "msg": "ok", "data": {"token": new_token}},
-            )
-            mocked.get(
-                f"{_URL}vm/hardware",
-                payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
-            )
-            async with asyncio.timeout(2):
-                pending = asyncio.create_task(request())
-                await started.wait()
-                try:
-                    await client.authenticate("synthetic-user", "synthetic-password")
-                finally:
-                    release.set()
-                with pytest.raises(NanoKVMNotAuthenticatedError):
-                    await pending
-            assert client.token == new_token
+        if transport == "json":
+            mocked.get(f"{_URL}auth/account", callback=delayed_401)
+        elif transport == "form":
+            mocked.post(f"{_URL}upload", callback=delayed_401)
+        else:
+            mocked.get(f"{_URL}stream/mjpeg", callback=delayed_401)
+        mocked.post(
+            f"{_URL}auth/login",
+            payload={"code": 0, "msg": "ok", "data": {"token": new_token}},
+        )
+        mocked.get(
+            f"{_URL}vm/hardware",
+            payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
+        )
+        async with asyncio.timeout(2):
+            pending = asyncio.create_task(request())
+            await started.wait()
+            try:
+                await client.authenticate("synthetic-user", "synthetic-password")
+            finally:
+                release.set()
+            with pytest.raises(NanoKVMNotAuthenticatedError):
+                await pending
+        assert client.token == new_token
 
 
-async def test_delayed_form_success_is_rejected_after_reauthentication() -> None:
+async def test_delayed_form_success_is_rejected_after_reauthentication(
+    mocked: aioresponses,
+) -> None:
     """Multipart responses cannot cross into a replacement session."""
     started, release = asyncio.Event(), asyncio.Event()
 
@@ -83,32 +85,27 @@ async def test_delayed_form_success_is_rejected_after_reauthentication() -> None
         return CallbackResult(payload={"code": 0, "msg": "ok", "data": None})
 
     async with NanoKVMClient(_URL, token="old-session") as client:
-        with aioresponses() as mocked:
-            mocked.post(f"{_URL}upload", callback=delayed_success)
-            mocked.post(
-                f"{_URL}auth/login",
-                payload={"code": 0, "msg": "ok", "data": {"token": "new-session"}},
-            )
-            mocked.get(
-                f"{_URL}vm/hardware",
-                payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
-            )
-            pending = asyncio.create_task(
-                client._session.api_request_json(
-                    "POST", "/upload", data=aiohttp.FormData()
-                )
-            )
-            async with asyncio.timeout(2):
-                await started.wait()
-                try:
-                    await client.authenticate("synthetic-user", "synthetic-password")
-                finally:
-                    release.set()
-                with pytest.raises(
-                    NanoKVMNotAuthenticatedError, match="Session changed"
-                ):
-                    await pending
-            assert client.token == "new-session"
+        mocked.post(f"{_URL}upload", callback=delayed_success)
+        mocked.post(
+            f"{_URL}auth/login",
+            payload={"code": 0, "msg": "ok", "data": {"token": "new-session"}},
+        )
+        mocked.get(
+            f"{_URL}vm/hardware",
+            payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
+        )
+        pending = asyncio.create_task(
+            client._session.api_request_json("POST", "/upload", data=aiohttp.FormData())
+        )
+        async with asyncio.timeout(2):
+            await started.wait()
+            try:
+                await client.authenticate("synthetic-user", "synthetic-password")
+            finally:
+                release.set()
+            with pytest.raises(NanoKVMNotAuthenticatedError, match="Session changed"):
+                await pending
+        assert client.token == "new-session"
 
 
 async def test_websocket_401_waiting_for_cleanup_cannot_clear_new_login() -> None:
@@ -207,7 +204,9 @@ async def test_session_cleanup_does_not_close_new_websocket_while_old_one_closes
 
 
 @pytest.mark.parametrize("operation", ["logout", "password"])
-async def test_delayed_session_ending_response_is_rejected(operation: str) -> None:
+async def test_delayed_session_ending_response_is_rejected(
+    operation: str, mocked: aioresponses
+) -> None:
     """A superseded logout or password change reports its stale response."""
     started = asyncio.Event()
     release = asyncio.Event()
@@ -219,52 +218,48 @@ async def test_delayed_session_ending_response_is_rejected(operation: str) -> No
 
     async with NanoKVMClient(_URL, token="old-session") as client:
         mark_detected(client, HWVersion.PCIE, "2.5.1")
-        with aioresponses() as mocked:
-            mocked.get(
-                f"{_URL}auth/account",
-                payload={
-                    "code": 0,
-                    "msg": "ok",
-                    "data": {"username": "synthetic-user"},
-                },
+        mocked.get(
+            f"{_URL}auth/account",
+            payload={
+                "code": 0,
+                "msg": "ok",
+                "data": {"username": "synthetic-user"},
+            },
+        )
+        mocked.post(f"{_URL}auth/{operation}", callback=delayed_success)
+        mocked.post(
+            f"{_URL}auth/login",
+            payload={"code": 0, "msg": "ok", "data": {"token": "new-session"}},
+        )
+        mocked.get(
+            f"{_URL}vm/hardware",
+            payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
+        )
+        pending = asyncio.create_task(
+            client.logout()
+            if operation == "logout"
+            else client.change_password(
+                "synthetic-user", "new-password", current_password="old-password"
             )
-            mocked.post(f"{_URL}auth/{operation}", callback=delayed_success)
-            mocked.post(
-                f"{_URL}auth/login",
-                payload={"code": 0, "msg": "ok", "data": {"token": "new-session"}},
-            )
-            mocked.get(
-                f"{_URL}vm/hardware",
-                payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
-            )
-            pending = asyncio.create_task(
-                client.logout()
-                if operation == "logout"
-                else client.change_password(
-                    "synthetic-user", "new-password", current_password="old-password"
-                )
-            )
-            async with asyncio.timeout(2):
-                await started.wait()
-                try:
-                    await client.authenticate("synthetic-user", "synthetic-password")
-                finally:
-                    release.set()
-                with pytest.raises(
-                    NanoKVMNotAuthenticatedError, match="Session changed"
-                ):
-                    await pending
-            assert client.token == "new-session"
+        )
+        async with asyncio.timeout(2):
+            await started.wait()
+            try:
+                await client.authenticate("synthetic-user", "synthetic-password")
+            finally:
+                release.set()
+            with pytest.raises(NanoKVMNotAuthenticatedError, match="Session changed"):
+                await pending
+        assert client.token == "new-session"
 
 
-async def test_logout_forgets_cached_firmware_versions() -> None:
+async def test_logout_forgets_cached_firmware_versions(mocked: aioresponses) -> None:
     """A later login re-detects versions, so a firmware update is noticed."""
     async with NanoKVMClient(_URL, token="synthetic-token") as client:
         mark_detected(client, HWVersion.PCIE, "2.3.0")
         client._session._image_version = "1.4.0"
-        with aioresponses() as mocked:
-            mocked.post(f"{_URL}auth/logout", payload={"code": 0, "msg": "ok"})
-            await client.logout()
+        mocked.post(f"{_URL}auth/logout", payload={"code": 0, "msg": "ok"})
+        await client.logout()
 
         assert client.application_version is None
         assert client.image_version is None

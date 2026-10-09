@@ -32,23 +32,22 @@ def _websocket_request_info() -> aiohttp.RequestInfo:
     )
 
 
-async def test_get_account_exposes_known_role() -> None:
+async def test_get_account_exposes_known_role(mocked: aioresponses) -> None:
     """The role returned by 2.5.1 is available to callers."""
     async with NanoKVMClient(_BASE_URL, token="synthetic-token") as client:
-        with aioresponses() as mocked:
-            mocked.get(
-                f"{_BASE_URL}auth/account",
-                payload={
-                    "code": 0,
-                    "msg": "success",
-                    "data": {"username": "synthetic-user", "role": "user"},
-                },
-            )
+        mocked.get(
+            f"{_BASE_URL}auth/account",
+            payload={
+                "code": 0,
+                "msg": "success",
+                "data": {"username": "synthetic-user", "role": "user"},
+            },
+        )
 
-            account = await client.get_account()
+        account = await client.get_account()
 
-            assert account.username == "synthetic-user"
-            assert account.role == "user"
+        assert account.username == "synthetic-user"
+        assert account.role == "user"
 
 
 @pytest.mark.parametrize("role", [None, "admin", "user", "future-role"])
@@ -68,89 +67,90 @@ def test_account_role_is_optional_and_forward_compatible(role: str | None) -> No
     "body",
     [b'"forbidden"', b"", b"<html><body>forbidden</body></html>"],
 )
-async def test_http_403_is_permission_error_before_body_parsing(body: bytes) -> None:
+async def test_http_403_is_permission_error_before_body_parsing(
+    body: bytes, mocked: aioresponses
+) -> None:
     """All real 403 bodies map to one structured permission exception."""
     async with NanoKVMClient(_BASE_URL, token="synthetic-token") as client:
-        with aioresponses() as mocked:
-            mocked.get(f"{_BASE_URL}storage/image", status=403, body=body)
+        mocked.get(f"{_BASE_URL}storage/image", status=403, body=body)
 
-            with pytest.raises(NanoKVMPermissionError) as exc_info:
-                await client.get_images()
+        with pytest.raises(NanoKVMPermissionError) as exc_info:
+            await client.get_images()
 
-            error = exc_info.value
-            assert error.status == 403
-            assert error.method == "GET"
-            assert error.path == "/storage/image"
+        error = exc_info.value
+        assert error.status == 403
+        assert error.method == "GET"
+        assert error.path == "/storage/image"
 
 
-async def test_permission_error_does_not_invalidate_session_or_retry_login() -> None:
+async def test_permission_error_does_not_invalidate_session_or_retry_login(
+    mocked: aioresponses,
+) -> None:
     """A forbidden admin resource leaves the same user session usable."""
     async with NanoKVMClient(_BASE_URL, token="synthetic-token") as client:
-        with aioresponses() as mocked:
-            mocked.get(f"{_BASE_URL}storage/image", status=403, body=b'"forbidden"')
-            mocked.get(f"{_BASE_URL}vm/info", payload=info_payload())
+        mocked.get(f"{_BASE_URL}storage/image", status=403, body=b'"forbidden"')
+        mocked.get(f"{_BASE_URL}vm/info", payload=info_payload())
 
-            with pytest.raises(NanoKVMPermissionError):
-                await client.get_images()
+        with pytest.raises(NanoKVMPermissionError):
+            await client.get_images()
 
-            info = await client.get_info()
+        info = await client.get_info()
 
-            assert info.application == "2.5.1"
-            assert client.token == "synthetic-token"
-            assert (
-                "POST",
-                yarl.URL(f"{_BASE_URL}auth/login"),
-            ) not in mocked.requests
+        assert info.application == "2.5.1"
+        assert client.token == "synthetic-token"
+        assert (
+            "POST",
+            yarl.URL(f"{_BASE_URL}auth/login"),
+        ) not in mocked.requests
 
 
-async def test_http_401_invalidates_local_session() -> None:
+async def test_http_401_invalidates_local_session(mocked: aioresponses) -> None:
     """An authenticated 401 clears the token and local input state."""
     async with NanoKVMClient(_BASE_URL, token="expired-token") as client:
         client._session._mouse_buttons = 1
-        with aioresponses() as mocked:
-            mocked.get(f"{_BASE_URL}vm/info", status=401, body=b'"unauthorized"')
+        mocked.get(f"{_BASE_URL}vm/info", status=401, body=b'"unauthorized"')
 
-            with pytest.raises(NanoKVMNotAuthenticatedError):
-                await client.get_info()
+        with pytest.raises(NanoKVMNotAuthenticatedError):
+            await client.get_info()
 
-            assert client.token is None
-            assert client._session._mouse_buttons == 0
+        assert client.token is None
+        assert client._session._mouse_buttons == 0
 
-            with pytest.raises(NanoKVMNotAuthenticatedError):
-                await client.get_info()
+        with pytest.raises(NanoKVMNotAuthenticatedError):
+            await client.get_info()
 
 
-async def test_http_200_api_error_remains_api_error() -> None:
+async def test_http_200_api_error_remains_api_error(mocked: aioresponses) -> None:
     """An API error envelope at HTTP 200 is distinct from permission failure."""
     async with NanoKVMClient(_BASE_URL, token="synthetic-token") as client:
-        with aioresponses() as mocked:
-            mocked.get(
-                f"{_BASE_URL}storage/image",
-                payload={"code": -1, "msg": "read failed", "data": None},
-            )
+        mocked.get(
+            f"{_BASE_URL}storage/image",
+            payload={"code": -1, "msg": "read failed", "data": None},
+        )
 
-            with pytest.raises(NanoKVMApiError) as exc_info:
-                await client.get_images()
+        with pytest.raises(NanoKVMApiError) as exc_info:
+            await client.get_images()
 
-            assert exc_info.value.code == -1
-            assert client.token == "synthetic-token"
+        assert exc_info.value.code == -1
+        assert client.token == "synthetic-token"
 
 
-async def test_multipart_403_is_permission_error(tmp_path: Path) -> None:
+async def test_multipart_403_is_permission_error(
+    tmp_path: Path, mocked: aioresponses
+) -> None:
     """Multipart endpoints use the same HTTP status classification."""
     script = tmp_path / "synthetic.sh"
     script.write_text("#!/bin/sh\ntrue\n")
 
     async with NanoKVMClient(_BASE_URL, token="synthetic-token") as client:
-        with aioresponses() as mocked:
-            mocked.post(f"{_BASE_URL}vm/script/upload", status=403, body=b"")
+        mocked.post(f"{_BASE_URL}vm/script/upload", status=403, body=b"")
 
-            with pytest.raises(NanoKVMPermissionError) as exc_info:
-                await client.upload_script(script)
+        with pytest.raises(NanoKVMPermissionError) as exc_info:
+            await client.upload_script(script)
 
-            assert exc_info.value.status == 403
-            assert exc_info.value.method == "POST"
-            assert exc_info.value.path == "/vm/script/upload"
+        assert exc_info.value.status == 403
+        assert exc_info.value.method == "POST"
+        assert exc_info.value.path == "/vm/script/upload"
 
 
 async def test_websocket_403_is_permission_error() -> None:
@@ -204,29 +204,27 @@ async def test_websocket_401_clears_session_without_lock_deadlock() -> None:
             assert client._session._mouse_buttons == 0
 
 
-async def test_mjpeg_403_is_permission_error() -> None:
+async def test_mjpeg_403_is_permission_error(mocked: aioresponses) -> None:
     """Opening the MJPEG stream classifies forbidden status before parsing."""
     async with NanoKVMClient(_BASE_URL, token="synthetic-token") as client:
-        with aioresponses() as mocked:
-            mocked.get(f"{_BASE_URL}stream/mjpeg", status=403, body=b"<html>")
+        mocked.get(f"{_BASE_URL}stream/mjpeg", status=403, body=b"<html>")
 
-            with pytest.raises(NanoKVMPermissionError) as exc_info:
-                async for _frame in client.mjpeg_stream():
-                    pass
+        with pytest.raises(NanoKVMPermissionError) as exc_info:
+            async for _frame in client.mjpeg_stream():
+                pass
 
-            assert exc_info.value.status == 403
-            assert exc_info.value.method == "GET"
-            assert exc_info.value.path == "/stream/mjpeg"
+        assert exc_info.value.status == 403
+        assert exc_info.value.method == "GET"
+        assert exc_info.value.path == "/stream/mjpeg"
 
 
-async def test_mjpeg_401_invalidates_session() -> None:
+async def test_mjpeg_401_invalidates_session(mocked: aioresponses) -> None:
     """An expired MJPEG session is classified and cleared like JSON requests."""
     async with NanoKVMClient(_BASE_URL, token="expired-token") as client:
-        with aioresponses() as mocked:
-            mocked.get(f"{_BASE_URL}stream/mjpeg", status=401, body=b'"unauthorized"')
+        mocked.get(f"{_BASE_URL}stream/mjpeg", status=401, body=b'"unauthorized"')
 
-            with pytest.raises(NanoKVMNotAuthenticatedError):
-                async for _frame in client.mjpeg_stream():
-                    pass
+        with pytest.raises(NanoKVMNotAuthenticatedError):
+            async for _frame in client.mjpeg_stream():
+                pass
 
-            assert client.token is None
+        assert client.token is None

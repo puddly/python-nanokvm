@@ -37,116 +37,119 @@ def _login_payload(data: object = None) -> dict[str, object]:
     return {"code": 0, "msg": "success", "data": data}
 
 
-async def test_cookie_only_login_accepts_null_data_and_uses_fresh_cookie() -> None:
+async def test_cookie_only_login_accepts_null_data_and_uses_fresh_cookie(
+    mocked: aioresponses,
+) -> None:
     """The 2.5.1 login envelope has no data and returns the token as a cookie."""
     async with NanoKVMClient(_BASE_URL) as client:
-        with aioresponses() as mocked:
-            mocked.post(
-                _LOGIN_URL,
-                payload=_login_payload(),
-                headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/; HttpOnly"},
-            )
-            mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        mocked.post(
+            _LOGIN_URL,
+            payload=_login_payload(),
+            headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/; HttpOnly"},
+        )
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
-            await client.authenticate("synthetic-user", "synthetic-password")
+        await client.authenticate("synthetic-user", "synthetic-password")
 
-            assert client.token == "cookie-token"
-            login_calls = mocked.requests[("POST", yarl.URL(_LOGIN_URL))]
-            assert login_calls[0].kwargs.get("cookies") == {}
+        assert client.token == "cookie-token"
+        login_calls = mocked.requests[("POST", yarl.URL(_LOGIN_URL))]
+        assert login_calls[0].kwargs.get("cookies") == {}
 
 
-async def test_cookie_token_has_priority_over_legacy_body_token() -> None:
+async def test_cookie_token_has_priority_over_legacy_body_token(
+    mocked: aioresponses,
+) -> None:
     """A fresh Set-Cookie value wins when old firmware returns both tokens."""
     async with NanoKVMClient(_BASE_URL) as client:
-        with aioresponses() as mocked:
-            mocked.post(
-                _LOGIN_URL,
-                payload=_login_payload({"token": "body-token"}),
-                headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/"},
-            )
-            mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        mocked.post(
+            _LOGIN_URL,
+            payload=_login_payload({"token": "body-token"}),
+            headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/"},
+        )
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
-            await client.authenticate("synthetic-user", "synthetic-password")
+        await client.authenticate("synthetic-user", "synthetic-password")
 
-            assert client.token == "cookie-token"
+        assert client.token == "cookie-token"
 
 
 @pytest.mark.parametrize("data", [{}, {"count": 0}, {"token": ["invalid"]}, "unused"])
-async def test_cookie_login_ignores_unused_legacy_body(data: object) -> None:
+async def test_cookie_login_ignores_unused_legacy_body(
+    data: object, mocked: aioresponses
+) -> None:
     """A valid fresh cookie must not depend on the obsolete body token schema."""
     async with NanoKVMClient(_BASE_URL) as client:
-        with aioresponses() as mocked:
-            mocked.post(
-                _LOGIN_URL,
-                payload=_login_payload(data),
-                headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/"},
-            )
-            mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
-            await client.authenticate("synthetic-user", "synthetic-password")
-            assert client.token == "cookie-token"
+        mocked.post(
+            _LOGIN_URL,
+            payload=_login_payload(data),
+            headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/"},
+        )
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        await client.authenticate("synthetic-user", "synthetic-password")
+        assert client.token == "cookie-token"
 
 
-async def test_empty_cookie_falls_back_to_legacy_body_token() -> None:
+async def test_empty_cookie_falls_back_to_legacy_body_token(
+    mocked: aioresponses,
+) -> None:
     """An empty Set-Cookie does not hide a valid legacy token."""
     async with NanoKVMClient(_BASE_URL) as client:
-        with aioresponses() as mocked:
-            mocked.post(
-                _LOGIN_URL,
-                payload=_login_payload({"token": "body-token"}),
-                headers={"Set-Cookie": "nano-kvm-token=; Path=/"},
-            )
-            mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
-            await client.authenticate("synthetic-user", "synthetic-password")
-            assert client.token == "body-token"
+        mocked.post(
+            _LOGIN_URL,
+            payload=_login_payload({"token": "body-token"}),
+            headers={"Set-Cookie": "nano-kvm-token=; Path=/"},
+        )
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        await client.authenticate("synthetic-user", "synthetic-password")
+        assert client.token == "body-token"
 
 
-async def test_cookie_does_not_bypass_envelope_validation() -> None:
+async def test_cookie_does_not_bypass_envelope_validation(mocked: aioresponses) -> None:
     """Cookie precedence only applies after the API envelope is validated."""
     async with NanoKVMClient(_BASE_URL) as client:
-        with aioresponses() as mocked:
-            mocked.post(
-                _LOGIN_URL,
-                payload={"data": {"token": "body-token"}},
-                headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/"},
-            )
-            with pytest.raises(NanoKVMInvalidResponseError):
-                await client.authenticate("synthetic-user", "synthetic-password")
-            assert client.token is None
+        mocked.post(
+            _LOGIN_URL,
+            payload={"data": {"token": "body-token"}},
+            headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/"},
+        )
+        with pytest.raises(NanoKVMInvalidResponseError):
+            await client.authenticate("synthetic-user", "synthetic-password")
+        assert client.token is None
 
 
-async def test_legacy_body_token_login_remains_supported() -> None:
+async def test_legacy_body_token_login_remains_supported(mocked: aioresponses) -> None:
     """Older firmware continues to authenticate with a token in response data."""
     async with NanoKVMClient(_BASE_URL) as client:
-        with aioresponses() as mocked:
-            mocked.post(
-                _LOGIN_URL,
-                payload=_login_payload({"token": "body-token"}),
-            )
-            mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        mocked.post(
+            _LOGIN_URL,
+            payload=_login_payload({"token": "body-token"}),
+        )
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
-            await client.authenticate("synthetic-user", "synthetic-password")
+        await client.authenticate("synthetic-user", "synthetic-password")
 
-            assert client.token == "body-token"
+        assert client.token == "body-token"
 
 
-async def test_cookie_login_validates_api_code_before_accepting_cookie() -> None:
+async def test_cookie_login_validates_api_code_before_accepting_cookie(
+    mocked: aioresponses,
+) -> None:
     """A cookie on an API error response cannot establish a session."""
     async with NanoKVMClient(_BASE_URL, use_password_obfuscation=True) as client:
-        with aioresponses() as mocked:
-            mocked.post(
-                _LOGIN_URL,
-                payload={
-                    "code": -2,
-                    "msg": "invalid username or password",
-                    "data": None,
-                },
-                headers={"Set-Cookie": "nano-kvm-token=invalid-token; Path=/"},
-            )
+        mocked.post(
+            _LOGIN_URL,
+            payload={
+                "code": -2,
+                "msg": "invalid username or password",
+                "data": None,
+            },
+            headers={"Set-Cookie": "nano-kvm-token=invalid-token; Path=/"},
+        )
 
-            with pytest.raises(NanoKVMAuthenticationFailure):
-                await client.authenticate("synthetic-user", "synthetic-password")
+        with pytest.raises(NanoKVMAuthenticationFailure):
+            await client.authenticate("synthetic-user", "synthetic-password")
 
-            assert client.token is None
+        assert client.token is None
 
 
 async def test_cookie_login_works_with_dummy_cookie_jar() -> None:
@@ -193,21 +196,23 @@ async def test_login_does_not_reuse_an_old_cookie_from_external_session() -> Non
         await session.close()
 
 
-async def test_empty_login_response_is_not_authentication_disabled() -> None:
+async def test_empty_login_response_is_not_authentication_disabled(
+    mocked: aioresponses,
+) -> None:
     """An empty successful login is invalid even for the explicit disabled token."""
     async with NanoKVMClient(_BASE_URL, token="disabled") as client:
-        with aioresponses() as mocked:
-            mocked.post(_LOGIN_URL, payload=_login_payload())
+        mocked.post(_LOGIN_URL, payload=_login_payload())
 
-            with pytest.raises(NanoKVMInvalidResponseError, match="missing token"):
-                await client.authenticate("synthetic-user", "synthetic-password")
+        with pytest.raises(NanoKVMInvalidResponseError, match="missing token"):
+            await client.authenticate("synthetic-user", "synthetic-password")
 
-            assert client.token is None
+        assert client.token is None
 
 
 @pytest.mark.parametrize("failure", ["credentials", "forbidden", "format", "network"])
 async def test_failed_reauthentication_cannot_keep_previous_identity(
     failure: str,
+    mocked: aioresponses,
 ) -> None:
     """A failed identity switch must not retain an old privileged session."""
     old_ws = AsyncMock()
@@ -217,69 +222,68 @@ async def test_failed_reauthentication_cannot_keep_previous_identity(
     ) as client:
         client._session._ws = old_ws
         client._session._mouse_buttons = 1
-        with aioresponses() as mocked:
-            if failure == "credentials":
-                mocked.post(
-                    _LOGIN_URL, payload={"code": -2, "msg": "invalid", "data": None}
-                )
-                error: type[Exception] = NanoKVMAuthenticationFailure
-            elif failure == "forbidden":
-                mocked.post(_LOGIN_URL, status=403, body='"forbidden"')
-                error = aiohttp.ClientResponseError
-            elif failure == "network":
-                mocked.post(_LOGIN_URL, exception=aiohttp.ClientConnectionError())
-                error = aiohttp.ClientConnectionError
-            else:
-                mocked.post(_LOGIN_URL, payload=_login_payload())
-                error = NanoKVMInvalidResponseError
-            with pytest.raises(error):
-                await client.authenticate("other-user", "synthetic-password")
-            assert client.token is None
-            assert client._session._mouse_buttons == 0
-            old_ws.close.assert_awaited_once()
-            with pytest.raises(NanoKVMNotAuthenticatedError):
-                await client.get_account()
-            with pytest.raises(NanoKVMNotAuthenticatedError):
-                await client._session.get_ws()
-            assert len(mocked.requests[("POST", yarl.URL(_LOGIN_URL))]) == 1
+        if failure == "credentials":
+            mocked.post(
+                _LOGIN_URL, payload={"code": -2, "msg": "invalid", "data": None}
+            )
+            error: type[Exception] = NanoKVMAuthenticationFailure
+        elif failure == "forbidden":
+            mocked.post(_LOGIN_URL, status=403, body='"forbidden"')
+            error = aiohttp.ClientResponseError
+        elif failure == "network":
+            mocked.post(_LOGIN_URL, exception=aiohttp.ClientConnectionError())
+            error = aiohttp.ClientConnectionError
+        else:
+            mocked.post(_LOGIN_URL, payload=_login_payload())
+            error = NanoKVMInvalidResponseError
+        with pytest.raises(error):
+            await client.authenticate("other-user", "synthetic-password")
+        assert client.token is None
+        assert client._session._mouse_buttons == 0
+        old_ws.close.assert_awaited_once()
+        with pytest.raises(NanoKVMNotAuthenticatedError):
+            await client.get_account()
+        with pytest.raises(NanoKVMNotAuthenticatedError):
+            await client._session.get_ws()
+        assert len(mocked.requests[("POST", yarl.URL(_LOGIN_URL))]) == 1
 
 
-async def test_reauthentication_clears_transport_even_when_token_is_reissued() -> None:
+async def test_reauthentication_clears_transport_even_when_token_is_reissued(
+    mocked: aioresponses,
+) -> None:
     """Transport state belongs to an authentication attempt, not a token string."""
     old_ws = AsyncMock()
     old_ws.closed = False
     async with NanoKVMClient(_BASE_URL, token="same-token") as client:
         client._session._ws = old_ws
         client._session._mouse_buttons = 1
-        with aioresponses() as mocked:
-            mocked.post(_LOGIN_URL, payload=_login_payload({"token": "same-token"}))
-            mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
-            await client.authenticate("synthetic-user", "synthetic-password")
+        mocked.post(_LOGIN_URL, payload=_login_payload({"token": "same-token"}))
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        await client.authenticate("synthetic-user", "synthetic-password")
         assert client.token == "same-token"
         assert client._session._ws is None
         assert client._session._mouse_buttons == 0
         old_ws.close.assert_awaited_once()
 
 
-async def test_authentication_uses_received_token_for_http_requests() -> None:
+async def test_authentication_uses_received_token_for_http_requests(
+    mocked: aioresponses,
+) -> None:
     """The token obtained from a cookie is sent explicitly on later requests."""
     async with NanoKVMClient(_BASE_URL) as client:
-        with aioresponses() as mocked:
-            mocked.post(
-                _LOGIN_URL,
-                payload=_login_payload(),
-                headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/"},
-            )
-            mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
-            mocked.get(_INFO_URL, payload=info_payload())
+        mocked.post(
+            _LOGIN_URL,
+            payload=_login_payload(),
+            headers={"Set-Cookie": "nano-kvm-token=cookie-token; Path=/"},
+        )
+        mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
+        mocked.get(_INFO_URL, payload=info_payload())
 
-            await client.authenticate("synthetic-user", "synthetic-password")
-            await client.get_info()
+        await client.authenticate("synthetic-user", "synthetic-password")
+        await client.get_info()
 
-            info_calls = mocked.requests[("GET", yarl.URL(_INFO_URL))]
-            assert info_calls[0].kwargs.get("cookies") == {
-                "nano-kvm-token": "cookie-token"
-            }
+        info_calls = mocked.requests[("GET", yarl.URL(_INFO_URL))]
+        assert info_calls[0].kwargs.get("cookies") == {"nano-kvm-token": "cookie-token"}
 
 
 async def test_authentication_closes_previous_websocket_before_replacing_identity() -> (

@@ -60,22 +60,23 @@ async def test_hardware_decorator_preserves_exact_version_requirements() -> None
         await operation(client)
 
 
-async def test_pro_family_requirement_accepts_future_pro_hardware() -> None:
+async def test_pro_family_requirement_accepts_future_pro_hardware(
+    mocked: aioresponses,
+) -> None:
     """Pro-only operations accept future hardware versions in the Pro family."""
     async with NanoKVMClient("http://kvm.local/api/", token="test-token") as client:
         client._session._hw_version = cast(
             HWVersion, SimpleNamespace(family=HWFamily.PRO, value="Pro Desk PoE")
         )
-        with aioresponses() as mocked:
-            mocked.get(
-                "http://kvm.local/api/vm/hdmi/capture",
-                payload={"code": 0, "msg": "success", "data": {"enabled": True}},
-            )
+        mocked.get(
+            "http://kvm.local/api/vm/hdmi/capture",
+            payload={"code": 0, "msg": "success", "data": {"enabled": True}},
+        )
 
-            result = await client.get_hdmi_capture()
+        result = await client.get_hdmi_capture()
 
-            assert result.enabled is True
-            assert len(mocked.requests) == 1
+        assert result.enabled is True
+        assert len(mocked.requests) == 1
 
 
 async def test_hardware_decorator_family_requirement_requires_detection() -> None:
@@ -106,7 +107,9 @@ async def test_hardware_decorator_family_requirement_rejects_other_versions(
         await operation(client)
 
 
-async def test_hardware_decorator_detects_hardware_with_a_token() -> None:
+async def test_hardware_decorator_detects_hardware_with_a_token(
+    mocked: aioresponses,
+) -> None:
     """A client built from a stored token detects its hardware on demand."""
 
     @require_hardware(HWFamily.NON_PRO)
@@ -115,10 +118,9 @@ async def test_hardware_decorator_detects_hardware_with_a_token() -> None:
 
     url = "http://kvm.local/api/"
     async with NanoKVMClient(url, token="synthetic-token") as client:
-        with aioresponses() as mocked:
-            mocked.get(
-                f"{url}vm/hardware",
-                payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
-            )
-            assert await operation(client) == "ok"
+        mocked.get(
+            f"{url}vm/hardware",
+            payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
+        )
+        assert await operation(client) == "ok"
         assert client.hw_version is HWVersion.PCIE

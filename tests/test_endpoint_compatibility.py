@@ -9,9 +9,7 @@ import pytest
 from nanokvm.client import NanoKVMClient, NanoKVMNotSupportedError
 from nanokvm.models import HWVersion
 
-from .common import mark_detected
-
-_BASE_URL = "http://localhost:8888/api/"
+from .common import BASE_URL, mark_detected
 
 _VERSIONED_METHODS: list[tuple[str, tuple[Any, ...], HWVersion, str, str]] = [
     ("get_ssh_state", (), HWVersion.PCIE, "2.1.5", "2.1.6"),
@@ -51,21 +49,21 @@ async def test_methods_reject_unsupported_application_versions(
     hardware: HWVersion,
     old_version: str,
     minimum_version: str,
+    client: NanoKVMClient,
 ) -> None:
     """Endpoints fail locally when the detected application is too old."""
-    async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        mark_detected(client, hardware, old_version)
+    mark_detected(client, hardware, old_version)
 
-        with patch.object(
-            client._session, "api_request_json", new_callable=AsyncMock
-        ) as request:
-            with pytest.raises(
-                NanoKVMNotSupportedError,
-                match=rf"{method_name} requires .* version >= {minimum_version}",
-            ):
-                await getattr(client, method_name)(*args)
+    with patch.object(
+        client._session, "api_request_json", new_callable=AsyncMock
+    ) as request:
+        with pytest.raises(
+            NanoKVMNotSupportedError,
+            match=rf"{method_name} requires .* version >= {minimum_version}",
+        ):
+            await getattr(client, method_name)(*args)
 
-            request.assert_not_awaited()
+        request.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -78,25 +76,25 @@ async def test_methods_accept_first_supported_application_version(
     hardware: HWVersion,
     _old_version: str,
     minimum_version: str,
+    client: NanoKVMClient,
 ) -> None:
     """Endpoints delegate at the first supported application version."""
-    async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        mark_detected(client, hardware, minimum_version)
+    mark_detected(client, hardware, minimum_version)
 
-        with patch.object(
-            client._session, "api_request_json", new_callable=AsyncMock
-        ) as request:
-            await getattr(client, method_name)(*args)
+    with patch.object(
+        client._session, "api_request_json", new_callable=AsyncMock
+    ) as request:
+        await getattr(client, method_name)(*args)
 
-            request.assert_awaited_once()
+        request.assert_awaited_once()
 
 
-async def test_logout_ignores_missing_legacy_endpoint() -> None:
+async def test_logout_ignores_missing_legacy_endpoint(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
     """Legacy devices without a logout route still clear the local session."""
-    async with NanoKVMClient(_BASE_URL, token="test-token") as client:
-        with aioresponses() as mocked:
-            mocked.post(f"{_BASE_URL}auth/logout", status=404)
+    mocked.post(f"{BASE_URL}auth/logout", status=404)
 
-            await client.logout()
+    await client.logout()
 
-        assert client.token is None
+    assert client.token is None
