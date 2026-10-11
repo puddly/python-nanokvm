@@ -62,6 +62,9 @@ A successful password change clears the local session. Starting another login
 or logging out invalidates in-flight authenticated operations and streams.
 Superseded operations raise `NanoKVMNotAuthenticatedError`.
 
+On current non-Pro firmware, logging out revokes every session on the device,
+not only the caller's. Other clients and open web UI tabs have to log in again.
+
 When an external `aiohttp.ClientSession` is supplied, it remains owned by the
 caller. WebSockets retain its connector, headers, proxy cookies, basic auth,
 proxy settings, and tracing, while isolating the device session cookie. Custom
