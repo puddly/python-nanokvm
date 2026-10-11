@@ -79,7 +79,4 @@ source = ["nanokvm"]
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
-    "if typing.TYPE_CHECKING:",
-    "raise NotImplementedError",
-    "raise NotImplementedError()",
 ]
