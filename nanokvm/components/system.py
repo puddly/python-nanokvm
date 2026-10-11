@@ -5,6 +5,7 @@ from __future__ import annotations
 from aiohttp import hdrs
 
 from ..compatibility import require_application_version, require_hardware
+from ..exceptions import NanoKVMApiError
 from ..models.common import (
     GetGpioRsp,
     GetHardwareRsp,
@@ -47,6 +48,8 @@ from ..models.pro import (
     SetTimeZoneReq,
 )
 from .session import Controller
+
+_DEFAULT_WEB_TITLE = "NanoKVM"
 
 
 class SystemController(Controller):
@@ -175,11 +178,18 @@ class SystemController(Controller):
     @require_application_version(non_pro="2.2.6")
     async def get_web_title(self) -> GetWebTitleRsp:
         """Get the web page title."""
-        return await self._session.api_request_json(
-            hdrs.METH_GET,
-            "/vm/web-title",
-            response_model=GetWebTitleRsp,
-        )
+        try:
+            return await self._session.api_request_json(
+                hdrs.METH_GET,
+                "/vm/web-title",
+                response_model=GetWebTitleRsp,
+            )
+        except NanoKVMApiError as err:
+            # The firmware keeps no title file while the default is in use
+            # and reports the failed read as code -1.
+            if err.code != -1:
+                raise
+            return GetWebTitleRsp(title=_DEFAULT_WEB_TITLE)
 
     @require_application_version(non_pro="2.2.6")
     async def set_web_title(self, title: str) -> None:

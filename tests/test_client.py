@@ -317,6 +317,20 @@ async def test_none_returning_endpoint_preserves_unknown_api_code(
     assert "failed to set title" in exc_info.value.msg
 
 
+async def test_get_web_title_returns_default_when_unset(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
+    """Test the firmware's failed read of an unset title maps to the default."""
+    mark_detected(client)
+
+    mocked.get(
+        "http://localhost:8888/api/vm/web-title",
+        payload={"code": -1, "msg": "read web title failed", "data": None},
+    )
+
+    assert (await client.get_web_title()).title == "NanoKVM"
+
+
 async def test_mount_image_sends_pro_read_only_flag(
     client: NanoKVMClient, mocked: aioresponses
 ) -> None:
