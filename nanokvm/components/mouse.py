@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 import logging
+import math
 
 import aiohttp
 
@@ -29,6 +30,11 @@ class MouseController(Controller):
             non_pro=_BINARY_MOUSE_MIN_NON_PRO_VERSION,
             pro=_BINARY_MOUSE_MIN_PRO_VERSION,
         )
+
+    @staticmethod
+    def _require_finite(*values: float) -> None:
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("Mouse coordinates must be finite numbers")
 
     @staticmethod
     def _clamp(value: int, minimum: int, maximum: int) -> int:
@@ -117,6 +123,7 @@ class MouseController(Controller):
             x: X coordinate (0.0 to 1.0, left to right).
             y: Y coordinate (0.0 to 1.0, top to bottom).
         """
+        self._require_finite(x, y)
         session = self._session
         if not await self._uses_binary_mouse_protocol():
             await self._send_legacy_mouse_event(2, 0, x, y)
@@ -133,6 +140,7 @@ class MouseController(Controller):
             dx: Horizontal movement (-1.0 to 1.0).
             dy: Vertical movement (-1.0 to 1.0).
         """
+        self._require_finite(dx, dy)
         session = self._session
         if not await self._uses_binary_mouse_protocol():
             await self._send_legacy_mouse_event(3, 0, dx, dy)
@@ -230,6 +238,7 @@ class MouseController(Controller):
             dy: Vertical scroll amount (-1.0 to 1.0); positive scrolls up and
                 negative scrolls down.
         """
+        self._require_finite(dx, dy)
         if not await self._uses_binary_mouse_protocol():
             await self._send_legacy_mouse_event(4, 0, dx, dy)
             return

@@ -185,6 +185,20 @@ async def test_mouse_scroll_encodes_vertical_wheel(
     assert _sent_reports(mock_ws) == [bytes([2, 0, 0, 0, 231])]
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+async def test_mouse_rejects_non_finite_values(
+    client_with_mock_ws: tuple[NanoKVMClient, AsyncMock], value: float
+) -> None:
+    """Non-finite coordinates are rejected before anything is sent."""
+    client, mock_ws = client_with_mock_ws
+
+    for move in (client.mouse_move_abs, client.mouse_move_rel, client.mouse_scroll):
+        with pytest.raises(ValueError, match="finite"):
+            await move(0.5, value)
+
+    assert _sent_reports(mock_ws) == []
+
+
 async def test_legacy_mouse_move_abs_sends_json_event(
     legacy_client_with_mock_ws: tuple[NanoKVMClient, AsyncMock],
 ) -> None:
