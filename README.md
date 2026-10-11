@@ -45,6 +45,22 @@ except NanoKVMPermissionError as error:
     print(error.status, error.method, error.path)
 ```
 
+Non-Pro firmware 2.5.1 and newer has user accounts with the roles `admin` and
+`user`. An admin can manage them:
+
+```python
+from nanokvm.models import UserRole
+
+await client.create_user("guest", "password", UserRole.USER)
+users = await client.get_users()
+await client.update_user("guest", enabled=False)
+await client.set_user_password("guest", "new-password")
+await client.delete_user("guest")
+```
+
+Updating, deleting or resetting the password of a user ends that user's
+sessions. The device owner account cannot be disabled, demoted or deleted.
+
 On non-Pro firmware 2.5.1 and newer, changing a password requires the current
 password and the username must match the authenticated account:
 

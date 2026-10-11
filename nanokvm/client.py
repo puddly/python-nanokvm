@@ -17,6 +17,7 @@ from .components.session import SessionController
 from .components.storage import ImageTransferProgressCallback, StorageController
 from .components.stream import StreamController
 from .components.system import SystemController
+from .components.users import UserController
 from .components.video import VideoController
 from .exceptions import (
     NanoKVMApiError,
@@ -59,6 +60,7 @@ class NanoKVMClient(
     StorageController,
     NetworkController,
     ServiceController,
+    UserController,
     StreamController,
     MouseController,
 ):

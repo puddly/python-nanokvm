@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 __all__ = [
     "AIControlMode",
     "AIControlStatusRsp",
+    "CreateUserReq",
     "DNSInfo",
     "DNSMode",
     "GetCdRomRsp",
@@ -22,6 +23,7 @@ __all__ = [
     "GetMemoryLimitRsp",
     "GetSwapSizeRsp",
     "GetUpdateServerRsp",
+    "GetUsersRsp",
     "InputRegionMode",
     "ManualRegion",
     "OriginalResolution",
@@ -36,6 +38,10 @@ __all__ = [
     "SetScreenReq",
     "SetSwapSizeReq",
     "SetUpdateServerReq",
+    "SetUserPasswordReq",
+    "UpdateUserReq",
+    "UserInfo",
+    "UserRole",
 ]
 
 
@@ -224,6 +230,41 @@ class GetUpdateServerRsp(BaseModel):
 class SetUpdateServerReq(BaseModel):
     enabled: bool
     url: str = Field(repr=False)
+
+
+class UserRole(StrEnum):
+    """User account roles."""
+
+    ADMIN = "admin"
+    USER = "user"
+
+
+class UserInfo(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    username: str
+    role: str
+    enabled: bool
+    system_account: bool = Field(default=False, alias="systemAccount")
+
+
+class GetUsersRsp(BaseModel):
+    users: list[UserInfo]
+
+
+class CreateUserReq(BaseModel):
+    username: str
+    password: str = Field(repr=False)
+    role: str
+
+
+class UpdateUserReq(BaseModel):
+    role: str | None = None
+    enabled: bool | None = None
+
+
+class SetUserPasswordReq(BaseModel):
+    password: str = Field(repr=False)
 
 
 class GetHdmiStateRsp(BaseModel):
