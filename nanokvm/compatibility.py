@@ -40,10 +40,21 @@ def _version_at_least(version: str, minimum: str) -> bool:
     return normalized_version >= normalized_minimum
 
 
-def require_hardware(*requirements: HWVersion | HWFamily) -> Callable[[F], F]:
-    """Restrict a method to specific hardware versions or families."""
+def require_hardware(
+    *requirements: HWVersion | HWFamily, min_version: str | None = None
+) -> Callable[[F], F]:
+    """Restrict a method to specific hardware versions or families.
+
+    ``min_version`` also requires that application version on the matched
+    hardware.
+    """
 
     def decorator(func: F) -> F:
+        if min_version is not None:
+            func = require_application_version(non_pro=min_version, pro=min_version)(
+                func
+            )
+
         @functools.wraps(func)
         async def wrapper(self: Controller, *args: Any, **kwargs: Any) -> Any:
             if self._session._hw_version is None:

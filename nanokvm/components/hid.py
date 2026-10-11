@@ -67,8 +67,7 @@ class HidController(Controller):
             response_model=GetHidModeRsp,
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.0")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.0")
     async def get_keyboard_led_status(self) -> GetKeyboardLedStatusRsp:
         """Get host keyboard LED state on non-Pro firmware 2.5.0 and newer.
 

@@ -375,8 +375,7 @@ class StorageController(Controller):
             data=DeleteImageReq(file=file),
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.2.1")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.2.1")
     async def get_cdrom_status(self) -> GetCdRomRsp:
         """Check if the mounted image is in CD-ROM mode."""
         return await self._session.api_request_json(

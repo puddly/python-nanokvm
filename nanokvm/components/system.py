@@ -210,8 +210,7 @@ class SystemController(Controller):
         """Switch the system image to PiKVM."""
         await self._session.api_request_json(hdrs.METH_POST, "/vm/system/pikvm")
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.2.6")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.2.6")
     async def get_swap_size(self) -> int:
         """Get Swap size."""
         rsp = await self._session.api_request_json(
@@ -221,8 +220,7 @@ class SystemController(Controller):
         )
         return rsp.size
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.2.6")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.2.6")
     async def set_swap_size(self, size_mb: int) -> None:
         """Set the Swap size."""
         await self._session.api_request_json(
@@ -247,8 +245,7 @@ class SystemController(Controller):
             data=SetMemoryLimitReq(enabled=enabled, limit=limit_mb),
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.2.7")
+    @require_hardware(HWFamily.PRO, min_version="1.2.7")
     async def refresh_virtual_device(self, device: str) -> None:
         """Refresh a virtual device (e.g. emmc)."""
         await self._session.api_request_json(
@@ -257,8 +254,7 @@ class SystemController(Controller):
             data=RefreshVirtualDeviceReq(device=device),
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.6")
+    @require_hardware(HWFamily.PRO, min_version="1.1.6")
     async def get_lcd_time_format(self) -> GetLcdTimeFormatRsp:
         """Get the LCD time format."""
         return await self._session.api_request_json(
@@ -267,8 +263,7 @@ class SystemController(Controller):
             response_model=GetLcdTimeFormatRsp,
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.6")
+    @require_hardware(HWFamily.PRO, min_version="1.1.6")
     async def set_lcd_time_format(self, fmt: LcdTimeFormat | str) -> None:
         """Set the LCD time format (12h/24h)."""
         await self._session.api_request_json(
@@ -277,8 +272,7 @@ class SystemController(Controller):
             data=SetLcdTimeFormatReq(format=LcdTimeFormat(fmt)),
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.2.7")
+    @require_hardware(HWFamily.PRO, min_version="1.2.7")
     async def get_low_power(self) -> GetLowPowerRsp:
         """Get low power status."""
         return await self._session.api_request_json(
@@ -287,8 +281,7 @@ class SystemController(Controller):
             response_model=GetLowPowerRsp,
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.2.7")
+    @require_hardware(HWFamily.PRO, min_version="1.2.7")
     async def set_low_power(self, enable: bool) -> None:
         """Set low power mode."""
         await self._session.api_request_json(
@@ -339,8 +332,7 @@ class SystemController(Controller):
             data=SetLedStripReq.model_validate(settings),
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.6")
+    @require_hardware(HWFamily.PRO, min_version="1.1.6")
     async def get_timezone(self) -> GetTimeZoneRsp:
         """Get the configured timezone."""
         return await self._session.api_request_json(
@@ -349,8 +341,7 @@ class SystemController(Controller):
             response_model=GetTimeZoneRsp,
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.6")
+    @require_hardware(HWFamily.PRO, min_version="1.1.6")
     async def set_timezone(self, timezone: str) -> None:
         """Set the timezone."""
         await self._session.api_request_json(
@@ -359,8 +350,7 @@ class SystemController(Controller):
             data=SetTimeZoneReq(timezone=timezone),
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.6")
+    @require_hardware(HWFamily.PRO, min_version="1.1.6")
     async def get_time_status(self) -> GetTimeStatusRsp:
         """Get time synchronization status."""
         return await self._session.api_request_json(
@@ -369,14 +359,12 @@ class SystemController(Controller):
             response_model=GetTimeStatusRsp,
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.6")
+    @require_hardware(HWFamily.PRO, min_version="1.1.6")
     async def sync_time(self) -> None:
         """Synchronize time."""
         await self._session.api_request_json(hdrs.METH_POST, "/vm/time/sync")
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.2.10")
+    @require_hardware(HWFamily.PRO, min_version="1.2.10")
     async def get_menubar_config(self) -> GetMenuBarConfigRsp:
         """Get menu bar configuration."""
         return await self._session.api_request_json(
@@ -385,8 +373,7 @@ class SystemController(Controller):
             response_model=GetMenuBarConfigRsp,
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.2.10")
+    @require_hardware(HWFamily.PRO, min_version="1.2.10")
     async def set_menubar_config(self, disabled_items: list[str]) -> None:
         """Set menu bar configuration."""
         await self._session.api_request_json(

@@ -111,8 +111,7 @@ class NetworkController(Controller):
             data=SetMacNameReq(mac=mac, name=name),
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.4.1")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.4.1")
     async def get_dns(self) -> GetDNSRsp:
         """Get DNS configuration."""
         return await self._session.api_request_json(
@@ -121,8 +120,7 @@ class NetworkController(Controller):
             response_model=GetDNSRsp,
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.4.1")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.4.1")
     async def set_dns(
         self, mode: DNSMode | str, servers: list[str] | None = None
     ) -> None:
@@ -133,8 +131,7 @@ class NetworkController(Controller):
             data=SetDNSReq(mode=DNSMode(mode), servers=servers or []),
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.2.3")
+    @require_hardware(HWFamily.PRO, min_version="1.2.3")
     async def get_static_ip(self) -> GetStaticIPRsp:
         """Get static IP configuration."""
         return await self._session.api_request_json(
@@ -143,8 +140,7 @@ class NetworkController(Controller):
             response_model=GetStaticIPRsp,
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.2.3")
+    @require_hardware(HWFamily.PRO, min_version="1.2.3")
     async def set_static_ip(self, enabled: bool, ip: str) -> None:
         """Set static IP configuration."""
         await self._session.api_request_json(
@@ -153,8 +149,7 @@ class NetworkController(Controller):
             data=SetStaticIPReq(enabled=enabled, ip=ip),
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.7")
+    @require_hardware(HWFamily.PRO, min_version="1.1.7")
     async def scan_wifi(self) -> ScanWifiRsp:
         """Scan for available WiFi networks."""
         return await self._session.api_request_json(

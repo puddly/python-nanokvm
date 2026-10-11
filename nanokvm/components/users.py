@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from aiohttp import hdrs
 
-from ..compatibility import require_application_version, require_hardware
+from ..compatibility import require_hardware
 from ..models.common import HWFamily
 from ..models.non_pro import (
     CreateUserReq,
@@ -27,8 +27,7 @@ def _user_path(username: str, suffix: str = "") -> str:
 class UserController(Controller):
     """Implement user account operations behind the public client facade."""
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.1")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.1")
     async def get_users(self) -> GetUsersRsp:
         """List the user accounts on the device."""
         return await self._session.api_request_json(
@@ -37,8 +36,7 @@ class UserController(Controller):
             response_model=GetUsersRsp,
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.1")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.1")
     async def create_user(
         self, username: str, password: str, role: UserRole | str = UserRole.USER
     ) -> None:
@@ -53,8 +51,7 @@ class UserController(Controller):
             ),
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.1")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.1")
     async def update_user(
         self,
         username: str,
@@ -74,14 +71,12 @@ class UserController(Controller):
             data=UpdateUserReq(role=role, enabled=enabled),
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.1")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.1")
     async def delete_user(self, username: str) -> None:
         """Delete a user account and end its sessions."""
         await self._session.api_request_json(hdrs.METH_DELETE, _user_path(username))
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.1")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.1")
     async def set_user_password(self, username: str, new_password: str) -> None:
         """Set another user's password and end that user's sessions.
 

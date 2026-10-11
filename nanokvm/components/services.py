@@ -91,8 +91,7 @@ class ServiceController(Controller):
         await self._session.api_request_json(hdrs.METH_POST, "/application/update")
         self._session.forget_versions()
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.3.1")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.3.1")
     async def update_application_offline(
         self,
         file_path: str | PathLike[str],
@@ -142,8 +141,7 @@ class ServiceController(Controller):
                 raise
         self._session.forget_versions()
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.1")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.1")
     async def get_update_server(self) -> GetUpdateServerRsp:
         """Get the custom application update-server configuration."""
         return await self._session.api_request_json(
@@ -152,8 +150,7 @@ class ServiceController(Controller):
             response_model=GetUpdateServerRsp,
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.1")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.1")
     async def set_update_server(
         self,
         enabled: bool,
@@ -167,8 +164,7 @@ class ServiceController(Controller):
             data=SetUpdateServerReq(enabled=enabled, url=url),
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.0")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.0")
     async def get_mcp_config(self) -> GetMCPConfigRsp:
         """Get MCP configuration and coordinated-control state."""
         return await self._session.api_request_json(
@@ -177,8 +173,7 @@ class ServiceController(Controller):
             response_model=GetMCPConfigRsp,
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.0")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.0")
     async def set_mcp_enabled(self, enabled: bool) -> GetMCPConfigRsp:
         """Enable or disable MCP control."""
         return await self._session.api_request_json(
@@ -188,8 +183,7 @@ class ServiceController(Controller):
             data=SetMCPConfigReq(enabled=enabled),
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.0")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.0")
     async def regenerate_mcp_api_key(self) -> GetMCPConfigRsp:
         """Generate and return a new MCP API key."""
         return await self._session.api_request_json(
@@ -198,8 +192,7 @@ class ServiceController(Controller):
             response_model=GetMCPConfigRsp,
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.0")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.0")
     async def get_ai_control_status(self) -> AIControlStatusRsp:
         """Get the current coordinated-control owner and transition state."""
         return await self._session.api_request_json(
@@ -208,8 +201,7 @@ class ServiceController(Controller):
             response_model=AIControlStatusRsp,
         )
 
-    @require_hardware(HWFamily.NON_PRO)
-    @require_application_version(non_pro="2.5.0")
+    @require_hardware(HWFamily.NON_PRO, min_version="2.5.0")
     async def set_ai_control_mode(self, mode: AIControlMode) -> SetAIControlModeRsp:
         """Select the owner of coordinated input control."""
         return await self._session.api_request_json(
@@ -282,56 +274,49 @@ class ServiceController(Controller):
             hdrs.METH_POST, "/extensions/tailscale/restart"
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.4")
+    @require_hardware(HWFamily.PRO, min_version="1.1.4")
     async def assistant_install(self) -> None:
         """Install assistant dependencies."""
         await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/assistant/install"
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.4")
+    @require_hardware(HWFamily.PRO, min_version="1.1.4")
     async def assistant_start(self) -> None:
         """Start assistant."""
         await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/assistant/start"
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.5")
+    @require_hardware(HWFamily.PRO, min_version="1.1.5")
     async def kvmadmin_install(self) -> None:
         """Install kvmadmin."""
         await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/kvmadmin/install"
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.5")
+    @require_hardware(HWFamily.PRO, min_version="1.1.5")
     async def kvmadmin_uninstall(self) -> None:
         """Uninstall kvmadmin."""
         await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/kvmadmin/uninstall"
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.5")
+    @require_hardware(HWFamily.PRO, min_version="1.1.5")
     async def kvmadmin_start(self) -> None:
         """Start kvmadmin."""
         await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/kvmadmin/start"
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.5")
+    @require_hardware(HWFamily.PRO, min_version="1.1.5")
     async def kvmadmin_stop(self) -> None:
         """Stop kvmadmin."""
         await self._session.api_request_json(
             hdrs.METH_POST, "/extensions/kvmadmin/stop"
         )
 
-    @require_hardware(HWFamily.PRO)
-    @require_application_version(pro="1.1.5")
+    @require_hardware(HWFamily.PRO, min_version="1.1.5")
     async def kvmadmin_status(self) -> GetKvmadminStatusRsp:
         """Get kvmadmin status."""
         return await self._session.api_request_json(
