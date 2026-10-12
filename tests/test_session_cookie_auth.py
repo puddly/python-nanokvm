@@ -359,3 +359,40 @@ async def test_mjpeg_request_uses_cookie_login_token() -> None:
             assert len(frames) == 1
     finally:
         await runner.cleanup()
+
+
+async def test_open_ws_returns_unshared_authenticated_websockets() -> None:
+    """Each open_ws call is a new caller-owned socket carrying the token."""
+    seen: list[tuple[str, str | None]] = []
+
+    async def handler(request: web.Request) -> web.WebSocketResponse:
+        seen.append((request.path, request.cookies.get("nano-kvm-token")))
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        await ws.receive()
+        return ws
+
+    application = web.Application()
+    application.router.add_get("/api/stream/h264/webrtc", handler)
+    runner = web.AppRunner(application)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+
+    try:
+        async with NanoKVMClient(
+            f"http://127.0.0.1:{port}/api/", token="test-token"
+        ) as client:
+            first = await client.open_ws("stream/h264/webrtc", heartbeat=None)
+            second = await client.open_ws("/stream/h264/webrtc")
+            assert first is not second
+            assert client._session._ws is None
+            with pytest.raises(TypeError):
+                await client.open_ws("stream/h264/webrtc", headers={})
+            await first.close()
+            await second.close()
+    finally:
+        await runner.cleanup()
+
+    assert seen == [("/api/stream/h264/webrtc", "test-token")] * 2

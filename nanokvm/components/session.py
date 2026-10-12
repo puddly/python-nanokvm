@@ -11,7 +11,7 @@ import logging
 from os import PathLike
 from pathlib import Path
 import ssl
-from typing import Any, Literal, TypeVar, overload
+from typing import Any, Literal, NoReturn, TypeVar, overload
 
 from aiohttp import (
     ClientResponse,
@@ -668,69 +668,90 @@ class SessionController:
                     await self._ws.close()
                     self._ws = None
 
-                if not self._token:
-                    raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-
                 generation = self._session_generation
-
-                # WebSocket URL uses ws:// or wss:// scheme
-                scheme = "ws" if self.url.scheme == "http" else "wss"
-                ws_url = self.url.with_scheme(scheme) / "ws"
-
-                if self._http_session is None or self._ssl_config is None:
-                    raise RuntimeError(_NOT_STARTED)
-
-                # ws_connect cannot override cookies per request. An isolated
-                # jar prevents concurrent requests or async tracing callbacks
-                # from replacing this handshake's identity. Share the external
-                # connector without taking ownership of it.
-                if self._http_session.closed:
-                    raise RuntimeError("Session is closed")
-                if self._ws_session is None or self._ws_session.closed:
-                    self._ws_session = ClientSession(
-                        connector=self._http_session.connector,
-                        connector_owner=False,
-                        cookie_jar=DummyCookieJar(),
-                        auth=self._http_session.auth,
-                        trust_env=self._http_session.trust_env,
-                        trace_configs=self._http_session.trace_configs,
-                        skip_auto_headers=self._http_session.skip_auto_headers,
-                        timeout=ClientTimeout(total=self._request_timeout),
-                    )
-
-                headers = self._http_session.headers.copy()
-                cookies = SimpleCookie()
-                cookies.load(headers.get(hdrs.COOKIE, ""))
-                jar_cookies = self._http_session.cookie_jar.filter_cookies(ws_url)
-                cookies.load(
-                    {name: cookie.value for name, cookie in jar_cookies.items()}
-                )
-                cookies[_SESSION_COOKIE_NAME] = self._token
-                headers[hdrs.COOKIE] = cookies.output(header="", sep=";").strip()
-                self.clear_session_cookies()
-                self._ws = await self._ws_session.ws_connect(
-                    str(ws_url),
-                    headers=headers,
-                    ssl=self._ssl_config,
-                )
-                self.clear_session_cookies()
+                self._ws = await self._connect_ws("ws")
                 return self._ws
         except ClientResponseError as err:
-            method = getattr(err.request_info, "method", hdrs.METH_GET)
-            if err.status == 401:
-                # _clear_local_session acquires _ws_lock, so do this after the
-                # lock above has been released to avoid a self-deadlock.
-                await self.clear_local_session(expected_generation=generation)
-                raise NanoKVMNotAuthenticatedError(
-                    "NanoKVM session is no longer authenticated"
-                ) from err
-            if err.status == 403:
-                raise NanoKVMPermissionError(
-                    status=err.status,
-                    method=method,
-                    path="/ws",
-                ) from err
-            raise
+            # _clear_local_session acquires _ws_lock, so do this after the
+            # lock above has been released to avoid a self-deadlock.
+            await self._raise_ws_error(err, "ws", generation)
+
+    async def open_ws(self, path: str, **kwargs: Any) -> ClientWebSocketResponse:
+        """Open a new, unshared WebSocket on ``path``, relative to the API base.
+
+        ``kwargs`` go to ``ws_connect``; ``headers`` and ``ssl`` are owned by
+        the session and rejected. The caller closes the WebSocket, and must do
+        so before the client exits. Logging out does not close it.
+        """
+        generation = self._session_generation
+        try:
+            return await self._connect_ws(path, **kwargs)
+        except ClientResponseError as err:
+            await self._raise_ws_error(err, path, generation)
+
+    async def _connect_ws(self, path: str, **kwargs: Any) -> ClientWebSocketResponse:
+        """Connect a WebSocket on ``path`` carrying this session's token."""
+        if not self._token:
+            raise NanoKVMNotAuthenticatedError("Client is not authenticated")
+
+        # WebSocket URL uses ws:// or wss:// scheme
+        scheme = "ws" if self.url.scheme == "http" else "wss"
+        ws_url = self.url.with_scheme(scheme) / path.lstrip("/")
+
+        if self._http_session is None or self._ssl_config is None:
+            raise RuntimeError(_NOT_STARTED)
+
+        # ws_connect cannot override cookies per request. An isolated
+        # jar prevents concurrent requests or async tracing callbacks
+        # from replacing this handshake's identity. Share the external
+        # connector without taking ownership of it.
+        if self._http_session.closed:
+            raise RuntimeError("Session is closed")
+        if self._ws_session is None or self._ws_session.closed:
+            self._ws_session = ClientSession(
+                connector=self._http_session.connector,
+                connector_owner=False,
+                cookie_jar=DummyCookieJar(),
+                auth=self._http_session.auth,
+                trust_env=self._http_session.trust_env,
+                trace_configs=self._http_session.trace_configs,
+                skip_auto_headers=self._http_session.skip_auto_headers,
+                timeout=ClientTimeout(total=self._request_timeout),
+            )
+
+        headers = self._http_session.headers.copy()
+        cookies = SimpleCookie()
+        cookies.load(headers.get(hdrs.COOKIE, ""))
+        jar_cookies = self._http_session.cookie_jar.filter_cookies(ws_url)
+        cookies.load({name: cookie.value for name, cookie in jar_cookies.items()})
+        cookies[_SESSION_COOKIE_NAME] = self._token
+        headers[hdrs.COOKIE] = cookies.output(header="", sep=";").strip()
+        self.clear_session_cookies()
+        ws = await self._ws_session.ws_connect(
+            str(ws_url),
+            headers=headers,
+            ssl=self._ssl_config,
+            **kwargs,
+        )
+        self.clear_session_cookies()
+        return ws
+
+    async def _raise_ws_error(
+        self, err: ClientResponseError, path: str, generation: int
+    ) -> NoReturn:
+        """Map a failed WebSocket handshake onto the client's exceptions."""
+        if err.status == 401:
+            await self.clear_local_session(expected_generation=generation)
+            raise NanoKVMNotAuthenticatedError(
+                "NanoKVM session is no longer authenticated"
+            ) from err
+        if err.status == 403:
+            raise NanoKVMPermissionError(
+                status=err.status,
+                method=getattr(err.request_info, "method", hdrs.METH_GET),
+                path=f"/{path.lstrip('/')}",
+            ) from err
+        raise err
 
 
 class Controller:

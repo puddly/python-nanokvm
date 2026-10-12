@@ -926,3 +926,17 @@ async def test_mount_image_read_only_requires_pro_1_2_1(
     with pytest.raises(NanoKVMNotSupportedError, match="1.2.1"):
         await client.mount_image("/data/test.img", read_only=True)
     assert not mocked.requests
+
+
+async def test_mjpeg_stream_bytes_yields_raw_frames(mocked: aioresponses) -> None:
+    """The byte stream hands out each JPEG part untouched."""
+    mocked.get(
+        "http://localhost:8888/api/stream/mjpeg",
+        headers={"Content-Type": "multipart/x-mixed-replace; boundary=frame"},
+        body=b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8one\r\n"
+        b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8two\r\n--frame--\r\n",
+    )
+    async with NanoKVMClient("http://localhost:8888/api/", token="test-token") as c:
+        frames = [frame async for frame in c.mjpeg_stream_bytes()]
+
+    assert frames == [b"\xff\xd8one", b"\xff\xd8two"]
