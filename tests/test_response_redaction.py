@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable
 import logging
+from pathlib import Path
 import traceback
 
 import aiohttp
@@ -121,3 +122,42 @@ async def test_server_messages_are_not_rendered_in_logs_or_errors(
                 assert error.code == code
                 assert error.msg == _SECRET
         assert _SECRET not in caplog.text
+
+
+def test_invalid_response_error_does_not_echo_payload() -> None:
+    """Malformed response errors do not include arbitrary response values."""
+    client = NanoKVMClient(BASE_URL)
+    secret = "SYNTHETIC_SECRET_VALUE"
+
+    with pytest.raises(NanoKVMInvalidResponseError) as exc_info:
+        client._session.validate_api_response(
+            {"msg": "invalid", "data": {"token": secret}},
+        )
+
+    assert secret not in str(exc_info.value)
+
+
+async def test_form_response_is_not_logged(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    mocked: aioresponses,
+) -> None:
+    """Multipart responses are not emitted verbatim to debug logs."""
+    script = tmp_path / "test.sh"
+    script.write_text("#!/bin/sh\ntrue\n")
+    secret = "SYNTHETIC_FORM_VALUE"
+    caplog.set_level(logging.DEBUG, logger="nanokvm")
+
+    async with NanoKVMClient(BASE_URL, token="test-token") as client:
+        mocked.post(
+            f"{BASE_URL}vm/script/upload",
+            payload={
+                "code": 0,
+                "msg": "success",
+                "data": {"file": secret},
+            },
+        )
+
+        await client.upload_script(script)
+
+    assert secret not in caplog.text

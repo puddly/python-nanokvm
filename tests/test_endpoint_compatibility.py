@@ -5,8 +5,10 @@ from unittest.mock import AsyncMock, patch
 
 from aioresponses import aioresponses
 import pytest
+import yarl
 
 from nanokvm.client import NanoKVMClient, NanoKVMNotSupportedError
+from nanokvm.compatibility import _parse_version, _version_at_least
 from nanokvm.models import HWVersion
 
 from .common import BASE_URL, mark_detected
@@ -98,3 +100,49 @@ async def test_logout_ignores_missing_legacy_endpoint(
     await client.logout()
 
     assert client.token is None
+
+
+def test_version_parser() -> None:
+    """Test internal application version parsing and comparison."""
+    assert _parse_version("v2.4.1") == (2, 4, 1)
+    assert _parse_version("dev") is None
+    assert _version_at_least("1.2.14", "1.2.9")
+    assert _version_at_least("2.4", "2.4.0")
+    assert not _version_at_least("2.4.0", "2.4.1")
+    assert _version_at_least("dev", "2.4.1")
+
+
+async def test_non_pro_application_version_gate_uses_non_pro_minimum(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
+    """Test non-Pro devices use the non-Pro minimum application version."""
+    mark_detected(client, application_version="2.3.1")
+
+    with pytest.raises(NanoKVMNotSupportedError) as exc_info:
+        await client.get_shortcuts()
+
+    assert "get_shortcuts requires non-Pro application version >= 2.3.2" in str(
+        exc_info.value
+    )
+    shortcuts_url = yarl.URL(f"{BASE_URL}hid/shortcuts")
+    assert ("GET", shortcuts_url) not in mocked.requests
+
+
+async def test_pro_application_version_gate_uses_pro_minimum(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
+    """Test Pro devices use the Pro minimum application version."""
+    mark_detected(
+        client,
+        hw_version=HWVersion.PRO,
+        application_version="1.2.7",
+    )
+
+    with pytest.raises(NanoKVMNotSupportedError) as exc_info:
+        await client.get_shortcuts()
+
+    assert "get_shortcuts requires Pro application version >= 1.2.8" in str(
+        exc_info.value
+    )
+    shortcuts_url = yarl.URL(f"{BASE_URL}hid/shortcuts")
+    assert ("GET", shortcuts_url) not in mocked.requests
