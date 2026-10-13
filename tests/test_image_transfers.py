@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 import io
 from pathlib import Path
@@ -34,7 +34,7 @@ def _status(status: DownloadStatus) -> StatusImageRsp:
 
 
 @asynccontextmanager
-async def _device_server() -> AsyncIterator[tuple[str, dict[str, Any]]]:
+async def _device_server() -> AsyncGenerator[tuple[str, dict[str, Any]], None]:
     state: dict[str, Any] = {
         "calls": [],
         "accepted_uploads": [],

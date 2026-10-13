@@ -1,7 +1,7 @@
 """Concurrent authentication must preserve the identity of each operation."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 import io
 from unittest.mock import AsyncMock, patch
@@ -21,7 +21,7 @@ def _ok(data: object = None) -> web.Response:
 
 
 @asynccontextmanager
-async def _server(app: web.Application) -> AsyncIterator[str]:
+async def _server(app: web.Application) -> AsyncGenerator[str, None]:
     async def hardware(request: web.Request) -> web.Response:
         return _ok({"version": "PCIE"})
 
