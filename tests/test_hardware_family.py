@@ -14,6 +14,8 @@ from nanokvm.client import (
 )
 from nanokvm.models import HWFamily, HWVersion
 
+from .common import BASE_URL
+
 
 @pytest.mark.parametrize(
     ("version", "family"),
@@ -39,7 +41,7 @@ async def test_hardware_decorator_accepts_each_non_pro_version() -> None:
     async def operation(client: NanoKVMClient) -> str:
         return "ok"
 
-    client = NanoKVMClient("http://kvm.local/api/")
+    client = NanoKVMClient(BASE_URL)
     for version in (HWVersion.ALPHA, HWVersion.BETA, HWVersion.PCIE):
         client._session._hw_version = version
         assert await operation(client) == "ok"
@@ -52,7 +54,7 @@ async def test_hardware_decorator_preserves_exact_version_requirements() -> None
     async def operation(client: NanoKVMClient) -> str:
         return "ok"
 
-    client = NanoKVMClient("http://kvm.local/api/")
+    client = NanoKVMClient(BASE_URL)
     client._session._hw_version = HWVersion.PRO
     assert await operation(client) == "ok"
     client._session._hw_version = HWVersion.PCIE
@@ -64,12 +66,12 @@ async def test_pro_family_requirement_accepts_future_pro_hardware(
     mocked: aioresponses,
 ) -> None:
     """Pro-only operations accept future hardware versions in the Pro family."""
-    async with NanoKVMClient("http://kvm.local/api/", token="test-token") as client:
+    async with NanoKVMClient(BASE_URL, token="test-token") as client:
         client._session._hw_version = cast(
             HWVersion, SimpleNamespace(family=HWFamily.PRO, value="Pro Desk PoE")
         )
         mocked.get(
-            "http://kvm.local/api/vm/hdmi/capture",
+            f"{BASE_URL}vm/hdmi/capture",
             payload={"code": 0, "msg": "success", "data": {"enabled": True}},
         )
 
@@ -86,7 +88,7 @@ async def test_hardware_decorator_family_requirement_requires_detection() -> Non
     async def operation(client: NanoKVMClient) -> str:
         return "ok"
 
-    client = NanoKVMClient("http://kvm.local/api/")
+    client = NanoKVMClient(BASE_URL)
     with pytest.raises(NanoKVMError, match="requires hardware detection"):
         await operation(client)
 
@@ -101,7 +103,7 @@ async def test_hardware_decorator_family_requirement_rejects_other_versions(
     async def operation(client: NanoKVMClient) -> str:
         return "ok"
 
-    client = NanoKVMClient("http://kvm.local/api/")
+    client = NanoKVMClient(BASE_URL)
     client._session._hw_version = version
     with pytest.raises(NanoKVMNotSupportedError, match="hardware: non-Pro"):
         await operation(client)
@@ -116,7 +118,7 @@ async def test_hardware_decorator_detects_hardware_with_a_token(
     async def operation(client: NanoKVMClient) -> str:
         return "ok"
 
-    url = "http://kvm.local/api/"
+    url = BASE_URL
     async with NanoKVMClient(url, token="synthetic-token") as client:
         mocked.get(
             f"{url}vm/hardware",

@@ -19,12 +19,11 @@ from nanokvm.client import (
 )
 from nanokvm.models import HWVersion
 
-from .common import info_payload, mark_detected
+from .common import BASE_URL, info_payload, mark_detected
 
-_BASE_URL = "http://kvm.local/api/"
-_LOGIN_URL = f"{_BASE_URL}auth/login"
-_HARDWARE_URL = f"{_BASE_URL}vm/hardware"
-_INFO_URL = f"{_BASE_URL}vm/info"
+_LOGIN_URL = f"{BASE_URL}auth/login"
+_HARDWARE_URL = f"{BASE_URL}vm/hardware"
+_INFO_URL = f"{BASE_URL}vm/info"
 
 _HARDWARE_PAYLOAD = {
     "code": 0,
@@ -41,7 +40,7 @@ async def test_cookie_only_login_accepts_null_data_and_uses_fresh_cookie(
     mocked: aioresponses,
 ) -> None:
     """The 2.5.1 login envelope has no data and returns the token as a cookie."""
-    async with NanoKVMClient(_BASE_URL) as client:
+    async with NanoKVMClient(BASE_URL) as client:
         mocked.post(
             _LOGIN_URL,
             payload=_login_payload(),
@@ -60,7 +59,7 @@ async def test_cookie_token_has_priority_over_legacy_body_token(
     mocked: aioresponses,
 ) -> None:
     """A fresh Set-Cookie value wins when old firmware returns both tokens."""
-    async with NanoKVMClient(_BASE_URL) as client:
+    async with NanoKVMClient(BASE_URL) as client:
         mocked.post(
             _LOGIN_URL,
             payload=_login_payload({"token": "body-token"}),
@@ -78,7 +77,7 @@ async def test_cookie_login_ignores_unused_legacy_body(
     data: object, mocked: aioresponses
 ) -> None:
     """A valid fresh cookie must not depend on the obsolete body token schema."""
-    async with NanoKVMClient(_BASE_URL) as client:
+    async with NanoKVMClient(BASE_URL) as client:
         mocked.post(
             _LOGIN_URL,
             payload=_login_payload(data),
@@ -93,7 +92,7 @@ async def test_empty_cookie_falls_back_to_legacy_body_token(
     mocked: aioresponses,
 ) -> None:
     """An empty Set-Cookie does not hide a valid legacy token."""
-    async with NanoKVMClient(_BASE_URL) as client:
+    async with NanoKVMClient(BASE_URL) as client:
         mocked.post(
             _LOGIN_URL,
             payload=_login_payload({"token": "body-token"}),
@@ -106,7 +105,7 @@ async def test_empty_cookie_falls_back_to_legacy_body_token(
 
 async def test_cookie_does_not_bypass_envelope_validation(mocked: aioresponses) -> None:
     """Cookie precedence only applies after the API envelope is validated."""
-    async with NanoKVMClient(_BASE_URL) as client:
+    async with NanoKVMClient(BASE_URL) as client:
         mocked.post(
             _LOGIN_URL,
             payload={"data": {"token": "body-token"}},
@@ -119,7 +118,7 @@ async def test_cookie_does_not_bypass_envelope_validation(mocked: aioresponses) 
 
 async def test_legacy_body_token_login_remains_supported(mocked: aioresponses) -> None:
     """Older firmware continues to authenticate with a token in response data."""
-    async with NanoKVMClient(_BASE_URL) as client:
+    async with NanoKVMClient(BASE_URL) as client:
         mocked.post(
             _LOGIN_URL,
             payload=_login_payload({"token": "body-token"}),
@@ -135,7 +134,7 @@ async def test_cookie_login_validates_api_code_before_accepting_cookie(
     mocked: aioresponses,
 ) -> None:
     """A cookie on an API error response cannot establish a session."""
-    async with NanoKVMClient(_BASE_URL, use_password_obfuscation=True) as client:
+    async with NanoKVMClient(BASE_URL, use_password_obfuscation=True) as client:
         mocked.post(
             _LOGIN_URL,
             payload={
@@ -156,7 +155,7 @@ async def test_cookie_login_works_with_dummy_cookie_jar() -> None:
     """Cookie extraction does not depend on the session cookie jar."""
     session = aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar())
     try:
-        async with NanoKVMClient(_BASE_URL, session=session) as client:
+        async with NanoKVMClient(BASE_URL, session=session) as client:
             with aioresponses() as mocked:
                 mocked.post(
                     _LOGIN_URL,
@@ -179,12 +178,12 @@ async def test_login_does_not_reuse_an_old_cookie_from_external_session() -> Non
     cookie_jar = aiohttp.CookieJar()
     cookie_jar.update_cookies(
         {"nano-kvm-token": "old-cookie-token"},
-        response_url=yarl.URL(_BASE_URL),
+        response_url=yarl.URL(BASE_URL),
     )
     session = aiohttp.ClientSession(cookie_jar=cookie_jar)
 
     try:
-        async with NanoKVMClient(_BASE_URL, session=session) as client:
+        async with NanoKVMClient(BASE_URL, session=session) as client:
             with aioresponses() as mocked:
                 mocked.post(_LOGIN_URL, payload=_login_payload())
 
@@ -200,7 +199,7 @@ async def test_empty_login_response_is_not_authentication_disabled(
     mocked: aioresponses,
 ) -> None:
     """An empty successful login is invalid even for the explicit disabled token."""
-    async with NanoKVMClient(_BASE_URL, token="disabled") as client:
+    async with NanoKVMClient(BASE_URL, token="disabled") as client:
         mocked.post(_LOGIN_URL, payload=_login_payload())
 
         with pytest.raises(NanoKVMInvalidResponseError, match="missing token"):
@@ -218,7 +217,7 @@ async def test_failed_reauthentication_cannot_keep_previous_identity(
     old_ws = AsyncMock()
     old_ws.closed = False
     async with NanoKVMClient(
-        _BASE_URL, token="previous-admin", use_password_obfuscation=True
+        BASE_URL, token="previous-admin", use_password_obfuscation=True
     ) as client:
         client._session._ws = old_ws
         client._session._mouse_buttons = 1
@@ -254,7 +253,7 @@ async def test_reauthentication_clears_transport_even_when_token_is_reissued(
     """Transport state belongs to an authentication attempt, not a token string."""
     old_ws = AsyncMock()
     old_ws.closed = False
-    async with NanoKVMClient(_BASE_URL, token="same-token") as client:
+    async with NanoKVMClient(BASE_URL, token="same-token") as client:
         client._session._ws = old_ws
         client._session._mouse_buttons = 1
         mocked.post(_LOGIN_URL, payload=_login_payload({"token": "same-token"}))
@@ -270,7 +269,7 @@ async def test_authentication_uses_received_token_for_http_requests(
     mocked: aioresponses,
 ) -> None:
     """The token obtained from a cookie is sent explicitly on later requests."""
-    async with NanoKVMClient(_BASE_URL) as client:
+    async with NanoKVMClient(BASE_URL) as client:
         mocked.post(
             _LOGIN_URL,
             payload=_login_payload(),
@@ -300,7 +299,7 @@ async def test_authentication_closes_previous_websocket_before_replacing_identit
         new_callable=AsyncMock,
         side_effect=[old_ws, new_ws],
     ):
-        async with NanoKVMClient(_BASE_URL, token="old-token") as client:
+        async with NanoKVMClient(BASE_URL, token="old-token") as client:
             mark_detected(client, HWVersion.PCIE, "2.5.1")
             await client.mouse_move_rel(0.1, 0.0)
 

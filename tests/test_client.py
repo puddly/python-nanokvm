@@ -33,7 +33,7 @@ from nanokvm.models import (
     VirtualDevice,
 )
 
-from .common import info_payload, mark_detected
+from .common import BASE_URL, info_payload, mark_detected
 
 
 def test_version_parser() -> None:
@@ -82,7 +82,7 @@ def test_download_status_accepts_terminal_states(status: str) -> None:
 async def test_get_images_success(client: NanoKVMClient, mocked: aioresponses) -> None:
     """Test get_images with a successful response."""
     mocked.get(
-        "http://localhost:8888/api/storage/image",
+        f"{BASE_URL}storage/image",
         payload={
             "code": 0,
             "msg": "success",
@@ -106,7 +106,7 @@ async def test_get_images_success(client: NanoKVMClient, mocked: aioresponses) -
 async def test_get_images_empty(client: NanoKVMClient, mocked: aioresponses) -> None:
     """Test get_images with an empty list."""
     mocked.get(
-        "http://localhost:8888/api/storage/image",
+        f"{BASE_URL}storage/image",
         payload={"code": 0, "msg": "success", "data": {"files": []}},
     )
 
@@ -121,7 +121,7 @@ async def test_typed_success_response_requires_data(
 ) -> None:
     """A typed endpoint rejects a successful response without its payload."""
     mocked.get(
-        "http://localhost:8888/api/storage/image",
+        f"{BASE_URL}storage/image",
         payload={"code": 0, "msg": "success", "data": None},
     )
 
@@ -134,7 +134,7 @@ async def test_api_error_data_is_not_validated_as_success_model(
 ) -> None:
     """An error envelope is classified before its endpoint data is parsed."""
     mocked.get(
-        "http://localhost:8888/api/storage/image",
+        f"{BASE_URL}storage/image",
         payload={
             "code": -1,
             "msg": "failed to list images",
@@ -150,7 +150,7 @@ async def test_api_error_data_is_not_validated_as_success_model(
 
 def test_invalid_response_error_does_not_echo_payload() -> None:
     """Malformed response errors do not include arbitrary response values."""
-    client = NanoKVMClient("http://localhost:8888/api/")
+    client = NanoKVMClient(BASE_URL)
     secret = "SYNTHETIC_SECRET_VALUE"
 
     with pytest.raises(NanoKVMInvalidResponseError) as exc_info:
@@ -172,11 +172,9 @@ async def test_form_response_is_not_logged(
     secret = "SYNTHETIC_FORM_VALUE"
     caplog.set_level(logging.DEBUG, logger="nanokvm")
 
-    async with NanoKVMClient(
-        "http://localhost:8888/api/", token="test-token"
-    ) as client:
+    async with NanoKVMClient(BASE_URL, token="test-token") as client:
         mocked.post(
-            "http://localhost:8888/api/vm/script/upload",
+            f"{BASE_URL}vm/script/upload",
             payload={
                 "code": 0,
                 "msg": "success",
@@ -193,7 +191,7 @@ def test_parse_jpeg_returns_fully_loaded_image() -> None:
     """JPEG parsing returns an image detached from the source stream."""
     image_buffer = io.BytesIO()
     Image.new("RGB", (2, 2), color=(1, 2, 3)).save(image_buffer, format="JPEG")
-    client = NanoKVMClient("http://localhost:8888/api/")
+    client = NanoKVMClient(BASE_URL)
 
     image = client._parse_jpeg_from_bytes(image_buffer.getvalue())
 
@@ -256,7 +254,7 @@ async def test_get_images_api_error(
 ) -> None:
     """Test get_images with an API error response."""
     mocked.get(
-        "http://localhost:8888/api/storage/image",
+        f"{BASE_URL}storage/image",
         payload={"code": -1, "msg": "failed to list images", "data": None},
     )
 
@@ -272,7 +270,7 @@ async def test_detect_versions_stores_application_and_image(
 ) -> None:
     """Test detect_versions caches versions from /vm/info."""
     mocked.get(
-        "http://localhost:8888/api/vm/info",
+        f"{BASE_URL}vm/info",
         payload=info_payload(application="2.4.1", image="1.4.0"),
     )
 
@@ -287,7 +285,7 @@ async def test_api_error_allows_endpoint_specific_codes(
 ) -> None:
     """Test endpoint-specific API error codes are surfaced as API errors."""
     mocked.post(
-        "http://localhost:8888/api/storage/image/mount",
+        f"{BASE_URL}storage/image/mount",
         payload={"code": -6, "msg": "mount image failed", "data": None},
     )
 
@@ -306,7 +304,7 @@ async def test_none_returning_endpoint_preserves_unknown_api_code(
     mark_detected(client)
 
     mocked.post(
-        "http://localhost:8888/api/vm/web-title",
+        f"{BASE_URL}vm/web-title",
         payload={"code": -4, "msg": "failed to set title", "data": None},
     )
 
@@ -324,7 +322,7 @@ async def test_get_web_title_returns_default_when_unset(
     mark_detected(client)
 
     mocked.get(
-        "http://localhost:8888/api/vm/web-title",
+        f"{BASE_URL}vm/web-title",
         payload={"code": -1, "msg": "read web title failed", "data": None},
     )
 
@@ -336,16 +334,14 @@ async def test_mount_image_sends_pro_read_only_flag(
 ) -> None:
     """Test mount_image sends the Pro readOnly field."""
     mocked.post(
-        "http://localhost:8888/api/storage/image/mount",
+        f"{BASE_URL}storage/image/mount",
         payload={"code": 0, "msg": "success", "data": None},
     )
 
     mark_detected(client, HWVersion.PRO, "1.2.1")
     await client.mount_image("/data/test.img", read_only=True)
 
-    calls = mocked.requests[
-        ("POST", yarl.URL("http://localhost:8888/api/storage/image/mount"))
-    ]
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}storage/image/mount"))]
     assert calls[0].kwargs.get("json") == {
         "file": "/data/test.img",
         "cdrom": False,
@@ -360,7 +356,7 @@ async def test_get_oled_info_raises_for_pro_invalid_file_content(
     client._session._hw_version = HWVersion.PRO
 
     mocked.get(
-        "http://localhost:8888/api/vm/oled",
+        f"{BASE_URL}vm/oled",
         payload={
             "code": -2,
             "msg": "invalid file content",
@@ -373,7 +369,7 @@ async def test_get_oled_info_raises_for_pro_invalid_file_content(
 
     assert exc_info.value.code == -2
     assert exc_info.value.msg == "invalid file content"
-    info_url = yarl.URL("http://localhost:8888/api/vm/info")
+    info_url = yarl.URL(f"{BASE_URL}vm/info")
     assert ("GET", info_url) not in mocked.requests
 
 
@@ -384,7 +380,7 @@ async def test_set_mouse_jiggler_state_noops_when_already_disabled(
     mark_detected(client)
 
     mocked.get(
-        "http://localhost:8888/api/vm/mouse-jiggler",
+        f"{BASE_URL}vm/mouse-jiggler",
         payload={
             "code": 0,
             "msg": "success",
@@ -397,7 +393,7 @@ async def test_set_mouse_jiggler_state_noops_when_already_disabled(
         mode=MouseJigglerMode.RELATIVE,
     )
 
-    post_url = yarl.URL("http://localhost:8888/api/vm/mouse-jiggler/")
+    post_url = yarl.URL(f"{BASE_URL}vm/mouse-jiggler/")
     assert ("POST", post_url) not in mocked.requests
 
 
@@ -406,15 +402,13 @@ async def test_update_virtual_device_ignores_success_data(
 ) -> None:
     """Test update_virtual_device handles non-Pro success payloads."""
     mocked.post(
-        "http://localhost:8888/api/vm/device/virtual",
+        f"{BASE_URL}vm/device/virtual",
         payload={"code": 0, "msg": "success", "data": {"on": True}},
     )
 
     await client.update_virtual_device(VirtualDevice.DISK)
 
-    calls = mocked.requests[
-        ("POST", yarl.URL("http://localhost:8888/api/vm/device/virtual"))
-    ]
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}vm/device/virtual"))]
     assert calls[0].kwargs.get("json") == {"device": "disk"}
 
 
@@ -423,7 +417,7 @@ async def test_get_virtual_device_status_handles_non_pro_shape(
 ) -> None:
     """Test virtual device status keeps non-Pro fields intact."""
     mocked.get(
-        "http://localhost:8888/api/vm/device/virtual",
+        f"{BASE_URL}vm/device/virtual",
         payload={
             "code": 0,
             "msg": "success",
@@ -446,7 +440,7 @@ async def test_get_virtual_device_status_handles_pro_shape(
     client._session._hw_version = HWVersion.PRO
 
     mocked.get(
-        "http://localhost:8888/api/vm/device/virtual",
+        f"{BASE_URL}vm/device/virtual",
         payload={
             "code": 0,
             "msg": "success",
@@ -478,7 +472,7 @@ async def test_update_virtual_device_sends_pro_disk_type(
     client._session._hw_version = HWVersion.PRO
 
     mocked.post(
-        "http://localhost:8888/api/vm/device/virtual",
+        f"{BASE_URL}vm/device/virtual",
         payload={"code": 0, "msg": "success", "data": None},
     )
 
@@ -487,9 +481,7 @@ async def test_update_virtual_device_sends_pro_disk_type(
         disk_type=DiskType.EMMC,
     )
 
-    calls = mocked.requests[
-        ("POST", yarl.URL("http://localhost:8888/api/vm/device/virtual"))
-    ]
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}vm/device/virtual"))]
     assert calls[0].kwargs.get("json") == {
         "device": "disk",
         "type": "emmc",
@@ -503,7 +495,7 @@ async def test_set_led_strip_partial_preserves_current_config(
     client._session._hw_version = HWVersion.PRO
 
     mocked.get(
-        "http://localhost:8888/api/vm/ledstrip/get",
+        f"{BASE_URL}vm/ledstrip/get",
         payload={
             "code": 0,
             "msg": "success",
@@ -516,15 +508,13 @@ async def test_set_led_strip_partial_preserves_current_config(
         },
     )
     mocked.post(
-        "http://localhost:8888/api/vm/ledstrip/set",
+        f"{BASE_URL}vm/ledstrip/set",
         payload={"code": 0, "msg": "success", "data": None},
     )
 
     await client.set_led_strip(brightness=50)
 
-    calls = mocked.requests[
-        ("POST", yarl.URL("http://localhost:8888/api/vm/ledstrip/set"))
-    ]
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}vm/ledstrip/set"))]
     assert calls[0].kwargs.get("json") == {
         "on": True,
         "hor": 8,
@@ -538,7 +528,7 @@ async def test_get_wol_macs_returns_empty_list_for_missing_file(
 ) -> None:
     """Test WOL getter normalizes the empty-file device state."""
     mocked.get(
-        "http://localhost:8888/api/network/wol/mac",
+        f"{BASE_URL}network/wol/mac",
         payload={"code": -2, "msg": "open file error", "data": None},
     )
 
@@ -563,7 +553,7 @@ async def test_connect_wifi_no_auth_sends_ap_header(
 ) -> None:
     """Test AP-mode Wi-Fi connection sends setup credentials without auth cookie."""
     mocked.post(
-        "http://localhost:8888/api/network/wifi",
+        f"{BASE_URL}network/wifi",
         payload={"code": 0, "msg": "success", "data": None},
     )
 
@@ -572,9 +562,7 @@ async def test_connect_wifi_no_auth_sends_ap_header(
         ap_password="setup-secret",
     )
 
-    calls = mocked.requests[
-        ("POST", yarl.URL("http://localhost:8888/api/network/wifi"))
-    ]
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}network/wifi"))]
     assert calls[0].kwargs.get("json") == {
         "ssid": "NanoKVM-Setup",
         "password": "",
@@ -590,7 +578,7 @@ async def test_get_dns_parses_configuration(
     mark_detected(client, application_version="2.4.1")
 
     mocked.get(
-        "http://localhost:8888/api/network/dns",
+        f"{BASE_URL}network/dns",
         payload={
             "code": 0,
             "msg": "success",
@@ -632,7 +620,7 @@ async def test_set_dns_manual_sends_servers(
     mark_detected(client, application_version="2.4.1")
 
     mocked.post(
-        "http://localhost:8888/api/network/dns",
+        f"{BASE_URL}network/dns",
         payload={"code": 0, "msg": "success", "data": None},
     )
 
@@ -641,7 +629,7 @@ async def test_set_dns_manual_sends_servers(
         ["1.1.1.1", "2606:4700:4700::1111"],
     )
 
-    calls = mocked.requests[("POST", yarl.URL("http://localhost:8888/api/network/dns"))]
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}network/dns"))]
     assert calls[0].kwargs.get("json") == {
         "mode": "manual",
         "servers": ["1.1.1.1", "2606:4700:4700::1111"],
@@ -655,13 +643,13 @@ async def test_set_dns_dhcp_string_sends_empty_servers(
     mark_detected(client, application_version="2.4.1")
 
     mocked.post(
-        "http://localhost:8888/api/network/dns",
+        f"{BASE_URL}network/dns",
         payload={"code": 0, "msg": "success", "data": None},
     )
 
     await client.set_dns("dhcp")
 
-    calls = mocked.requests[("POST", yarl.URL("http://localhost:8888/api/network/dns"))]
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}network/dns"))]
     assert calls[0].kwargs.get("json") == {
         "mode": "dhcp",
         "servers": [],
@@ -688,7 +676,7 @@ async def test_get_dns_old_application_version_is_not_supported(
     client._session._hw_version = HWVersion.PCIE
 
     mocked.get(
-        "http://localhost:8888/api/vm/info",
+        f"{BASE_URL}vm/info",
         payload=info_payload(application="2.4.0"),
     )
 
@@ -698,7 +686,7 @@ async def test_get_dns_old_application_version_is_not_supported(
     assert "get_dns requires non-Pro application version >= 2.4.1" in str(
         exc_info.value
     )
-    dns_url = yarl.URL("http://localhost:8888/api/network/dns")
+    dns_url = yarl.URL(f"{BASE_URL}network/dns")
     assert ("GET", dns_url) not in mocked.requests
 
 
@@ -709,11 +697,11 @@ async def test_get_dns_exact_application_version_is_supported(
     client._session._hw_version = HWVersion.PCIE
 
     mocked.get(
-        "http://localhost:8888/api/vm/info",
+        f"{BASE_URL}vm/info",
         payload=info_payload(application="2.4.1"),
     )
     mocked.get(
-        "http://localhost:8888/api/network/dns",
+        f"{BASE_URL}network/dns",
         payload={
             "code": 0,
             "msg": "success",
@@ -744,7 +732,7 @@ async def test_non_pro_application_version_gate_uses_non_pro_minimum(
     assert "get_shortcuts requires non-Pro application version >= 2.3.2" in str(
         exc_info.value
     )
-    shortcuts_url = yarl.URL("http://localhost:8888/api/hid/shortcuts")
+    shortcuts_url = yarl.URL(f"{BASE_URL}hid/shortcuts")
     assert ("GET", shortcuts_url) not in mocked.requests
 
 
@@ -764,7 +752,7 @@ async def test_pro_application_version_gate_uses_pro_minimum(
     assert "get_shortcuts requires Pro application version >= 1.2.8" in str(
         exc_info.value
     )
-    shortcuts_url = yarl.URL("http://localhost:8888/api/hid/shortcuts")
+    shortcuts_url = yarl.URL(f"{BASE_URL}hid/shortcuts")
     assert ("GET", shortcuts_url) not in mocked.requests
 
 
@@ -776,7 +764,7 @@ async def test_upload_script_uses_multipart_form(
     script.write_text("#!/bin/sh\ntrue\n")
 
     mocked.post(
-        "http://localhost:8888/api/vm/script/upload",
+        f"{BASE_URL}vm/script/upload",
         payload={
             "code": 0,
             "msg": "success",
@@ -786,9 +774,7 @@ async def test_upload_script_uses_multipart_form(
 
     response = await client.upload_script(script)
 
-    calls = mocked.requests[
-        ("POST", yarl.URL("http://localhost:8888/api/vm/script/upload"))
-    ]
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}vm/script/upload"))]
     assert isinstance(calls[0].kwargs.get("data"), aiohttp.FormData)
     assert response.file == "test.sh"
 
@@ -800,15 +786,15 @@ async def test_shortcut_methods_send_expected_payloads(
     mark_detected(client, application_version="2.3.4")
 
     mocked.post(
-        "http://localhost:8888/api/hid/shortcut",
+        f"{BASE_URL}hid/shortcut",
         payload={"code": 0, "msg": "success", "data": None},
     )
     mocked.delete(
-        "http://localhost:8888/api/hid/shortcut",
+        f"{BASE_URL}hid/shortcut",
         payload={"code": 0, "msg": "success", "data": None},
     )
     mocked.post(
-        "http://localhost:8888/api/hid/shortcut/leader-key",
+        f"{BASE_URL}hid/shortcut/leader-key",
         payload={"code": 0, "msg": "success", "data": None},
     )
 
@@ -817,16 +803,12 @@ async def test_shortcut_methods_send_expected_payloads(
     await client.delete_shortcut("shortcut-1")
     await client.set_leader_key("ControlLeft")
 
-    shortcut_calls = mocked.requests[
-        ("POST", yarl.URL("http://localhost:8888/api/hid/shortcut"))
-    ]
-    delete_calls = mocked.requests[
-        ("DELETE", yarl.URL("http://localhost:8888/api/hid/shortcut"))
-    ]
+    shortcut_calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}hid/shortcut"))]
+    delete_calls = mocked.requests[("DELETE", yarl.URL(f"{BASE_URL}hid/shortcut"))]
     leader_calls = mocked.requests[
         (
             "POST",
-            yarl.URL("http://localhost:8888/api/hid/shortcut/leader-key"),
+            yarl.URL(f"{BASE_URL}hid/shortcut/leader-key"),
         )
     ]
     assert shortcut_calls[0].kwargs.get("json") == {
@@ -843,7 +825,7 @@ async def test_tailscale_login_returns_url(
     mark_detected(client, application_version="2.1.6")
 
     mocked.post(
-        "http://localhost:8888/api/extensions/tailscale/login",
+        f"{BASE_URL}extensions/tailscale/login",
         payload={
             "code": 0,
             "msg": "success",
@@ -863,21 +845,19 @@ async def test_set_stream_mode_accepts_existing_string_values(
     client._session._hw_version = HWVersion.PRO
 
     mocked.post(
-        "http://localhost:8888/api/stream/mode",
+        f"{BASE_URL}stream/mode",
         payload={"code": 0, "msg": "success", "data": None},
     )
 
     await client.set_stream_mode(StreamMode.H264_DIRECT.value)
 
-    calls = mocked.requests[("POST", yarl.URL("http://localhost:8888/api/stream/mode"))]
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}stream/mode"))]
     assert calls[0].kwargs.get("json") == {"mode": "h264-direct"}
 
 
 async def test_client_context_manager() -> None:
     """Test that client properly initializes and cleans up with context manager."""
-    async with NanoKVMClient(
-        "http://localhost:8888/api/", token="test-token"
-    ) as client:
+    async with NanoKVMClient(BASE_URL, token="test-token") as client:
         # Verify session is created
         assert client._session._http_session is not None
         assert not client._session._http_session.closed
@@ -889,12 +869,12 @@ async def test_client_context_manager() -> None:
 async def test_client_context_manager_external_session() -> None:
     """Test that client properly deals with an external session."""
     async with ClientSession() as session:
-        client3 = NanoKVMClient("http://localhost:8888/api/", session=session)
+        client3 = NanoKVMClient(BASE_URL, session=session)
 
         # All clients connect with the same external session
         async with (
-            NanoKVMClient("http://localhost:8888/api/", session=session) as client1,
-            NanoKVMClient("http://localhost:8888/api/", session=session) as client2,
+            NanoKVMClient(BASE_URL, session=session) as client1,
+            NanoKVMClient(BASE_URL, session=session) as client2,
             client3,
         ):
             # Verify session is created
@@ -913,7 +893,7 @@ async def test_client_context_manager_external_session() -> None:
 
 async def test_request_outside_context_manager_explains_how_to_start() -> None:
     """Using the client without 'async with' raises a clear error."""
-    client = NanoKVMClient("http://localhost:8888/api/", token="synthetic-token")
+    client = NanoKVMClient(BASE_URL, token="synthetic-token")
     with pytest.raises(RuntimeError, match="async with NanoKVMClient"):
         await client.get_gpio()
 
@@ -931,12 +911,12 @@ async def test_mount_image_read_only_requires_pro_1_2_1(
 async def test_mjpeg_stream_bytes_yields_raw_frames(mocked: aioresponses) -> None:
     """The byte stream hands out each JPEG part untouched."""
     mocked.get(
-        "http://localhost:8888/api/stream/mjpeg",
+        f"{BASE_URL}stream/mjpeg",
         headers={"Content-Type": "multipart/x-mixed-replace; boundary=frame"},
         body=b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8one\r\n"
         b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8two\r\n--frame--\r\n",
     )
-    async with NanoKVMClient("http://localhost:8888/api/", token="test-token") as c:
+    async with NanoKVMClient(BASE_URL, token="test-token") as c:
         frames = [frame async for frame in c.mjpeg_stream_bytes()]
 
     assert frames == [b"\xff\xd8one", b"\xff\xd8two"]

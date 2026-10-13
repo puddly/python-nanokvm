@@ -13,10 +13,12 @@ from nanokvm.components.storage import StorageController
 from nanokvm.exceptions import NanoKVMNotAuthenticatedError, NanoKVMPermissionError
 from nanokvm.models import HWVersion
 
+from .common import BASE_URL
+
 
 async def test_components_share_permissions_and_external_session() -> None:
     """A forbidden storage read leaves HID/network usable until a 401 clears them."""
-    url = "http://kvm.local/api/"
+    url = BASE_URL
     async with aiohttp.ClientSession() as http:
         session = SessionController(
             url,

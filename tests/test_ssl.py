@@ -11,17 +11,20 @@ import yarl
 
 from nanokvm.client import NanoKVMAuthenticationFailure, NanoKVMClient
 
+from .common import BASE_URL
+
 _HARDWARE_PAYLOAD = {
     "code": 0,
     "msg": "success",
     "data": {"version": "Alpha"},
 }
-_HARDWARE_URL = "https://kvm.local/api/vm/hardware"
+_BASE_URL = "https://kvm.local/api/"
+_HARDWARE_URL = f"{_BASE_URL}vm/hardware"
 
 
 async def test_default_ssl_verification_enabled() -> None:
     """Test that SSL verification is enabled by default."""
-    client = NanoKVMClient("https://kvm.local/api/")
+    client = NanoKVMClient(_BASE_URL)
 
     ssl_config = client._session.create_ssl_context()
     assert ssl_config is True
@@ -29,7 +32,7 @@ async def test_default_ssl_verification_enabled() -> None:
 
 async def test_ssl_verification_disabled() -> None:
     """Test SSL verification can be disabled."""
-    client = NanoKVMClient("https://kvm.local/api/", verify_ssl=False)
+    client = NanoKVMClient(_BASE_URL, verify_ssl=False)
 
     ssl_config = client._session.create_ssl_context()
     assert ssl_config is False
@@ -44,7 +47,7 @@ async def test_custom_ca_certificate(tmp_path: Path) -> None:
         mock_ctx = MagicMock(spec=ssl.SSLContext)
         mock_ssl_context.return_value = mock_ctx
 
-        client = NanoKVMClient("https://kvm.local/api/", ssl_ca_cert=str(ca_cert_file))
+        client = NanoKVMClient(_BASE_URL, ssl_ca_cert=str(ca_cert_file))
 
         ssl_config = client._session.create_ssl_context()
 
@@ -54,9 +57,7 @@ async def test_custom_ca_certificate(tmp_path: Path) -> None:
 
 async def test_nonexistent_ca_cert_raises_error() -> None:
     """Test that non-existent CA cert file raises FileNotFoundError."""
-    client = NanoKVMClient(
-        "https://kvm.local/api/", ssl_ca_cert="/path/that/does/not/exist.pem"
-    )
+    client = NanoKVMClient(_BASE_URL, ssl_ca_cert="/path/that/does/not/exist.pem")
 
     with pytest.raises(FileNotFoundError):
         client._session.create_ssl_context()
@@ -64,9 +65,7 @@ async def test_nonexistent_ca_cert_raises_error() -> None:
 
 async def test_context_manager_closes_session_when_ssl_setup_fails() -> None:
     """A failed context entry does not leak the internally-created session."""
-    client = NanoKVMClient(
-        "https://kvm.local/api/", ssl_ca_cert="/path/that/does/not/exist.pem"
-    )
+    client = NanoKVMClient(_BASE_URL, ssl_ca_cert="/path/that/does/not/exist.pem")
 
     try:
         with pytest.raises(FileNotFoundError):
@@ -86,7 +85,7 @@ async def test_context_manager_closes_session_when_ssl_setup_fails() -> None:
 
 async def test_http_url_works_regardless_of_ssl_config() -> None:
     """Test that HTTP URL (not HTTPS) works regardless of SSL config."""
-    client = NanoKVMClient("http://kvm.local/api/", verify_ssl=False)
+    client = NanoKVMClient(BASE_URL, verify_ssl=False)
 
     async with client:
         assert client._session._http_session is not None
@@ -94,7 +93,7 @@ async def test_http_url_works_regardless_of_ssl_config() -> None:
 
 async def test_session_created_with_tcp_connector() -> None:
     """Test that session is created with TCPConnector."""
-    client = NanoKVMClient("https://kvm.local/api/")
+    client = NanoKVMClient(_BASE_URL)
 
     async with client:
         assert client._session._http_session is not None
@@ -103,30 +102,28 @@ async def test_session_created_with_tcp_connector() -> None:
 
 async def test_password_obfuscation_auto_by_default() -> None:
     """Test that password obfuscation defaults to None (auto-detect)."""
-    client = NanoKVMClient("https://kvm.local/api/")
+    client = NanoKVMClient(_BASE_URL)
     assert client._session._use_password_obfuscation is None
 
 
 async def test_password_obfuscation_can_be_disabled() -> None:
     """Test that password obfuscation can be disabled."""
-    client = NanoKVMClient("https://kvm.local/api/", use_password_obfuscation=False)
+    client = NanoKVMClient(_BASE_URL, use_password_obfuscation=False)
     assert client._session._use_password_obfuscation is False
 
 
 async def test_authenticate_with_plain_text_password(mocked: aioresponses) -> None:
     """Test authentication with plain text password (newer NanoKVM)."""
-    async with NanoKVMClient(
-        "https://kvm.local/api/", use_password_obfuscation=False
-    ) as client:
+    async with NanoKVMClient(_BASE_URL, use_password_obfuscation=False) as client:
         mocked.post(
-            "https://kvm.local/api/auth/login",
+            f"{_BASE_URL}auth/login",
             payload={"code": 0, "msg": "success", "data": {"token": "abc123"}},
         )
         mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
         await client.authenticate("root", "password123")
 
-        calls = mocked.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
+        calls = mocked.requests[("POST", yarl.URL(f"{_BASE_URL}auth/login"))]
         assert len(calls) == 1
         request_json = calls[0].kwargs.get("json")
         assert request_json["username"] == "root"
@@ -142,11 +139,9 @@ async def test_authentication_debug_logs_redact_credentials(
     token = "token-must-not-be-logged"
     caplog.set_level(logging.DEBUG, logger="nanokvm")
 
-    async with NanoKVMClient(
-        "https://kvm.local/api/", use_password_obfuscation=False
-    ) as client:
+    async with NanoKVMClient(_BASE_URL, use_password_obfuscation=False) as client:
         mocked.post(
-            "https://kvm.local/api/auth/login",
+            f"{_BASE_URL}auth/login",
             payload={"code": 0, "msg": "success", "data": {"token": token}},
         )
         mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
@@ -159,18 +154,16 @@ async def test_authentication_debug_logs_redact_credentials(
 
 async def test_authenticate_with_obfuscated_password(mocked: aioresponses) -> None:
     """Test authentication with obfuscated password (older NanoKVM)."""
-    async with NanoKVMClient(
-        "https://kvm.local/api/", use_password_obfuscation=True
-    ) as client:
+    async with NanoKVMClient(_BASE_URL, use_password_obfuscation=True) as client:
         mocked.post(
-            "https://kvm.local/api/auth/login",
+            f"{_BASE_URL}auth/login",
             payload={"code": 0, "msg": "success", "data": {"token": "abc123"}},
         )
         mocked.get(_HARDWARE_URL, payload=_HARDWARE_PAYLOAD)
 
         await client.authenticate("root", "password123")
 
-        calls = mocked.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
+        calls = mocked.requests[("POST", yarl.URL(f"{_BASE_URL}auth/login"))]
         assert len(calls) == 1
         request_json = calls[0].kwargs.get("json")
         assert request_json["username"] == "root"
@@ -180,9 +173,9 @@ async def test_authenticate_with_obfuscated_password(mocked: aioresponses) -> No
 
 async def test_auto_detect_obfuscation_succeeds(mocked: aioresponses) -> None:
     """Test auto-detect succeeds with obfuscated password on first attempt."""
-    async with NanoKVMClient("https://kvm.local/api/") as client:
+    async with NanoKVMClient(_BASE_URL) as client:
         mocked.post(
-            "https://kvm.local/api/auth/login",
+            f"{_BASE_URL}auth/login",
             payload={
                 "code": 0,
                 "msg": "success",
@@ -193,7 +186,7 @@ async def test_auto_detect_obfuscation_succeeds(mocked: aioresponses) -> None:
 
         await client.authenticate("root", "password123")
 
-        calls = mocked.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
+        calls = mocked.requests[("POST", yarl.URL(f"{_BASE_URL}auth/login"))]
         assert len(calls) == 1
         request_json = calls[0].kwargs.get("json")
         assert request_json["password"].startswith("U2FsdGVkX1")
@@ -202,10 +195,10 @@ async def test_auto_detect_obfuscation_succeeds(mocked: aioresponses) -> None:
 
 async def test_auto_detect_fallback_to_plain_text(mocked: aioresponses) -> None:
     """Test auto-detect falls back to plain text after obfuscated fails."""
-    async with NanoKVMClient("https://kvm.local/api/") as client:
+    async with NanoKVMClient(_BASE_URL) as client:
         # First call: obfuscated fails with code -2
         mocked.post(
-            "https://kvm.local/api/auth/login",
+            f"{_BASE_URL}auth/login",
             payload={
                 "code": -2,
                 "msg": "invalid username or password",
@@ -214,7 +207,7 @@ async def test_auto_detect_fallback_to_plain_text(mocked: aioresponses) -> None:
         )
         # Second call: plain text succeeds
         mocked.post(
-            "https://kvm.local/api/auth/login",
+            f"{_BASE_URL}auth/login",
             payload={
                 "code": 0,
                 "msg": "success",
@@ -225,7 +218,7 @@ async def test_auto_detect_fallback_to_plain_text(mocked: aioresponses) -> None:
 
         await client.authenticate("root", "password123")
 
-        calls = mocked.requests[("POST", yarl.URL("https://kvm.local/api/auth/login"))]
+        calls = mocked.requests[("POST", yarl.URL(f"{_BASE_URL}auth/login"))]
         assert len(calls) == 2
         # First attempt: obfuscated
         assert calls[0].kwargs.get("json")["password"].startswith("U2FsdGVkX1")
@@ -236,10 +229,10 @@ async def test_auto_detect_fallback_to_plain_text(mocked: aioresponses) -> None:
 
 async def test_auto_detect_both_fail(mocked: aioresponses) -> None:
     """Test auto-detect raises NanoKVMAuthenticationFailure when both fail."""
-    async with NanoKVMClient("https://kvm.local/api/") as client:
+    async with NanoKVMClient(_BASE_URL) as client:
         # First call: obfuscated fails
         mocked.post(
-            "https://kvm.local/api/auth/login",
+            f"{_BASE_URL}auth/login",
             payload={
                 "code": -2,
                 "msg": "invalid username or password",
@@ -248,7 +241,7 @@ async def test_auto_detect_both_fail(mocked: aioresponses) -> None:
         )
         # Second call: plain text also fails
         mocked.post(
-            "https://kvm.local/api/auth/login",
+            f"{_BASE_URL}auth/login",
             payload={
                 "code": -2,
                 "msg": "invalid username or password",
@@ -262,11 +255,9 @@ async def test_auto_detect_both_fail(mocked: aioresponses) -> None:
 
 async def test_full_client_lifecycle_with_ssl(mocked: aioresponses) -> None:
     """Test full client lifecycle with SSL configuration."""
-    async with NanoKVMClient(
-        "https://kvm.local/api/", token="test-token", verify_ssl=True
-    ) as client:
+    async with NanoKVMClient(_BASE_URL, token="test-token", verify_ssl=True) as client:
         mocked.get(
-            "https://kvm.local/api/vm/info",
+            f"{_BASE_URL}vm/info",
             payload={
                 "code": 0,
                 "msg": "success",

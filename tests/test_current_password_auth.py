@@ -9,11 +9,10 @@ import yarl
 from nanokvm.client import NanoKVMApiError, NanoKVMClient, NanoKVMError
 from nanokvm.models import HWVersion
 
-from .common import mark_detected
+from .common import BASE_URL, mark_detected
 
-_BASE_URL = "http://kvm.local/api/"
-_ACCOUNT_URL = f"{_BASE_URL}auth/account"
-_PASSWORD_URL = f"{_BASE_URL}auth/password"
+_ACCOUNT_URL = f"{BASE_URL}auth/account"
+_PASSWORD_URL = f"{BASE_URL}auth/password"
 
 
 def _account_payload(username: str = "synthetic-user") -> dict[str, object]:
@@ -34,7 +33,7 @@ def _prepare_client(
     application: str | None = "2.5.1",
 ) -> NanoKVMClient:
     client = NanoKVMClient(
-        _BASE_URL,
+        BASE_URL,
         token="session-token",
         use_password_obfuscation=True,
     )
@@ -215,11 +214,11 @@ async def test_password_change_detects_hardware_and_version_when_needed() -> Non
             ),
         ):
             mocked.get(
-                f"{_BASE_URL}vm/hardware",
+                f"{BASE_URL}vm/hardware",
                 payload={"code": 0, "msg": "success", "data": {"version": "PCIE"}},
             )
             mocked.get(
-                f"{_BASE_URL}vm/info",
+                f"{BASE_URL}vm/info",
                 payload={
                     "code": 0,
                     "msg": "success",

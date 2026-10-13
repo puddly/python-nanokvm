@@ -15,7 +15,7 @@ from nanokvm.client import (
 )
 from nanokvm.models import HWVersion, MouseButton
 
-from .common import mark_detected
+from .common import BASE_URL, mark_detected
 
 
 @pytest.fixture
@@ -27,9 +27,7 @@ async def client_with_mock_ws() -> AsyncGenerator[tuple[NanoKVMClient, AsyncMock
     with patch(
         "aiohttp.ClientSession.ws_connect", new_callable=AsyncMock, return_value=mock_ws
     ):
-        async with NanoKVMClient(
-            "http://localhost:8888/api/", token="test-token"
-        ) as client:
+        async with NanoKVMClient(BASE_URL, token="test-token") as client:
             mark_detected(client, HWVersion.PCIE, "2.3.2")
             yield client, mock_ws
 
@@ -49,9 +47,7 @@ async def legacy_client_with_mock_ws() -> AsyncGenerator[
     with patch(
         "aiohttp.ClientSession.ws_connect", new_callable=AsyncMock, return_value=mock_ws
     ):
-        async with NanoKVMClient(
-            "http://localhost:8888/api/", token="test-token"
-        ) as client:
+        async with NanoKVMClient(BASE_URL, token="test-token") as client:
             mark_detected(client, HWVersion.PCIE, "2.3.1")
             yield client, mock_ws
 
@@ -71,7 +67,7 @@ def test_current_mouse_report_uses_selected_mode(
     mode: Literal["absolute", "relative"], wheel: int, expected: bytes
 ) -> None:
     """Current button and wheel reports follow the selected mouse mode."""
-    client = NanoKVMClient("http://localhost:8888/api/", token="test-token")
+    client = NanoKVMClient(BASE_URL, token="test-token")
     client._session._mouse_mode = mode
     client._session._mouse_buttons = 3
     client._session._mouse_abs_position = (0x1234, 0x5678)
@@ -284,9 +280,7 @@ async def test_concurrent_first_mouse_use_creates_one_websocket() -> None:
         return mock_ws
 
     with patch("aiohttp.ClientSession.ws_connect", new=connect):
-        async with NanoKVMClient(
-            "http://localhost:8888/api/", token="test-token"
-        ) as client:
+        async with NanoKVMClient(BASE_URL, token="test-token") as client:
             mark_detected(client, HWVersion.PCIE, "2.3.2")
             first = asyncio.create_task(client.mouse_move_rel(0.1, 0.0))
             await connect_started.wait()
@@ -308,9 +302,7 @@ async def test_mouse_send_reconnects_after_transport_failure() -> None:
     connect = AsyncMock(side_effect=[first_ws, second_ws])
 
     with patch("aiohttp.ClientSession.ws_connect", new=connect):
-        async with NanoKVMClient(
-            "http://localhost:8888/api/", token="test-token"
-        ) as client:
+        async with NanoKVMClient(BASE_URL, token="test-token") as client:
             mark_detected(client, HWVersion.PCIE, "2.3.2")
             with pytest.raises(ConnectionResetError):
                 await client.mouse_move_rel(0.1, 0.0)
@@ -330,9 +322,7 @@ async def test_legacy_mouse_send_reconnects_after_transport_failure() -> None:
     connect = AsyncMock(side_effect=[first_ws, second_ws])
 
     with patch("aiohttp.ClientSession.ws_connect", new=connect):
-        async with NanoKVMClient(
-            "http://localhost:8888/api/", token="test-token"
-        ) as client:
+        async with NanoKVMClient(BASE_URL, token="test-token") as client:
             mark_detected(client, HWVersion.PCIE, "2.3.1")
             with pytest.raises(ConnectionResetError):
                 await client.mouse_move_rel(0.1, 0.0)
@@ -347,9 +337,7 @@ async def test_mouse_send_helper_invalidates_failed_websocket() -> None:
     ws = AsyncMock()
     ws.closed = False
 
-    async with NanoKVMClient(
-        "http://localhost:8888/api/", token="test-token"
-    ) as client:
+    async with NanoKVMClient(BASE_URL, token="test-token") as client:
         client._session._ws = ws
 
         async def send(current_ws: Any) -> None:
@@ -415,9 +403,7 @@ async def test_context_manager_cleanup() -> None:
     with patch(
         "aiohttp.ClientSession.ws_connect", new_callable=AsyncMock, return_value=mock_ws
     ):
-        async with NanoKVMClient(
-            "http://localhost:8888/api/", token="test-token"
-        ) as client:
+        async with NanoKVMClient(BASE_URL, token="test-token") as client:
             mark_detected(client, HWVersion.PCIE, "2.3.2")
             await client.mouse_move_abs(0.0, 0.0)
             assert client._session._ws is not None
@@ -455,7 +441,7 @@ async def test_failed_press_does_not_press_on_next_movement(failure: str) -> Non
     from nanokvm.client import NanoKVMPermissionError
 
     info = aiohttp.RequestInfo(
-        yarl.URL("http://kvm.local/api/ws"), "GET", CIMultiDictProxy(CIMultiDict())
+        yarl.URL(f"{BASE_URL}ws"), "GET", CIMultiDictProxy(CIMultiDict())
     )
     error: BaseException
     expected: type[BaseException]
@@ -469,7 +455,7 @@ async def test_failed_press_does_not_press_on_next_movement(failure: str) -> Non
         error = aiohttp.ClientConnectionError("synthetic failure")
         expected = aiohttp.ClientConnectionError
     ws = AsyncMock(closed=False)
-    async with NanoKVMClient("http://kvm.local/api/", token="reader") as client:
+    async with NanoKVMClient(BASE_URL, token="reader") as client:
         mark_detected(client, HWVersion.PCIE, "2.5.1")
         with patch(
             "aiohttp.ClientSession.ws_connect", AsyncMock(side_effect=[error, ws])

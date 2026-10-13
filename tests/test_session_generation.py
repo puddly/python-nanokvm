@@ -13,9 +13,7 @@ import yarl
 from nanokvm.client import NanoKVMClient, NanoKVMNotAuthenticatedError
 from nanokvm.models import HWVersion
 
-from .common import mark_detected
-
-_URL = "http://kvm.local/api/"
+from .common import BASE_URL, mark_detected
 
 
 @pytest.mark.parametrize("transport", ["json", "form", "mjpeg"])
@@ -34,7 +32,7 @@ async def test_delayed_401_does_not_clear_replacement_session(
         await release.wait()
         return CallbackResult(status=401, body='"unauthorized"')
 
-    async with NanoKVMClient(_URL, token="old-session") as client:
+    async with NanoKVMClient(BASE_URL, token="old-session") as client:
 
         async def request() -> None:
             if transport == "json":
@@ -48,17 +46,17 @@ async def test_delayed_401_does_not_clear_replacement_session(
                     pass
 
         if transport == "json":
-            mocked.get(f"{_URL}auth/account", callback=delayed_401)
+            mocked.get(f"{BASE_URL}auth/account", callback=delayed_401)
         elif transport == "form":
-            mocked.post(f"{_URL}upload", callback=delayed_401)
+            mocked.post(f"{BASE_URL}upload", callback=delayed_401)
         else:
-            mocked.get(f"{_URL}stream/mjpeg", callback=delayed_401)
+            mocked.get(f"{BASE_URL}stream/mjpeg", callback=delayed_401)
         mocked.post(
-            f"{_URL}auth/login",
+            f"{BASE_URL}auth/login",
             payload={"code": 0, "msg": "ok", "data": {"token": new_token}},
         )
         mocked.get(
-            f"{_URL}vm/hardware",
+            f"{BASE_URL}vm/hardware",
             payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
         )
         async with asyncio.timeout(2):
@@ -84,14 +82,14 @@ async def test_delayed_form_success_is_rejected_after_reauthentication(
         await release.wait()
         return CallbackResult(payload={"code": 0, "msg": "ok", "data": None})
 
-    async with NanoKVMClient(_URL, token="old-session") as client:
-        mocked.post(f"{_URL}upload", callback=delayed_success)
+    async with NanoKVMClient(BASE_URL, token="old-session") as client:
+        mocked.post(f"{BASE_URL}upload", callback=delayed_success)
         mocked.post(
-            f"{_URL}auth/login",
+            f"{BASE_URL}auth/login",
             payload={"code": 0, "msg": "ok", "data": {"token": "new-session"}},
         )
         mocked.get(
-            f"{_URL}vm/hardware",
+            f"{BASE_URL}vm/hardware",
             payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
         )
         pending = asyncio.create_task(
@@ -114,12 +112,12 @@ async def test_websocket_401_waiting_for_cleanup_cannot_clear_new_login() -> Non
     release = asyncio.Event()
     error = aiohttp.WSServerHandshakeError(
         aiohttp.RequestInfo(
-            yarl.URL(_URL + "ws"), "GET", CIMultiDictProxy(CIMultiDict())
+            yarl.URL(BASE_URL + "ws"), "GET", CIMultiDictProxy(CIMultiDict())
         ),
         (),
         status=401,
     )
-    async with NanoKVMClient(_URL, token="old-session") as client:
+    async with NanoKVMClient(BASE_URL, token="old-session") as client:
         original_clear = client._session.clear_local_session
 
         async def delayed_clear(*args: Any, **kwargs: Any) -> int:
@@ -138,11 +136,11 @@ async def test_websocket_401_waiting_for_cleanup_cannot_clear_new_login() -> Non
             aioresponses() as mocked,
         ):
             mocked.post(
-                f"{_URL}auth/login",
+                f"{BASE_URL}auth/login",
                 payload={"code": 0, "msg": "ok", "data": {"token": "new-session"}},
             )
             mocked.get(
-                f"{_URL}vm/hardware",
+                f"{BASE_URL}vm/hardware",
                 payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
             )
             pending = asyncio.create_task(client._session.get_ws())
@@ -168,7 +166,7 @@ async def test_session_cleanup_does_not_close_new_websocket_while_old_one_closes
         closing.set()
         await finish_close.wait()
 
-    async with NanoKVMClient(_URL, token="old-session") as client:
+    async with NanoKVMClient(BASE_URL, token="old-session") as client:
         old_ws = AsyncMock(closed=False)
         old_ws.close.side_effect = close_old
         client._session._ws = old_ws
@@ -178,7 +176,7 @@ async def test_session_cleanup_does_not_close_new_websocket_while_old_one_closes
             try:
                 with aioresponses() as mocked:
                     mocked.post(
-                        f"{_URL}auth/login",
+                        f"{BASE_URL}auth/login",
                         payload={
                             "code": 0,
                             "msg": "ok",
@@ -186,7 +184,7 @@ async def test_session_cleanup_does_not_close_new_websocket_while_old_one_closes
                         },
                     )
                     mocked.get(
-                        f"{_URL}vm/hardware",
+                        f"{BASE_URL}vm/hardware",
                         payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
                     )
                     await client.authenticate("synthetic-user", "synthetic-password")
@@ -216,23 +214,23 @@ async def test_delayed_session_ending_response_is_rejected(
         await release.wait()
         return CallbackResult(payload={"code": 0, "msg": "ok", "data": None})
 
-    async with NanoKVMClient(_URL, token="old-session") as client:
+    async with NanoKVMClient(BASE_URL, token="old-session") as client:
         mark_detected(client, HWVersion.PCIE, "2.5.1")
         mocked.get(
-            f"{_URL}auth/account",
+            f"{BASE_URL}auth/account",
             payload={
                 "code": 0,
                 "msg": "ok",
                 "data": {"username": "synthetic-user"},
             },
         )
-        mocked.post(f"{_URL}auth/{operation}", callback=delayed_success)
+        mocked.post(f"{BASE_URL}auth/{operation}", callback=delayed_success)
         mocked.post(
-            f"{_URL}auth/login",
+            f"{BASE_URL}auth/login",
             payload={"code": 0, "msg": "ok", "data": {"token": "new-session"}},
         )
         mocked.get(
-            f"{_URL}vm/hardware",
+            f"{BASE_URL}vm/hardware",
             payload={"code": 0, "msg": "ok", "data": {"version": "PCIE"}},
         )
         pending = asyncio.create_task(
@@ -255,10 +253,10 @@ async def test_delayed_session_ending_response_is_rejected(
 
 async def test_logout_forgets_cached_firmware_versions(mocked: aioresponses) -> None:
     """A later login re-detects versions, so a firmware update is noticed."""
-    async with NanoKVMClient(_URL, token="synthetic-token") as client:
+    async with NanoKVMClient(BASE_URL, token="synthetic-token") as client:
         mark_detected(client, HWVersion.PCIE, "2.3.0")
         client._session._image_version = "1.4.0"
-        mocked.post(f"{_URL}auth/logout", payload={"code": 0, "msg": "ok"})
+        mocked.post(f"{BASE_URL}auth/logout", payload={"code": 0, "msg": "ok"})
         await client.logout()
 
         assert client.application_version is None
