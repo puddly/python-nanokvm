@@ -727,7 +727,8 @@ class SessionController:
         cookies[_SESSION_COOKIE_NAME] = self._token
         headers[hdrs.COOKIE] = cookies.output(header="", sep=";").strip()
         self.clear_session_cookies()
-        ws = await self._ws_session.ws_connect(
+        # **kwargs makes newer aiohttp's ws_connect overloads resolve to Any.
+        ws: ClientWebSocketResponse = await self._ws_session.ws_connect(
             str(ws_url),
             headers=headers,
             ssl=self._ssl_config,
