@@ -150,3 +150,29 @@ async def test_mount_image_read_only_requires_pro_1_2_1(
     with pytest.raises(NanoKVMNotSupportedError, match="1.2.1"):
         await client.mount_image("/data/test.img", read_only=True)
     assert not mocked.requests
+
+
+async def test_autostart_scripts(client: NanoKVMClient, mocked: aioresponses) -> None:
+    """Autostart treats a missing directory as empty and guards script names."""
+    mark_detected(client, HWVersion.PCIE, "2.5.2")
+    mocked.get(
+        f"{BASE_URL}vm/autostart",
+        payload={"code": -1, "msg": "get autostart directory fail", "data": None},
+    )
+    mocked.get(
+        f"{BASE_URL}vm/autostart/boot.sh",
+        payload={"code": 0, "msg": "success", "data": "#!/bin/sh\n"},
+    )
+    mocked.post(
+        f"{BASE_URL}vm/autostart/boot.sh",
+        payload={"code": 0, "msg": "success", "data": "boot.sh"},
+    )
+
+    assert (await client.get_autostart_scripts()).files == []
+    assert await client.get_autostart_script("boot.sh") == "#!/bin/sh\n"
+    await client.upload_autostart_script("boot.sh", "true\n")
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}vm/autostart/boot.sh"))]
+    assert calls[0].kwargs["json"] == {"content": "true\n"}
+    for name in ("", "..", "../kvm/server.yaml"):
+        with pytest.raises(ValueError):
+            await client.delete_autostart_script(name)

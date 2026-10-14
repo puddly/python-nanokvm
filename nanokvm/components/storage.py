@@ -11,13 +11,15 @@ from pathlib import Path
 import re
 import stat
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 from aiohttp import hdrs
 from aiohttp.payload import Payload
+from pydantic import RootModel
 
 from ..compatibility import require_application_version, require_hardware
-from ..exceptions import NanoKVMNotSupportedError
+from ..exceptions import NanoKVMApiError, NanoKVMNotSupportedError
 from ..models.common import (
     DeleteImageReq,
     DeleteScriptReq,
@@ -36,7 +38,7 @@ from ..models.common import (
     StatusImageRsp,
     UploadScriptRsp,
 )
-from ..models.non_pro import GetCdRomRsp
+from ..models.non_pro import GetAutostartRsp, GetCdRomRsp, UploadAutostartReq
 from ..utils import _validate_sha256
 from .session import Controller
 
@@ -110,6 +112,17 @@ class _ImageProgressPayload(Payload):
                 raise OSError("image changed while it was being uploaded")
 
 
+class _AutostartContent(RootModel[str]):
+    pass
+
+
+def _autostart_path(name: str) -> str:
+    """Return the route for one autostart script, rejecting path components."""
+    if not name or name in {".", ".."} or "/" in name:
+        raise ValueError(f"Invalid autostart script name: {name!r}")
+    return f"/vm/autostart/{quote(name, safe='')}"
+
+
 class StorageController(Controller):
     """Implement storage operations behind the public client facade."""
 
@@ -145,6 +158,46 @@ class StorageController(Controller):
             "/vm/script",
             data=DeleteScriptReq(name=name),
         )
+
+    @require_hardware(HWFamily.NON_PRO, min_version="2.3.1")
+    async def get_autostart_scripts(self) -> GetAutostartRsp:
+        """List the scripts the device runs at boot."""
+        try:
+            return await self._session.api_request_json(
+                hdrs.METH_GET,
+                "/vm/autostart",
+                response_model=GetAutostartRsp,
+            )
+        except NanoKVMApiError as err:
+            # The firmware creates the directory on first upload and reports
+            # the failed walk of a missing one as code -1.
+            if err.code != -1:
+                raise
+            return GetAutostartRsp()
+
+    @require_hardware(HWFamily.NON_PRO, min_version="2.3.1")
+    async def get_autostart_script(self, name: str) -> str:
+        """Get the content of an autostart script."""
+        content = await self._session.api_request_json(
+            hdrs.METH_GET,
+            _autostart_path(name),
+            response_model=_AutostartContent,
+        )
+        return content.root
+
+    @require_hardware(HWFamily.NON_PRO, min_version="2.3.1")
+    async def upload_autostart_script(self, name: str, content: str) -> None:
+        """Create or replace an autostart script."""
+        await self._session.api_request_json(
+            hdrs.METH_POST,
+            _autostart_path(name),
+            data=UploadAutostartReq(content=content),
+        )
+
+    @require_hardware(HWFamily.NON_PRO, min_version="2.3.1")
+    async def delete_autostart_script(self, name: str) -> None:
+        """Delete an autostart script."""
+        await self._session.api_request_json(hdrs.METH_DELETE, _autostart_path(name))
 
     async def get_images(self) -> GetImagesRsp:
         """Get the list of available image files."""
