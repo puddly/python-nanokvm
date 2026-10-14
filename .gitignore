@@ -74,3 +74,4 @@ ENV/
 
 .DS_Store
 priv/
+uv.lock
