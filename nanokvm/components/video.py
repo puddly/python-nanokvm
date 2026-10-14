@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from os import PathLike
 
-from aiohttp import hdrs
+from aiohttp import ClientTimeout, hdrs
 
 from ..compatibility import require_hardware
 from ..models.common import HWFamily, HWVersion
@@ -16,9 +16,11 @@ from ..models.non_pro import (
     ManualRegion,
     OriginalResolution,
     ScreenSettingType,
+    SetFrameDetectReq,
     SetHdmiIdleTimeoutReq,
     SetInputRegionReq,
     SetScreenReq,
+    StopFrameDetectReq,
 )
 from ..models.pro import (
     DeleteEdidReq,
@@ -222,6 +224,31 @@ class VideoController(Controller):
             hdrs.METH_POST,
             "/vm/edid/delete",
             data=DeleteEdidReq(edid=edid),
+        )
+
+    @require_hardware(HWFamily.NON_PRO)
+    async def set_frame_detect(self, enabled: bool) -> None:
+        """Skip MJPEG frames that did not change, or send every frame."""
+        await self._session.api_request_json(
+            hdrs.METH_POST,
+            "/stream/mjpeg/detect",
+            data=SetFrameDetectReq(enabled=enabled),
+        )
+
+    @require_hardware(HWFamily.NON_PRO)
+    async def pause_frame_detect(self, duration: int = 10) -> None:
+        """Send every MJPEG frame for ``duration`` seconds, then skip again.
+
+        The device answers only once the pause is over, and turns frame
+        detection on at its end even if it was off before.
+        """
+        if duration < 1:
+            raise ValueError("duration must be at least 1 second")
+        await self._session.api_request_json(
+            hdrs.METH_POST,
+            "/stream/mjpeg/detect/stop",
+            data=StopFrameDetectReq(duration=duration),
+            timeout=ClientTimeout(total=duration + self._session._request_timeout),
         )
 
     @require_hardware(HWFamily.PRO, min_version="1.2.6")

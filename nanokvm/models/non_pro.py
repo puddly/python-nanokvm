@@ -32,6 +32,7 @@ __all__ = [
     "SetAIControlModeReq",
     "SetAIControlModeRsp",
     "SetDNSReq",
+    "SetFrameDetectReq",
     "SetHdmiIdleTimeoutReq",
     "SetInputRegionReq",
     "SetMCPConfigReq",
@@ -40,6 +41,7 @@ __all__ = [
     "SetSwapSizeReq",
     "SetUpdateServerReq",
     "SetUserPasswordReq",
+    "StopFrameDetectReq",
     "UpdateUserReq",
     "UploadAutostartReq",
     "UserInfo",
@@ -89,6 +91,14 @@ class SetScreenReq(BaseModel):
 
     type: ScreenSettingType
     value: int
+
+
+class SetFrameDetectReq(BaseModel):
+    enabled: bool
+
+
+class StopFrameDetectReq(BaseModel):
+    duration: int
 
 
 class GetMCPConfigRsp(BaseModel):
