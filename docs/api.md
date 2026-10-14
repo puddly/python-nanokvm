@@ -1,0 +1,181 @@
+# API reference
+
+## Hardware and firmware support
+
+There are two hardware families:
+
+- **non-Pro:** the original NanoKVM (hardware Alpha and Beta) and the NanoKVM PCIe
+- **Pro:** NanoKVM Pro
+
+Many endpoints exist on only one family or need a minimum application version.
+Each method declares what it needs. The client checks it and raises
+`NanoKVMNotSupportedError` without contacting the device:
+
+```python
+from nanokvm.client import NanoKVMNotSupportedError
+
+try:
+    await client.get_swap_size()
+except NanoKVMNotSupportedError as error:
+    print(error)  # get_swap_size requires hardware: non-Pro (detected: Pro)
+```
+
+The hardware is detected at login, or on the first call when the client
+starts from a stored `token`. Firmware versions are detected on the first call
+that needs them, and kept until the session resets. After updating the firmware
+on a client that stays logged in, call `await client.detect_versions()`.
+Version strings that are not plain numbers, such as development builds, count
+as supported.
+
+`client.hw_version`, `client.application_version` and `client.image_version`
+expose what was detected.
+
+## Methods
+
+Every method below is a coroutine on `NanoKVMClient`. The requirements column
+uses these abbreviations:
+
+- **all:** every device
+- **non-Pro 2.3.1:** non-Pro with application 2.3.1 or newer, and not the Pro
+- **non-Pro 2.2.6 / Pro:** non-Pro 2.2.6 or newer, or any Pro
+- **PCIe:** NanoKVM PCIe only
+
+Request and response models live in `nanokvm.models`.
+
+### Device and system
+
+| Methods | Requires |
+|---|---|
+| `get_info`, `get_hardware`, `get_gpio`, `push_button` | all |
+| `get_oled_info`, `set_oled_sleep` | all |
+| `get_virtual_device_status`, `update_virtual_device` | all |
+| `get_hostname`, `set_hostname`, `get_web_title`, `set_web_title` | non-Pro 2.2.6 / Pro |
+| `get_ssh_state`, `enable_ssh`, `disable_ssh` | non-Pro 2.1.6 / Pro |
+| `get_mdns_state`, `enable_mdns`, `disable_mdns` | non-Pro 2.2.2 / Pro |
+| `reboot_system` | non-Pro 2.2.2 / Pro |
+| `set_tls` | non-Pro 2.2.7 |
+| `get_swap_size`, `set_swap_size` | non-Pro 2.2.6 |
+| `get_memory_limit`, `set_memory_limit` | non-Pro |
+| `switch_to_pikvm`, `get_led_strip`, `set_led_strip` | Pro |
+| `get_lcd_time_format`, `set_lcd_time_format` | Pro 1.1.6 |
+| `get_timezone`, `set_timezone`, `get_time_status`, `sync_time` | Pro 1.1.6 |
+| `get_time` | Pro 1.2.6 |
+| `get_low_power`, `set_low_power`, `refresh_virtual_device` | Pro 1.2.7 |
+| `get_menubar_config`, `set_menubar_config` | Pro 1.2.10 |
+
+`set_tls` restarts the device's web server, which then answers only on the
+other scheme (`http` or `https`), within about half a minute.
+
+### Keyboard and mouse
+
+| Methods | Requires |
+|---|---|
+| `paste_text` | all |
+| `mouse_move_abs`, `mouse_move_rel`, `mouse_down`, `mouse_up`, `mouse_click`, `mouse_scroll` | all |
+| `get_hid_mode`, `set_hid_mode` | non-Pro 2.2.5 / Pro |
+| `reset_hid` | non-Pro / Pro 1.1.6 |
+| `get_mouse_jiggler_state`, `set_mouse_jiggler_state` | non-Pro 2.2.6 / Pro |
+| `get_shortcuts`, `add_shortcut`, `delete_shortcut` | non-Pro 2.3.2 / Pro 1.2.8 |
+| `get_leader_key`, `set_leader_key` | non-Pro 2.3.4 / Pro 1.2.12 |
+| `get_keyboard_led_status` | non-Pro 2.5.0 |
+
+`paste_text` accepts only the characters in `nanokvm.client.PASTE_CHAR_MAP`.
+
+### Video and streaming
+
+| Methods | Requires |
+|---|---|
+| `mjpeg_stream`, `mjpeg_stream_bytes`, `open_ws` | all |
+| `set_screen`, `set_frame_detect`, `pause_frame_detect` | non-Pro |
+| `get_input_region`, `set_input_region`, `get_input_resolution` | non-Pro 2.5.1 |
+| `reset_hdmi` | PCIe 2.1.5 |
+| `get_hdmi_state`, `enable_hdmi`, `disable_hdmi` | PCIe 2.2.8 |
+| `set_hdmi_idle_timeout` | PCIe 2.5.0 |
+| `set_stream_mode`, `set_stream_quality`, `set_gop` | Pro |
+| `get_hdmi_capture`, `set_hdmi_capture`, `get_hdmi_passthrough`, `set_hdmi_passthrough` | Pro |
+| `get_edid`, `switch_edid` | Pro |
+| `get_custom_edid_list`, `upload_edid`, `delete_edid` | Pro 1.2.3 |
+| `set_rate_control_mode` | Pro 1.2.6 |
+| `set_fps` | Pro 1.2.8 |
+
+`mjpeg_stream()` yields decoded `PIL.Image` frames; `mjpeg_stream_bytes()`
+yields the raw JPEG bytes. `open_ws(path)` opens a new WebSocket on a path
+relative to the API base, such as `stream/h264/webrtc`, for protocols the
+client does not wrap. The caller closes it before the client exits.
+
+### Images and scripts
+
+| Methods | Requires |
+|---|---|
+| `get_images`, `get_mounted_image`, `mount_image`, `upload_image` | all, see below |
+| `delete_image` | non-Pro 2.3.0 / Pro 1.1.6 |
+| `download_image`, `get_image_download_status`, `is_image_download_enabled`, `watch_image_download` | non-Pro 2.1.6 / Pro |
+| `cancel_image_download` | non-Pro 2.5.0 |
+| `get_cdrom_status` | non-Pro 2.2.1 |
+| `get_scripts`, `upload_script`, `run_script`, `delete_script` | all |
+| `get_autostart_scripts`, `get_autostart_script`, `upload_autostart_script`, `delete_autostart_script` | non-Pro 2.3.1 |
+
+Upload an image with progress reporting, then mount it:
+
+```python
+def on_progress(progress):
+    print(f"{progress.percentage:.0f}%")
+
+await client.upload_image("debian.iso", progress_callback=on_progress)
+await client.mount_image("/data/debian.iso", cdrom=True)
+```
+
+- Non-Pro devices need application 2.3.1 or newer and accept `.iso` files with
+  ASCII names. On 2.5.0 or newer, pass `sha256=` to have the device verify the
+  upload.
+- The Pro accepts `.iso` and `.img` files.
+- An existing image with the same name raises `FileExistsError` unless
+  `overwrite=True`. On the Pro, overwriting deletes the old image before the
+  upload starts, so a failed upload leaves neither copy.
+
+Or have the device download the image itself (`sha256=` needs non-Pro 2.5.0):
+
+```python
+await client.download_image("https://example.com/debian.iso")
+async for status in client.watch_image_download():
+    print(status.status, status.percentage)
+```
+
+Autostart scripts run when the device boots.
+
+### Network
+
+| Methods | Requires |
+|---|---|
+| `get_wifi_status`, `connect_wifi_no_auth` | all |
+| `send_wake_on_lan`, `get_wol_macs`, `delete_wol_mac` | all |
+| `set_wol_mac_name` | non-Pro 2.2.6 / Pro |
+| `connect_wifi`, `disconnect_wifi` | non-Pro 2.3.1 / Pro |
+| `verify_ap_login` | non-Pro 2.3.6 / Pro 1.2.14 |
+| `get_dns`, `set_dns` | non-Pro 2.4.1 |
+| `scan_wifi` | Pro 1.1.7 |
+| `get_static_ip`, `set_static_ip` | Pro 1.2.3 |
+
+### Updates and extensions
+
+| Methods | Requires |
+|---|---|
+| `get_application_version`, `update_application` | all |
+| `get_preview_status`, `set_preview_state` | non-Pro 2.2.5 / Pro |
+| `update_application_offline` | non-Pro 2.3.1 |
+| `get_update_server`, `set_update_server` | non-Pro 2.5.1 |
+| `get_tailscale_status`, `tailscale_install`, `tailscale_uninstall`, `tailscale_up`, `tailscale_down`, `tailscale_login`, `tailscale_logout`, `tailscale_start`, `tailscale_stop`, `tailscale_restart` | non-Pro 2.1.6 / Pro |
+| `get_mcp_config`, `set_mcp_enabled`, `regenerate_mcp_api_key` | non-Pro 2.5.0 |
+| `get_ai_control_status`, `set_ai_control_mode` | non-Pro 2.5.0 |
+| `assistant_install`, `assistant_start` | Pro 1.1.4 |
+| `kvmadmin_install`, `kvmadmin_uninstall`, `kvmadmin_start`, `kvmadmin_stop`, `kvmadmin_status` | Pro 1.1.5 |
+
+`update_application_offline("nanokvm_2.5.1.tar.gz")` installs an official
+package from a local file.
+
+### Accounts
+
+| Methods | Requires |
+|---|---|
+| `authenticate`, `logout`, `get_account`, `change_password`, `is_password_updated` | all |
+| `get_users`, `create_user`, `update_user`, `delete_user`, `set_user_password` | non-Pro 2.5.1 |
