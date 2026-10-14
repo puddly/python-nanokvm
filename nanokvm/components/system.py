@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from aiohttp import hdrs
 
 from ..compatibility import require_application_version, require_hardware
-from ..exceptions import NanoKVMApiError
+from ..exceptions import NanoKVMApiError, NanoKVMInvalidResponseError
 from ..models.common import (
     GetGpioRsp,
     GetHardwareRsp,
@@ -358,6 +360,21 @@ class SystemController(Controller):
             "/vm/time/status",
             response_model=GetTimeStatusRsp,
         )
+
+    @require_hardware(HWFamily.PRO, min_version="1.2.6")
+    async def get_time(self) -> datetime:
+        """Get the device clock, as an aware UTC datetime."""
+        # The endpoint is an endless event stream of epoch milliseconds, one
+        # per second; the first event is enough.
+        async with self._session.request(hdrs.METH_GET, "/vm/time") as response:
+            async for line in response.content:
+                if line.startswith(b"data:"):
+                    try:
+                        millis = int(line[5:])
+                    except ValueError:
+                        break
+                    return datetime.fromtimestamp(millis / 1000, UTC)
+        raise NanoKVMInvalidResponseError("Time stream ended without a timestamp")
 
     @require_hardware(HWFamily.PRO, min_version="1.1.6")
     async def sync_time(self) -> None:
