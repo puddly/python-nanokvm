@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 
-from aiohttp import hdrs
+from aiohttp import ServerDisconnectedError, hdrs
 
 from ..compatibility import require_application_version, require_hardware
 from ..exceptions import NanoKVMApiError, NanoKVMInvalidResponseError
@@ -32,6 +33,7 @@ from ..models.non_pro import (
     GetSwapSizeRsp,
     SetMemoryLimitReq,
     SetSwapSizeReq,
+    SetTlsReq,
 )
 from ..models.pro import (
     DiskType,
@@ -136,6 +138,23 @@ class SystemController(Controller):
     async def disable_mdns(self) -> None:
         """Disable mDNS."""
         await self._session.api_request_json(hdrs.METH_POST, "/vm/mdns/disable")
+
+    @require_hardware(HWFamily.NON_PRO, min_version="2.2.7")
+    async def set_tls(self, enabled: bool) -> None:
+        """Serve the web interface over HTTPS or plain HTTP.
+
+        Enabling creates a self-signed certificate. The device restarts its
+        web server, so this client's URL stops working; reach the device again
+        on the other scheme once it is back, which takes about half a minute.
+        """
+        # The firmware restarts the server before its answer goes out; every
+        # failure before that point answers with an error code.
+        with contextlib.suppress(ServerDisconnectedError):
+            await self._session.api_request_json(
+                hdrs.METH_POST,
+                "/vm/tls",
+                data=SetTlsReq(enabled=enabled),
+            )
 
     async def get_oled_info(self) -> GetOLEDRsp:
         """Get OLED information."""

@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 
+import aiohttp
 from aioresponses import aioresponses
 import pytest
 import yarl
@@ -187,3 +188,16 @@ async def test_get_time_reads_first_stream_event(
     )
 
     assert await client.get_time() == datetime(2026, 10, 14, 2, 29, 9, tzinfo=UTC)
+
+
+async def test_set_tls_treats_restart_disconnect_as_success(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
+    """Test set_tls succeeds when the device restarts before answering."""
+    mark_detected(client, HWVersion.PCIE, "2.5.2")
+    mocked.post(f"{BASE_URL}vm/tls", exception=aiohttp.ServerDisconnectedError())
+
+    await client.set_tls(True)
+
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}vm/tls"))]
+    assert calls[0].kwargs["json"] == {"enabled": True}

@@ -39,6 +39,7 @@ __all__ = [
     "SetMemoryLimitReq",
     "SetScreenReq",
     "SetSwapSizeReq",
+    "SetTlsReq",
     "SetUpdateServerReq",
     "SetUserPasswordReq",
     "StopFrameDetectReq",
@@ -91,6 +92,10 @@ class SetScreenReq(BaseModel):
 
     type: ScreenSettingType
     value: int
+
+
+class SetTlsReq(BaseModel):
+    enabled: bool
 
 
 class SetFrameDetectReq(BaseModel):
