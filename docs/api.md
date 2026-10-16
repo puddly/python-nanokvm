@@ -160,7 +160,7 @@ Autostart scripts run when the device boots.
 
 | Methods | Requires |
 |---|---|
-| `get_application_version`, `update_application` | all |
+| `get_application_version`, `update_application`, `install_application_update` | all, see below |
 | `get_preview_status`, `set_preview_state` | non-Pro 2.2.5 / Pro |
 | `update_application_offline` | non-Pro 2.3.1 |
 | `get_update_server`, `set_update_server` | non-Pro 2.5.1 |
@@ -170,8 +170,35 @@ Autostart scripts run when the device boots.
 | `assistant_install`, `assistant_start` | Pro 1.1.4 |
 | `kvmadmin_install`, `kvmadmin_uninstall`, `kvmadmin_start`, `kvmadmin_stop`, `kvmadmin_status` | Pro 1.1.5 |
 
+`install_application_update()` updates the application when the device is
+out of date, and waits until it runs the new version, which it returns. The
+update restarts the device's server and ends the session, so the client logs
+in again with credentials kept by `keep_credentials=True` (see
+[Connecting](connecting.md#keeping-credentials)):
+
+```python
+async with NanoKVMClient(url, keep_credentials=True) as client:
+    await client.authenticate("username", "password")
+    version = await client.install_application_update()
+```
+
+- Without kept credentials it raises `NanoKVMNotAuthenticatedError` before
+  contacting the device. It raises `NanoKVMError` when the device cannot reach
+  its update server, and `TimeoutError` when the new version is not running
+  within `timeout` (default 10 minutes).
+- `get_application_version()` returns the `current` and `latest` versions.
+  `latest` is empty when the device cannot reach its update server. The device
+  asks the server while answering, so the call waits up to 60 seconds.
+- `update_application()` answers once the update is installed, which can take
+  minutes; it waits up to 15 minutes. It does not wait for the restart. Non-Pro
+  firmware before 2.5.1 restarts before it answers, so the call returns when
+  the connection drops, without confirming the update; the same applies to
+  `update_application_offline()`. `install_application_update()` confirms it.
+- With `set_preview_state(True)`, the device installs preview releases.
+
 `update_application_offline("nanokvm_2.5.1.tar.gz")` installs an official
-package from a local file.
+package from a local file. Pass `sha256=` to check the file first; non-Pro
+2.5.1 and newer also check it on the device.
 
 ### Accounts
 

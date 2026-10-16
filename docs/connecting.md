@@ -39,6 +39,16 @@ plain text only after the device rejects the credentials. Pass
 `get_account()` returns the username and, when the firmware provides it, the
 role (older firmware returns `None`).
 
+### Keeping credentials
+
+The client does not keep the password. With `keep_credentials=True`, it keeps
+the username and password of a successful login in memory, so that it can log
+in again after the device restarts, as `install_application_update()` needs.
+Logging out, changing the password, a failed login and closing the client drop
+them. They are never written to disk or shown in `repr()`.
+
+### Sessions and logout
+
 Starting another login or logging out invalidates operations and streams still
 running on the old session; they raise `NanoKVMNotAuthenticatedError`. On
 current non-Pro firmware, logging out revokes **every** session on the device,

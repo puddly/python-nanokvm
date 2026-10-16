@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 import contextlib
+from dataclasses import dataclass, field
 from http.cookies import Morsel, SimpleCookie
 import json
 import logging
@@ -61,6 +62,14 @@ _NOT_STARTED = "NanoKVMClient is not started; use 'async with NanoKVMClient(...)
 _CURRENT_PASSWORD_MIN_NON_PRO_VERSION = (2, 5, 1)
 
 
+@dataclass(frozen=True)
+class _Credentials:
+    """Login credentials kept in memory to log in again."""
+
+    username: str
+    password: str = field(repr=False)
+
+
 class SessionController:
     """Own authentication, shared state, HTTP and WebSocket resources."""
 
@@ -75,6 +84,7 @@ class SessionController:
         ssl_ca_cert: str | None = None,
         ssl_fingerprint: str | None = None,
         use_password_obfuscation: bool | None = None,
+        keep_credentials: bool = False,
     ) -> None:
         """Initialize the shared session, transport and device state."""
         self.url = yarl.URL(url)
@@ -94,6 +104,8 @@ class SessionController:
         self._ssl_ca_cert = ssl_ca_cert
         self._ssl_fingerprint = ssl_fingerprint
         self._use_password_obfuscation = use_password_obfuscation
+        self._keep_credentials = keep_credentials
+        self._credentials: _Credentials | None = None
         self._ssl_config: ssl.SSLContext | Fingerprint | bool | None = None
         self._hw_version: HWVersion | None = None
         self._application_version: str | None = None
@@ -127,6 +139,7 @@ class SessionController:
 
     async def exit(self) -> None:
         """Close the client's WebSocket and owned HTTP resources."""
+        self._credentials = None
         await self.close_ws()
 
         if self._ws_session is not None:
@@ -377,7 +390,35 @@ class SessionController:
             raise
 
     async def authenticate(self, username: str, password: str) -> int:
-        """Authenticate and store the session token."""
+        """Authenticate and store the session token.
+
+        With ``keep_credentials``, a successful login also keeps the
+        credentials for ``reauthenticate()``.
+        """
+        self._credentials = None
+        generation = await self._login(username, password)
+        if self._keep_credentials:
+            self._credentials = _Credentials(username, password)
+        return generation
+
+    async def reauthenticate(self) -> int:
+        """Log in again with the credentials kept from the last login.
+
+        The credentials stay kept when the device cannot be reached, and are
+        dropped when it rejects them.
+        """
+        credentials = self._credentials
+        if credentials is None:
+            raise NanoKVMNotAuthenticatedError("No credentials are kept to log in")
+        try:
+            return await self._login(credentials.username, credentials.password)
+        except NanoKVMAuthenticationFailure:
+            if self._credentials is credentials:
+                self._credentials = None
+            raise
+
+    async def _login(self, username: str, password: str) -> int:
+        """Replace the session with a new login."""
         # A failed identity switch must never leave the previous account usable.
         generation = await self.clear_local_session()
         _LOGGER.debug("Attempting authentication for user: %s", username)
@@ -417,6 +458,7 @@ class SessionController:
 
     async def logout(self) -> None:
         """Log out and clear the session token."""
+        self._credentials = None
         generation = self._session_generation
         try:
             if self._token and self._token != "disabled":
@@ -505,8 +547,12 @@ class SessionController:
         *,
         current_password: str | None = None,
     ) -> None:
-        """Change the KVM password for the authenticated account."""
+        """Change the KVM password for the authenticated account.
+
+        Kept credentials are dropped; authenticate again to keep the new ones.
+        """
         generation = self._session_generation
+        self._credentials = None
         if await self.uses_current_password_contract():
             if not current_password or not current_password.strip():
                 raise ValueError(
