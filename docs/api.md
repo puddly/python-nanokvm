@@ -107,13 +107,37 @@ client does not wrap. The caller closes it before the client exits.
 
 | Methods | Requires |
 |---|---|
-| `get_images`, `get_mounted_image`, `mount_image`, `upload_image` | all, see below |
+| `get_images`, `get_mounted_image`, `mount_image` | all |
+| `upload_image` | non-Pro 2.3.1 / Pro, see below |
 | `delete_image` | non-Pro 2.3.0 / Pro 1.1.6 |
 | `download_image`, `get_image_download_status`, `is_image_download_enabled`, `watch_image_download` | non-Pro 2.1.6 / Pro |
 | `cancel_image_download` | non-Pro 2.5.0 |
 | `get_cdrom_status` | non-Pro 2.2.1 |
 | `get_scripts`, `upload_script`, `run_script`, `delete_script` | all |
 | `get_autostart_scripts`, `get_autostart_script`, `upload_autostart_script`, `delete_autostart_script` | non-Pro 2.3.1 |
+
+Mount an image on the host as a USB disk, or as a CD-ROM with `cdrom=True`:
+
+```python
+images = await client.get_images()  # images.files: ["/data/debian.iso", ...]
+await client.mount_image("/data/debian.iso", cdrom=True)
+mounted = await client.get_mounted_image()  # mounted.file: "/data/debian.iso"
+await client.mount_image()  # unmount
+```
+
+- `get_images()` lists the `.iso` and `.img` files on the device by the full
+  path that `mount_image()` takes. `get_mounted_image().file` is empty when no
+  image is mounted.
+- `mount_image()` without a file unmounts. On non-Pro devices, the host then
+  sees the device's own `/data` partition as the USB disk. To remove the disk,
+  `update_virtual_device(VirtualDevice.DISK)` toggles it, and
+  `get_virtual_device_status().disk` reports whether it is on.
+- `read_only=True` needs Pro 1.2.1 or newer.
+- Mounting and unmounting reconnect the host's USB devices, including the
+  keyboard and mouse. The Pro answers about 3 seconds later.
+- Non-Pro firmware before 2.5.2 keeps CD-ROM mode when a disk image is mounted
+  right after a CD-ROM image. Unmount first. From 2.5.2, the host can only
+  read a mounted image.
 
 Upload an image with progress reporting, then mount it:
 
