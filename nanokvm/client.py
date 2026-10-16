@@ -82,6 +82,7 @@ class NanoKVMClient(
         ssl_ca_cert: str | None = None,
         ssl_fingerprint: str | None = None,
         use_password_obfuscation: bool | None = None,
+        keep_credentials: bool = False,
     ) -> None:
         """
         Initialize the NanoKVM client.
@@ -103,6 +104,9 @@ class NanoKVMClient(
                 None = auto-detect (try obfuscated first, fall back to plain text).
                 True = always use obfuscated passwords (older NanoKVM versions).
                 False = always use plain text passwords (newer HTTPS-enabled versions).
+            keep_credentials: Keep the username and password of a successful
+                login in memory, to log in again after the device restarts, as
+                ``install_application_update()`` needs (default: False).
         """
         super().__init__(
             SessionController(
@@ -114,6 +118,7 @@ class NanoKVMClient(
                 ssl_ca_cert=ssl_ca_cert,
                 ssl_fingerprint=ssl_fingerprint,
                 use_password_obfuscation=use_password_obfuscation,
+                keep_credentials=keep_credentials,
             )
         )
 
