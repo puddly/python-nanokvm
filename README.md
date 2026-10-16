@@ -35,11 +35,15 @@ asyncio.run(main())
 The client detects the hardware and firmware, and raises
 `NanoKVMNotSupportedError` instead of calling an endpoint the device lacks.
 
+Scripts that do not use asyncio can use the same API as blocking calls through
+`nanokvm.sync_client.NanoKVMSyncClient`.
+
 ## Documentation
 
 - [Connecting and authentication](docs/connecting.md): HTTPS and self-signed
   certificates, sessions, passwords and user accounts
 - [API reference](docs/api.md): every method and the hardware and firmware it
   needs
+- [Blocking client](docs/sync.md): the API without asyncio
 - [Errors](docs/errors.md)
 - [SSH](docs/ssh.md)
