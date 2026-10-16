@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import IntEnum, StrEnum
+from enum import IntEnum, IntFlag, StrEnum
 from typing import Any, Generic, Self, TypeVar
 
 from pydantic import (
@@ -59,6 +59,8 @@ __all__ = [
     "ImageEnabledRsp",
     "ImageTransferProgress",
     "IsPasswordUpdatedRsp",
+    "KeyCode",
+    "KeyModifier",
     "LoginReq",
     "LoginRsp",
     "LoginTailscaleRsp",
@@ -191,6 +193,138 @@ class MouseButton(IntEnum):
     MIDDLE = 4
     BACK = 8
     FORWARD = 16
+
+
+class KeyCode(IntEnum):
+    """USB HID keyboard usage codes, named after the browser key codes.
+
+    Any other usage code can be passed as an ``int``.
+    """
+
+    KEY_A = 0x04
+    KEY_B = 0x05
+    KEY_C = 0x06
+    KEY_D = 0x07
+    KEY_E = 0x08
+    KEY_F = 0x09
+    KEY_G = 0x0A
+    KEY_H = 0x0B
+    KEY_I = 0x0C
+    KEY_J = 0x0D
+    KEY_K = 0x0E
+    KEY_L = 0x0F
+    KEY_M = 0x10
+    KEY_N = 0x11
+    KEY_O = 0x12
+    KEY_P = 0x13
+    KEY_Q = 0x14
+    KEY_R = 0x15
+    KEY_S = 0x16
+    KEY_T = 0x17
+    KEY_U = 0x18
+    KEY_V = 0x19
+    KEY_W = 0x1A
+    KEY_X = 0x1B
+    KEY_Y = 0x1C
+    KEY_Z = 0x1D
+    DIGIT_1 = 0x1E
+    DIGIT_2 = 0x1F
+    DIGIT_3 = 0x20
+    DIGIT_4 = 0x21
+    DIGIT_5 = 0x22
+    DIGIT_6 = 0x23
+    DIGIT_7 = 0x24
+    DIGIT_8 = 0x25
+    DIGIT_9 = 0x26
+    DIGIT_0 = 0x27
+    ENTER = 0x28
+    ESCAPE = 0x29
+    BACKSPACE = 0x2A
+    TAB = 0x2B
+    SPACE = 0x2C
+    MINUS = 0x2D
+    EQUAL = 0x2E
+    BRACKET_LEFT = 0x2F
+    BRACKET_RIGHT = 0x30
+    BACKSLASH = 0x31
+    SEMICOLON = 0x33
+    QUOTE = 0x34
+    BACKQUOTE = 0x35
+    COMMA = 0x36
+    PERIOD = 0x37
+    SLASH = 0x38
+    CAPS_LOCK = 0x39
+    F1 = 0x3A
+    F2 = 0x3B
+    F3 = 0x3C
+    F4 = 0x3D
+    F5 = 0x3E
+    F6 = 0x3F
+    F7 = 0x40
+    F8 = 0x41
+    F9 = 0x42
+    F10 = 0x43
+    F11 = 0x44
+    F12 = 0x45
+    PRINT_SCREEN = 0x46
+    SCROLL_LOCK = 0x47
+    PAUSE = 0x48
+    INSERT = 0x49
+    HOME = 0x4A
+    PAGE_UP = 0x4B
+    DELETE = 0x4C
+    END = 0x4D
+    PAGE_DOWN = 0x4E
+    ARROW_RIGHT = 0x4F
+    ARROW_LEFT = 0x50
+    ARROW_DOWN = 0x51
+    ARROW_UP = 0x52
+    NUM_LOCK = 0x53
+    NUMPAD_DIVIDE = 0x54
+    NUMPAD_MULTIPLY = 0x55
+    NUMPAD_SUBTRACT = 0x56
+    NUMPAD_ADD = 0x57
+    NUMPAD_ENTER = 0x58
+    NUMPAD_1 = 0x59
+    NUMPAD_2 = 0x5A
+    NUMPAD_3 = 0x5B
+    NUMPAD_4 = 0x5C
+    NUMPAD_5 = 0x5D
+    NUMPAD_6 = 0x5E
+    NUMPAD_7 = 0x5F
+    NUMPAD_8 = 0x60
+    NUMPAD_9 = 0x61
+    NUMPAD_0 = 0x62
+    NUMPAD_DECIMAL = 0x63
+    INTL_BACKSLASH = 0x64
+    CONTEXT_MENU = 0x65
+    POWER = 0x66
+    NUMPAD_EQUAL = 0x67
+    F13 = 0x68
+    F14 = 0x69
+    F15 = 0x6A
+    F16 = 0x6B
+    F17 = 0x6C
+    F18 = 0x6D
+    F19 = 0x6E
+    F20 = 0x6F
+    F21 = 0x70
+    F22 = 0x71
+    F23 = 0x72
+    F24 = 0x73
+
+
+class KeyModifier(IntFlag):
+    """Modifier key bits of a keyboard report."""
+
+    LEFT_CTRL = 0x01
+    LEFT_SHIFT = 0x02
+    LEFT_ALT = 0x04
+    LEFT_META = 0x08
+    RIGHT_CTRL = 0x10
+    RIGHT_SHIFT = 0x20
+    RIGHT_ALT = 0x40
+    RIGHT_META = 0x80
 
 
 class _CaseInsensitiveStrEnum(StrEnum):
