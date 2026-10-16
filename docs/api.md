@@ -71,6 +71,7 @@ other scheme (`http` or `https`), within about half a minute.
 | Methods | Requires |
 |---|---|
 | `paste_text` | all |
+| `key_down`, `key_up`, `key_tap` | all, see below |
 | `mouse_move_abs`, `mouse_move_rel`, `mouse_down`, `mouse_up`, `mouse_click`, `mouse_scroll` | all |
 | `get_hid_mode`, `set_hid_mode` | non-Pro 2.2.5 / Pro |
 | `reset_hid` | non-Pro / Pro 1.1.6 |
@@ -80,6 +81,37 @@ other scheme (`http` or `https`), within about half a minute.
 | `get_keyboard_led_status` | non-Pro 2.5.0 |
 
 `paste_text` accepts only the characters in `nanokvm.client.PASTE_CHAR_MAP`.
+
+The key methods send USB HID key codes, such as `KeyCode.F12` or any `int`,
+with modifiers such as `KeyModifier.LEFT_CTRL`:
+
+```python
+from nanokvm.models import KeyCode, KeyModifier
+
+await client.key_tap(
+    KeyCode.DELETE, modifiers=KeyModifier.LEFT_CTRL | KeyModifier.LEFT_ALT
+)
+```
+
+- `key_down` holds up to six keys and replaces the keys held before. `key_up`
+  releases them all. `key_tap` presses and releases, and still releases when
+  it is cancelled.
+- Before non-Pro 2.3.2 and Pro 1.2.6, the device holds one key at a time and
+  applies modifiers only together with a key. Other reports raise
+  `NanoKVMNotSupportedError`.
+- The keyboard and mouse share one WebSocket. While it is open, the client
+  sends a heartbeat every 10 seconds, as the web UI does, so that non-Pro 2.5.0
+  and newer do not close it when idle.
+
+To catch a short boot-menu window, tap a key repeatedly:
+
+```python
+loop = asyncio.get_running_loop()
+end = loop.time() + 8
+while loop.time() < end:
+    await client.key_tap(KeyCode.F12)
+    await asyncio.sleep(0.4)
+```
 
 ### Video and streaming
 
