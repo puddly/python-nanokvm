@@ -27,6 +27,7 @@ from .exceptions import (
     NanoKVMNotAuthenticatedError,
     NanoKVMNotSupportedError,
     NanoKVMPermissionError,
+    NanoKVMVideoModeError,
 )
 from .models import *  # noqa: F403
 from .models import GetAccountRsp, HWVersion, IsPasswordUpdatedRsp
@@ -43,6 +44,7 @@ __all__ = [
     "NanoKVMNotAuthenticatedError",
     "NanoKVMNotSupportedError",
     "NanoKVMPermissionError",
+    "NanoKVMVideoModeError",
     "PASTE_CHAR_MAP",
     "SessionController",
     "StreamController",

@@ -50,3 +50,7 @@ class NanoKVMInvalidResponseError(NanoKVMError):
 
 class NanoKVMNotSupportedError(NanoKVMError):
     """Feature not supported on this hardware variant."""
+
+
+class NanoKVMVideoModeError(NanoKVMError):
+    """The NanoKVM Pro stopped a stream because another video mode is active."""

@@ -13,9 +13,14 @@ import aiohttp
 from aiohttp import BodyPartReader, ClientWebSocketResponse, MultipartReader, hdrs
 from PIL import Image
 
+from ..models.common import HWFamily
+from ..webrtc import WebRTCSignaling
 from .session import Controller
 
 _LOGGER = logging.getLogger(__name__)
+
+_NON_PRO_WS_HEARTBEAT_SECONDS = 30.0
+_WS_CLOSE_TIMEOUT_SECONDS = 15.0
 
 
 class StreamController(Controller):
@@ -70,3 +75,20 @@ class StreamController(Controller):
         caller closes the WebSocket, before the client exits.
         """
         return await self._session.open_ws(path, **kwargs)
+
+    async def open_webrtc_signaling(self) -> WebRTCSignaling:
+        """Open an H.264 WebRTC signaling session, on either hardware family.
+
+        The caller closes it, before the client exits.
+        """
+        session = self._session
+        if session._hw_version is None:
+            await session.detect_hardware()
+        pro = session.is_hardware_family(HWFamily.PRO)
+        websocket = await session.open_ws(
+            "stream/h264/webrtc" if pro else "stream/h264",
+            # The Pro gets an application-level heartbeat from WebRTCSignaling.
+            heartbeat=None if pro else _NON_PRO_WS_HEARTBEAT_SECONDS,
+            timeout=aiohttp.ClientWSTimeout(ws_close=_WS_CLOSE_TIMEOUT_SECONDS),
+        )
+        return WebRTCSignaling(websocket, pro=pro)

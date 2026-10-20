@@ -11,6 +11,7 @@ All exceptions derive from `NanoKVMError` and are importable from
 | `NanoKVMPermissionError` | The account lacks permission; the session stays valid |
 | `NanoKVMApiError` | The device answered with an error code |
 | `NanoKVMInvalidResponseError` | The response could not be parsed |
+| `NanoKVMVideoModeError` | The Pro stopped a WebRTC stream because another video mode took the encoder |
 
 `NanoKVMPermissionError` carries `status`, `method` and `path`.
 `NanoKVMApiError` carries the numeric `code`; the device's `msg` and `data` are

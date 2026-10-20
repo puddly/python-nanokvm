@@ -117,7 +117,7 @@ while loop.time() < end:
 
 | Methods | Requires |
 |---|---|
-| `mjpeg_stream`, `mjpeg_stream_bytes`, `open_ws` | all |
+| `mjpeg_stream`, `mjpeg_stream_bytes`, `open_ws`, `open_webrtc_signaling` | all |
 | `set_screen`, `set_frame_detect`, `pause_frame_detect` | non-Pro |
 | `get_input_region`, `set_input_region`, `get_input_resolution` | non-Pro 2.5.1 |
 | `reset_hdmi` | PCIe 2.1.5 |
@@ -134,6 +134,24 @@ while loop.time() < end:
 yields the raw JPEG bytes. `open_ws(path)` opens a new WebSocket on a path
 relative to the API base, such as `stream/h264/webrtc`, for protocols the
 client does not wrap. The caller closes it before the client exits.
+
+`open_webrtc_signaling()` opens the H.264 WebRTC signaling session for the
+detected hardware and returns a `nanokvm.webrtc.WebRTCSignaling`. Send the
+browser's offer with `send_offer(sdp)` and its candidates with
+`send_candidate(IceCandidate(...))`, and iterate it for `WebRTCAnswer` and
+`WebRTCCandidate` events. The Pro answers audio and video on separate peer
+connections; the session splits the offer and merges the answers, so the
+caller sees one offer and one answer on any hardware. Iteration raises
+`NanoKVMVideoModeError` when the Pro drops WebRTC because another video mode
+took the encoder, for example an MJPEG stream. Close it, or use it as an
+async context manager, before the client exits.
+
+```python
+async with await client.open_webrtc_signaling() as signaling:
+    await signaling.send_offer(offer_sdp)
+    async for event in signaling:
+        ...  # forward WebRTCAnswer.sdp and WebRTCCandidate.candidate
+```
 
 ### Images and scripts
 
