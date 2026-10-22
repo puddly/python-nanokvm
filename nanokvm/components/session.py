@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 import contextlib
 from http.cookies import Morsel, SimpleCookie
 import json
@@ -14,6 +14,7 @@ import ssl
 from typing import Any, Literal, NoReturn, TypeVar, overload
 
 from aiohttp import (
+    ClientConnectionError,
     ClientResponse,
     ClientResponseError,
     ClientSession,
@@ -59,6 +60,13 @@ _LOGGER = logging.getLogger(__name__)
 _SESSION_COOKIE_NAME = "nano-kvm-token"
 _NOT_STARTED = "NanoKVMClient is not started; use 'async with NanoKVMClient(...)'"
 _CURRENT_PASSWORD_MIN_NON_PRO_VERSION = (2, 5, 1)
+_BINARY_HID_MIN_NON_PRO_VERSION = "2.3.2"
+_BINARY_HID_MIN_PRO_VERSION = "1.2.6"
+_WS_SEND_ERRORS = (ClientConnectionError, ConnectionError, RuntimeError)
+# Non-Pro 2.5.0 and newer close a WebSocket that sends nothing for 90 seconds.
+# The web UI sends this heartbeat every 10 seconds.
+_WS_HEARTBEAT = bytes((0,))
+_WS_HEARTBEAT_INTERVAL = 10.0
 
 
 class SessionController:
@@ -85,6 +93,7 @@ class SessionController:
         self._request_timeout = request_timeout
         self._image_transfer_lock = asyncio.Lock()
         self._ws: ClientWebSocketResponse | None = None
+        self._ws_heartbeat: asyncio.Task[None] | None = None
         self._ws_session: ClientSession | None = None
         self._ws_lock = asyncio.Lock()
         self._mouse_buttons = 0
@@ -444,8 +453,7 @@ class SessionController:
             self.forget_versions()
             self._mouse_buttons = 0
             self.clear_session_cookies()
-            ws = self._ws
-            self._ws = None
+            ws = self._detach_ws()
         # Detach state atomically, then close only the old transport. Network I/O
         # must not block a new login or close its replacement WebSocket.
         if ws is not None and not ws.closed:
@@ -643,8 +651,7 @@ class SessionController:
     async def close_ws(self) -> None:
         """Close and forget the current WebSocket connection."""
         async with self._ws_lock:
-            ws = self._ws
-            self._ws = None
+            ws = self._detach_ws()
             if ws is not None and not ws.closed:
                 await ws.close()
 
@@ -652,29 +659,73 @@ class SessionController:
         """Forget a failed WebSocket without closing a replacement connection."""
         async with self._ws_lock:
             if self._ws is ws:
-                self._ws = None
+                self._detach_ws()
             if not ws.closed:
                 await ws.close()
 
+    def _detach_ws(self) -> ClientWebSocketResponse | None:
+        """Forget the shared WebSocket and stop its heartbeat; hold _ws_lock."""
+        ws = self._ws
+        self._ws = None
+        if self._ws_heartbeat is not None:
+            self._ws_heartbeat.cancel()
+            self._ws_heartbeat = None
+        return ws
+
+    async def _send_heartbeats(self, ws: ClientWebSocketResponse) -> None:
+        """Keep the shared WebSocket open while no input is sent."""
+        while True:
+            await asyncio.sleep(_WS_HEARTBEAT_INTERVAL)
+            try:
+                await ws.send_bytes(_WS_HEARTBEAT)
+            except _WS_SEND_ERRORS:
+                # The next input finds the broken connection and replaces it.
+                return
+
     async def get_ws(self) -> ClientWebSocketResponse:
-        """Get or create WebSocket connection for mouse events."""
+        """Get or create the WebSocket shared by keyboard and mouse events."""
         generation = self._session_generation
         try:
             async with self._ws_lock:
                 if self._ws is not None and not self._ws.closed:
                     return self._ws
 
-                if self._ws is not None:
-                    await self._ws.close()
-                    self._ws = None
+                stale_ws = self._detach_ws()
+                if stale_ws is not None:
+                    await stale_ws.close()
 
                 generation = self._session_generation
-                self._ws = await self._connect_ws("ws")
-                return self._ws
+                ws = await self._connect_ws("ws")
+                self._ws = ws
+                self._ws_heartbeat = asyncio.create_task(self._send_heartbeats(ws))
+                return ws
         except ClientResponseError as err:
             # _clear_local_session acquires _ws_lock, so do this after the
             # lock above has been released to avoid a self-deadlock.
             await self._raise_ws_error(err, "ws", generation)
+
+    async def send_ws(
+        self, send: Callable[[ClientWebSocketResponse], Awaitable[None]]
+    ) -> None:
+        """Send one input message on the shared WebSocket.
+
+        A failed send forgets the connection, so the next one reconnects.
+        """
+        ws = await self.get_ws()
+        try:
+            await send(ws)
+        except _WS_SEND_ERRORS:
+            await self.invalidate_ws(ws)
+            raise
+
+    async def uses_binary_hid_protocol(self) -> bool:
+        """Select the keyboard and mouse wire format of the connected device."""
+        # Without a token the WebSocket reports the authentication error, so
+        # the current protocol stays the default when detection is impossible.
+        return await self.application_version_at_least(
+            non_pro=_BINARY_HID_MIN_NON_PRO_VERSION,
+            pro=_BINARY_HID_MIN_PRO_VERSION,
+        )
 
     async def open_ws(self, path: str, **kwargs: Any) -> ClientWebSocketResponse:
         """Open a new, unshared WebSocket on ``path``, relative to the API base.

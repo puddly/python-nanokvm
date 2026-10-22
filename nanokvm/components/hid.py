@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
+
 from aiohttp import hdrs
 
 from ..compatibility import require_application_version, require_hardware
+from ..exceptions import NanoKVMNotSupportedError
 from ..models.common import (
     AddShortcutReq,
     DeleteShortcutReq,
@@ -15,6 +19,8 @@ from ..models.common import (
     GetShortcutsRsp,
     HidMode,
     HWFamily,
+    KeyCode,
+    KeyModifier,
     MouseJigglerMode,
     PasteReq,
     SetHidModeReq,
@@ -29,6 +35,9 @@ PASTE_CHAR_MAP = set(
     ":;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 )
+
+_KEYBOARD_EVENT = 1
+_KEYBOARD_REPORT_KEYS = 6
 
 
 class HidController(Controller):
@@ -148,3 +157,63 @@ class HidController(Controller):
             "/hid/paste",
             data=PasteReq(content=text),
         )
+
+    async def key_down(
+        self, *keys: KeyCode | int, modifiers: KeyModifier | int = 0
+    ) -> None:
+        """Hold keys and modifiers down, replacing those held before.
+
+        Args:
+            keys: Up to six USB HID key codes, such as ``KeyCode.F12``.
+            modifiers: Modifier keys to hold, such as ``KeyModifier.LEFT_CTRL``.
+
+        Before non-Pro 2.3.2 and Pro 1.2.6, the device holds one key at a time
+        and applies modifiers only together with a key.
+        """
+        await self._send_keyboard_report(int(modifiers), [int(key) for key in keys])
+
+    async def key_up(self) -> None:
+        """Release all keys and modifiers."""
+        await self._send_keyboard_report(0, [])
+
+    async def key_tap(
+        self,
+        *keys: KeyCode | int,
+        modifiers: KeyModifier | int = 0,
+        hold: float = 0.05,
+    ) -> None:
+        """Press keys and modifiers, and release them after ``hold`` seconds."""
+        if not math.isfinite(hold) or hold < 0:
+            raise ValueError("hold must be a finite, non-negative number of seconds")
+
+        await self.key_down(*keys, modifiers=modifiers)
+        try:
+            await asyncio.sleep(hold)
+        finally:
+            # Release even when cancelled, so no key stays held on the host.
+            await self.key_up()
+
+    async def _send_keyboard_report(self, modifiers: int, keys: list[int]) -> None:
+        """Send a keyboard report in the wire format of the connected device."""
+        if len(keys) > _KEYBOARD_REPORT_KEYS:
+            raise ValueError("A keyboard report holds at most six keys")
+        if not all(0 <= value <= 0xFF for value in (modifiers, *keys)):
+            raise ValueError("Key codes and modifiers must be between 0 and 255")
+
+        session = self._session
+        if await session.uses_binary_hid_protocol():
+            # Boot keyboard report: modifiers, a reserved byte and six key slots.
+            report = bytes((modifiers, 0, *keys)).ljust(8, bytes(1))
+            await session.send_ws(
+                lambda ws: ws.send_bytes(bytes((_KEYBOARD_EVENT,)) + report)
+            )
+            return
+
+        if len(keys) > 1 or (modifiers and not any(keys)):
+            raise NanoKVMNotSupportedError(
+                "Holding several keys, or modifiers without a key, requires the "
+                "binary keyboard protocol"
+            )
+        # The legacy server combines the four modifier fields into one byte.
+        message = [_KEYBOARD_EVENT, keys[0] if keys else 0, modifiers, 0, 0, 0]
+        await session.send_ws(lambda ws: ws.send_json(message))

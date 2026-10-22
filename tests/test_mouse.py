@@ -332,8 +332,8 @@ async def test_legacy_mouse_send_reconnects_after_transport_failure() -> None:
     first_ws.close.assert_awaited_once()
 
 
-async def test_mouse_send_helper_invalidates_failed_websocket() -> None:
-    """The shared mouse transport helper invalidates the failed connection."""
+async def test_input_send_helper_invalidates_failed_websocket() -> None:
+    """The shared input transport helper invalidates the failed connection."""
     ws = AsyncMock()
     ws.closed = False
 
@@ -345,7 +345,7 @@ async def test_mouse_send_helper_invalidates_failed_websocket() -> None:
             raise ConnectionResetError()
 
         with pytest.raises(ConnectionResetError):
-            await client._send_ws(send)
+            await client._session.send_ws(send)
 
     assert client._session._ws is None
     ws.close.assert_awaited_once()

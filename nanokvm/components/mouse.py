@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 import logging
 import math
-
-import aiohttp
 
 from ..exceptions import NanoKVMNotSupportedError
 from ..models.common import MouseButton
@@ -15,21 +12,9 @@ from .session import Controller
 
 _LOGGER = logging.getLogger(__name__)
 
-_BINARY_MOUSE_MIN_NON_PRO_VERSION = "2.3.2"
-_BINARY_MOUSE_MIN_PRO_VERSION = "1.2.6"
-
 
 class MouseController(Controller):
-    """Own the mouse protocol and its lazily-created WebSocket transport."""
-
-    async def _uses_binary_mouse_protocol(self) -> bool:
-        """Select the mouse wire format supported by the connected device."""
-        # Without a token the WebSocket reports the authentication error, so
-        # the current protocol stays the default when detection is impossible.
-        return await self._session.application_version_at_least(
-            non_pro=_BINARY_MOUSE_MIN_NON_PRO_VERSION,
-            pro=_BINARY_MOUSE_MIN_PRO_VERSION,
-        )
+    """Own the mouse protocol on the session's shared WebSocket."""
 
     @staticmethod
     def _require_finite(*values: float) -> None:
@@ -79,21 +64,9 @@ class MouseController(Controller):
             return self._absolute_report(wheel)
         return self._relative_report(wheel=wheel)
 
-    async def _send_ws(
-        self,
-        send: Callable[[aiohttp.ClientWebSocketResponse], Awaitable[None]],
-    ) -> None:
-        """Send one mouse message and invalidate the connection on failure."""
-        ws = await self._session.get_ws()
-        try:
-            await send(ws)
-        except (aiohttp.ClientConnectionError, ConnectionError, RuntimeError):
-            await self._session.invalidate_ws(ws)
-            raise
-
     async def _send_mouse_report(self, report: bytes) -> None:
         """Send a binary NanoKVM mouse event and HID report."""
-        await self._send_ws(lambda ws: ws.send_bytes(bytes((2,)) + report))
+        await self._session.send_ws(lambda ws: ws.send_bytes(bytes((2,)) + report))
 
     async def _send_legacy_mouse_event(
         self, event_type: int, button_state: int, x: float, y: float
@@ -114,7 +87,7 @@ class MouseController(Controller):
 
         message = [2, event_type, button_state, x_value, y_value]
         _LOGGER.debug("Sending legacy mouse event: %s", message)
-        await self._send_ws(lambda ws: ws.send_json(message))
+        await self._session.send_ws(lambda ws: ws.send_json(message))
 
     async def mouse_move_abs(self, x: float, y: float) -> None:
         """Move mouse to absolute position.
@@ -125,7 +98,7 @@ class MouseController(Controller):
         """
         self._require_finite(x, y)
         session = self._session
-        if not await self._uses_binary_mouse_protocol():
+        if not await self._session.uses_binary_hid_protocol():
             await self._send_legacy_mouse_event(2, 0, x, y)
             return
 
@@ -142,7 +115,7 @@ class MouseController(Controller):
         """
         self._require_finite(dx, dy)
         session = self._session
-        if not await self._uses_binary_mouse_protocol():
+        if not await self._session.uses_binary_hid_protocol():
             await self._send_legacy_mouse_event(3, 0, dx, dy)
             return
 
@@ -161,7 +134,7 @@ class MouseController(Controller):
         """
 
         session = self._session
-        if not await self._uses_binary_mouse_protocol():
+        if not await self._session.uses_binary_hid_protocol():
             if button in (MouseButton.BACK, MouseButton.FORWARD):
                 raise NanoKVMNotSupportedError(
                     "Back and Forward mouse buttons require the binary mouse protocol"
@@ -192,7 +165,7 @@ class MouseController(Controller):
         The report releases all currently held buttons.
         """
         session = self._session
-        if not await self._uses_binary_mouse_protocol():
+        if not await self._session.uses_binary_hid_protocol():
             await self._send_legacy_mouse_event(0, 0, 0.0, 0.0)
             return
 
@@ -239,7 +212,7 @@ class MouseController(Controller):
                 negative scrolls down.
         """
         self._require_finite(dx, dy)
-        if not await self._uses_binary_mouse_protocol():
+        if not await self._session.uses_binary_hid_protocol():
             await self._send_legacy_mouse_event(4, 0, dx, dy)
             return
 
