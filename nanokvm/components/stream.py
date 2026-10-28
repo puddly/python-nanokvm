@@ -13,6 +13,8 @@ import aiohttp
 from aiohttp import BodyPartReader, ClientWebSocketResponse, MultipartReader, hdrs
 from PIL import Image
 
+from ..compatibility import require_hardware
+from ..exceptions import NanoKVMError
 from ..models.common import HWFamily
 from ..webrtc import WebRTCSignaling
 from .session import Controller
@@ -52,6 +54,22 @@ class StreamController(Controller):
 
                 session.check_session_generation(generation)
                 yield data
+
+    @require_hardware(HWFamily.NON_PRO)
+    async def get_snapshot(self, timeout: float = 20.0) -> bytes:
+        """Return one raw JPEG frame from the MJPEG stream.
+
+        Not on the Pro: its MJPEG and H.264 streams share one encoder mode, so
+        opening MJPEG interrupts any WebRTC session
+        (https://github.com/sipeed/NanoKVM-Pro/issues/157).
+        """
+        async with (
+            asyncio.timeout(timeout),
+            contextlib.aclosing(self.mjpeg_stream_bytes()) as frames,
+        ):
+            async for frame in frames:
+                return frame
+        raise NanoKVMError("MJPEG stream ended without a frame")
 
     async def mjpeg_stream(self) -> AsyncGenerator[Image.Image, None]:
         """Stream decoded MJPEG frames."""

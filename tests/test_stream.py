@@ -6,10 +6,13 @@ import io
 from aiohttp import web
 from aioresponses import aioresponses
 from PIL import Image
+import pytest
 
 from nanokvm.client import NanoKVMClient
+from nanokvm.exceptions import NanoKVMError, NanoKVMNotSupportedError
+from nanokvm.models import HWVersion
 
-from .common import BASE_URL
+from .common import BASE_URL, mark_detected
 
 
 def test_parse_jpeg_returns_fully_loaded_image() -> None:
@@ -86,3 +89,37 @@ async def test_mjpeg_stream_bytes_yields_raw_frames(mocked: aioresponses) -> Non
         frames = [frame async for frame in c.mjpeg_stream_bytes()]
 
     assert frames == [b"\xff\xd8one", b"\xff\xd8two"]
+
+
+_MJPEG_HEADERS = {"Content-Type": "multipart/x-mixed-replace; boundary=frame"}
+
+
+async def test_get_snapshot_returns_first_frame(mocked: aioresponses) -> None:
+    """A snapshot is the first raw JPEG part of the stream."""
+    mocked.get(
+        f"{BASE_URL}stream/mjpeg",
+        headers=_MJPEG_HEADERS,
+        body=b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8one\r\n"
+        b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8two\r\n--frame--\r\n",
+    )
+    async with NanoKVMClient(BASE_URL, token="test-token") as c:
+        mark_detected(c)
+        assert await c.get_snapshot() == b"\xff\xd8one"
+
+
+async def test_get_snapshot_without_frames_raises(mocked: aioresponses) -> None:
+    """A stream that ends before any frame is an error, not None."""
+    mocked.get(f"{BASE_URL}stream/mjpeg", headers=_MJPEG_HEADERS, body=b"--frame--\r\n")
+    async with NanoKVMClient(BASE_URL, token="test-token") as c:
+        mark_detected(c)
+        with pytest.raises(NanoKVMError, match="without a frame"):
+            await c.get_snapshot()
+
+
+async def test_get_snapshot_is_refused_on_the_pro(mocked: aioresponses) -> None:
+    """The Pro never opens MJPEG for a snapshot, so WebRTC stays up."""
+    async with NanoKVMClient(BASE_URL, token="test-token") as c:
+        mark_detected(c, HWVersion.PRO)
+        with pytest.raises(NanoKVMNotSupportedError):
+            await c.get_snapshot()
+    assert not mocked.requests

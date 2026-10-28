@@ -118,7 +118,7 @@ while loop.time() < end:
 | Methods | Requires |
 |---|---|
 | `mjpeg_stream`, `mjpeg_stream_bytes`, `open_ws`, `open_webrtc_signaling` | all |
-| `set_screen`, `set_frame_detect`, `pause_frame_detect` | non-Pro |
+| `get_snapshot`, `set_screen`, `set_frame_detect`, `pause_frame_detect` | non-Pro |
 | `get_input_region`, `set_input_region`, `get_input_resolution` | non-Pro 2.5.1 |
 | `reset_hdmi` | PCIe 2.1.5 |
 | `get_hdmi_state`, `enable_hdmi`, `disable_hdmi` | PCIe 2.2.8 |
@@ -131,9 +131,10 @@ while loop.time() < end:
 | `set_fps` | Pro 1.2.8 |
 
 `mjpeg_stream()` yields decoded `PIL.Image` frames; `mjpeg_stream_bytes()`
-yields the raw JPEG bytes. `open_ws(path)` opens a new WebSocket on a path
-relative to the API base, such as `stream/h264/webrtc`, for protocols the
-client does not wrap. The caller closes it before the client exits.
+yields the raw JPEG bytes. `get_snapshot(timeout=20.0)` returns the first raw
+JPEG frame; the Pro refuses it, because opening MJPEG there interrupts WebRTC.
+`open_ws(path)` opens a new WebSocket on a path relative to the API base, such
+as `stream/h264/webrtc`, for protocols the client does not wrap. The caller closes it before the client exits.
 
 `open_webrtc_signaling()` opens the H.264 WebRTC signaling session for the
 detected hardware and returns a `nanokvm.webrtc.WebRTCSignaling`. Send the
