@@ -117,7 +117,7 @@ while loop.time() < end:
 
 | Methods | Requires |
 |---|---|
-| `mjpeg_stream`, `mjpeg_stream_bytes`, `open_ws` | all |
+| `mjpeg_stream`, `mjpeg_stream_bytes`, `get_frame`, `get_frame_bytes`, `open_ws` | all |
 | `set_screen`, `set_frame_detect`, `pause_frame_detect` | non-Pro |
 | `get_input_region`, `set_input_region`, `get_input_resolution` | non-Pro 2.5.1 |
 | `reset_hdmi` | PCIe 2.1.5 |
@@ -131,7 +131,11 @@ while loop.time() < end:
 | `set_fps` | Pro 1.2.8 |
 
 `mjpeg_stream()` yields decoded `PIL.Image` frames; `mjpeg_stream_bytes()`
-yields the raw JPEG bytes. `open_ws(path)` opens a new WebSocket on a path
+yields the raw JPEG bytes. `get_frame()` and `get_frame_bytes()` return a
+single frame, for a screenshot, and close the stream. They raise
+`TimeoutError` when no frame arrives within `timeout` seconds (10 by default),
+for example without a video signal; the streams wait for frames indefinitely.
+`open_ws(path)` opens a new WebSocket on a path
 relative to the API base, such as `stream/h264/webrtc`, for protocols the
 client does not wrap. The caller closes it before the client exits.
 

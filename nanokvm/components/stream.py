@@ -13,9 +13,12 @@ import aiohttp
 from aiohttp import BodyPartReader, ClientWebSocketResponse, MultipartReader, hdrs
 from PIL import Image
 
+from ..exceptions import NanoKVMInvalidResponseError
 from .session import Controller
 
 _LOGGER = logging.getLogger(__name__)
+
+_FRAME_TIMEOUT_SECONDS = 10.0
 
 
 class StreamController(Controller):
@@ -61,6 +64,39 @@ class StreamController(Controller):
                 )
                 session.check_session_generation(generation)
                 yield image
+
+    async def get_frame_bytes(
+        self, *, timeout: float = _FRAME_TIMEOUT_SECONDS
+    ) -> bytes:
+        """Get one raw JPEG frame from the MJPEG stream, undecoded.
+
+        ``timeout`` bounds the whole call, connecting included, so a device
+        without a video signal raises ``TimeoutError`` instead of waiting
+        forever. The stream is closed once the frame has arrived.
+        """
+        try:
+            async with asyncio.timeout(timeout) as deadline:
+                async with contextlib.aclosing(self.mjpeg_stream_bytes()) as frames:
+                    async for data in frames:
+                        return data
+        except TimeoutError:
+            if not deadline.expired():
+                raise
+            raise TimeoutError(
+                f"No video frame arrived within {timeout:g} seconds"
+            ) from None
+        raise NanoKVMInvalidResponseError("The MJPEG stream ended without a frame")
+
+    async def get_frame(
+        self, *, timeout: float = _FRAME_TIMEOUT_SECONDS
+    ) -> Image.Image:
+        """Get one decoded frame from the MJPEG stream.
+
+        ``timeout`` bounds the wait for the frame, as in ``get_frame_bytes``.
+        """
+        data = await self.get_frame_bytes(timeout=timeout)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._parse_jpeg_from_bytes, data)
 
     async def open_ws(self, path: str, **kwargs: Any) -> ClientWebSocketResponse:
         """Open a new, unshared WebSocket on ``path``, relative to the API base.

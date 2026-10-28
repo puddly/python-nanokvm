@@ -24,9 +24,8 @@ async def main() -> None:
         await client.paste_text("Hello\nworld!")
         await client.mouse_click(MouseButton.LEFT, 0.5, 0.5)
 
-        async for frame in client.mjpeg_stream():
-            frame.save("screen.jpg")
-            break
+        frame = await client.get_frame()
+        frame.save("screen.jpg")
 
 
 asyncio.run(main())
