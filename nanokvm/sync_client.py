@@ -18,7 +18,7 @@ __all__ = ["NanoKVMSyncClient"]
 T = TypeVar("T")
 
 # Their results stay bound to the client's event loop; use ``run()`` instead.
-_ASYNC_ONLY = frozenset({"open_ws"})
+_ASYNC_ONLY = frozenset({"open_ws", "open_webrtc_signaling"})
 
 # Wait in short slices: before Python 3.14, an untimed wait on Windows ignores
 # Ctrl-C until the operation finishes.

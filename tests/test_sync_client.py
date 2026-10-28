@@ -163,7 +163,7 @@ def test_only_the_public_blocking_api_is_exposed(kvm: NanoKVMSyncClient) -> None
     """Private and async-only attributes are not proxied."""
     names = dir(kvm)
     assert {"authenticate", "push_button", "mjpeg_stream", "run"} <= set(names)
-    assert "open_ws" not in names
+    assert {"open_ws", "open_webrtc_signaling"}.isdisjoint(names)
 
     with pytest.raises(AttributeError, match="_session"):
         kvm._session  # noqa: B018

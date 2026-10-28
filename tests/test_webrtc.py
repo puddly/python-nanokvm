@@ -189,7 +189,7 @@ def test_candidate_mapping_between_offer_and_pro_peers() -> None:
     assert offer.upstream_candidate_for_kind("video", candidate) == IceCandidate(
         candidate="c", sdp_mid="0", sdp_m_line_index=0, username_fragment="u"
     )
-    assert offer.home_assistant_candidate_for_kind("audio", candidate) == (
+    assert offer.client_candidate_for_kind("audio", candidate) == (
         IceCandidate(
             candidate="c",
             sdp_mid="audio-main",
@@ -199,7 +199,7 @@ def test_candidate_mapping_between_offer_and_pro_peers() -> None:
     )
     empty = ProWebRTCOffer(offers={}, media_sections=())
     assert empty.upstream_candidate_for_kind("audio", candidate) is None
-    assert empty.home_assistant_candidate_for_kind("video", candidate) is None
+    assert empty.client_candidate_for_kind("video", candidate) is None
 
 
 def test_merge_answers_restores_mids_and_per_media_transport() -> None:

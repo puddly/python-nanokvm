@@ -40,8 +40,8 @@ the wrapped `client` on its event loop and keeps the result type:
 gpio = kvm.run(kvm.client.get_gpio())
 ```
 
-`run()` is also the way to the async-only `open_ws()`, whose WebSocket belongs
-to the client's event loop:
+`run()` is also the way to the async-only `open_ws()` and
+`open_webrtc_signaling()`, whose WebSockets belong to the client's event loop:
 
 ```python
 async def read_message(client):

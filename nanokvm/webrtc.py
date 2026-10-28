@@ -206,7 +206,7 @@ class WebRTCSignaling:
                     answered = True
                     yield WebRTCAnswer(merge_pro_webrtc_answers(offer, answers))
                     for early_kind, early_candidate in early:
-                        if mapped := offer.home_assistant_candidate_for_kind(
+                        if mapped := offer.client_candidate_for_kind(
                             early_kind, early_candidate
                         ):
                             yield WebRTCCandidate(mapped)
@@ -218,7 +218,7 @@ class WebRTCSignaling:
                     continue
                 if not answered:
                     early.append((kind, candidate))
-                elif mapped := offer.home_assistant_candidate_for_kind(kind, candidate):
+                elif mapped := offer.client_candidate_for_kind(kind, candidate):
                     yield WebRTCCandidate(mapped)
             else:
                 _LOGGER.debug("Unhandled Pro WebRTC event: %s", event)
@@ -358,7 +358,7 @@ class ProWebRTCOffer:
             return None
         return candidate.model_copy(update={"sdp_mid": "0", "sdp_m_line_index": 0})
 
-    def home_assistant_candidate_for_kind(
+    def client_candidate_for_kind(
         self, kind: MediaKind, candidate: IceCandidate
     ) -> IceCandidate | None:
         """Map a Pro candidate back onto its section of the original offer."""
