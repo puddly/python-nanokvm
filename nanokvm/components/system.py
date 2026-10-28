@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 from datetime import UTC, datetime
 
-from aiohttp import ServerDisconnectedError, hdrs
+from aiohttp import ClientTimeout, ServerDisconnectedError, hdrs
 
 from ..compatibility import require_application_version, require_hardware
 from ..exceptions import NanoKVMApiError, NanoKVMInvalidResponseError
@@ -54,6 +54,8 @@ from ..models.pro import (
 from .session import Controller
 
 _DEFAULT_WEB_TITLE = "NanoKVM"
+# The firmware presses for 800 ms when asked for 0 ms.
+_DEFAULT_PRESS_MS = 800
 
 
 class SystemController(Controller):
@@ -94,11 +96,19 @@ class SystemController(Controller):
         )
 
     async def push_button(self, button: GpioType, duration_ms: int) -> None:
-        """Simulate pushing a hardware button."""
-        await self._session.api_request_json(
+        """Simulate pushing a hardware button for ``duration_ms``.
+
+        The device answers once the button is released, so the request waits
+        for the press on top of the request timeout. ``0`` presses for the
+        firmware default of 800 ms.
+        """
+        session = self._session
+        press_seconds = (duration_ms or _DEFAULT_PRESS_MS) / 1000
+        await session.api_request_json(
             hdrs.METH_POST,
             "/vm/gpio",
             data=SetGpioReq(type=button, duration=duration_ms),
+            timeout=ClientTimeout(total=session._request_timeout + press_seconds),
         )
 
     @require_application_version(non_pro="2.1.6")

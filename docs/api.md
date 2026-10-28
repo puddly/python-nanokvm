@@ -66,6 +66,23 @@ Request and response models live in `nanokvm.models`.
 `set_tls` restarts the device's web server, which then answers only on the
 other scheme (`http` or `https`), within about half a minute.
 
+`push_button(button, duration_ms)` holds the power or reset button for
+`duration_ms`; `0` presses for the firmware default of 800 ms. The device
+answers once the button is released, so the call waits for the press on top of
+`request_timeout`. Holding the power button forces a hung target off:
+
+```python
+await client.push_button(GpioType.POWER, 6000)  # hold: force off
+async with asyncio.timeout(30):
+    while (await client.get_gpio()).pwr:  # power LED
+        await asyncio.sleep(1)
+await client.push_button(GpioType.POWER, 800)  # short press: power on
+```
+
+Check the power LED rather than the video signal: on the PCIe,
+`get_hdmi_state().signal` can stay `True` for about ten seconds after the
+target is off.
+
 ### Keyboard and mouse
 
 | Methods | Requires |

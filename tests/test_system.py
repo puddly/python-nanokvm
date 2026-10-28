@@ -1,16 +1,42 @@
 """Tests for system, virtual device and LED operations."""
 
+import asyncio
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import aiohttp
+from aiohttp import web
 from aioresponses import aioresponses
 import pytest
 import yarl
 
 from nanokvm.client import NanoKVMApiError, NanoKVMClient
-from nanokvm.models import DiskType, HWVersion, VirtualDevice
+from nanokvm.models import DiskType, GpioType, HWVersion, VirtualDevice
 
 from .common import BASE_URL, mark_detected
+
+
+@asynccontextmanager
+async def _gpio_server(
+    handler: Callable[[web.Request], Awaitable[web.Response]],
+) -> AsyncGenerator[str, None]:
+    application = web.Application()
+    application.router.add_post("/api/vm/gpio", handler)
+    runner = web.AppRunner(application)
+    await runner.setup()
+    try:
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        yield f"http://127.0.0.1:{runner.addresses[0][1]}/api/"
+    finally:
+        await runner.cleanup()
+
+
+async def _press_then_answer(request: web.Request) -> web.Response:
+    """Answer once the press is over, as the firmware does."""
+    await asyncio.sleep((await request.json())["duration"] / 1000)
+    return web.json_response({"code": 0, "msg": "success", "data": None})
 
 
 async def test_get_web_title_returns_default_when_unset(
@@ -201,3 +227,46 @@ async def test_set_tls_treats_restart_disconnect_as_success(
 
     calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}vm/tls"))]
     assert calls[0].kwargs["json"] == {"enabled": True}
+
+
+async def test_push_button_waits_for_a_press_longer_than_the_request_timeout() -> None:
+    """A press longer than the request timeout completes."""
+    async with (
+        _gpio_server(_press_then_answer) as url,
+        NanoKVMClient(url, token="test-token", request_timeout=1) as client,
+    ):
+        await client.push_button(GpioType.POWER, 1500)
+
+
+@pytest.mark.parametrize(("duration_ms", "total"), [(6000, 16.0), (0, 10.8)])
+async def test_push_button_adds_the_press_to_the_request_timeout(
+    client: NanoKVMClient, mocked: aioresponses, duration_ms: int, total: float
+) -> None:
+    """The request waits for the press; 0 presses for the default 800 ms."""
+    mocked.post(f"{BASE_URL}vm/gpio", payload={"code": 0, "msg": "ok", "data": None})
+
+    await client.push_button(GpioType.POWER, duration_ms)
+
+    calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}vm/gpio"))]
+    assert calls[0].kwargs["json"] == {"type": "power", "duration": duration_ms}
+    assert calls[0].kwargs["timeout"].total == pytest.approx(total)
+
+
+async def test_push_button_still_times_out_when_the_device_does_not_answer() -> None:
+    """The press extends the timeout instead of removing it."""
+    release = asyncio.Event()
+
+    async def never_answers(request: web.Request) -> web.Response:
+        await release.wait()
+        return web.json_response({"code": 0, "msg": "success", "data": None})
+
+    async with (
+        _gpio_server(never_answers) as url,
+        NanoKVMClient(url, token="test-token", request_timeout=1) as client,
+    ):
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(5) as guard:
+                await client.push_button(GpioType.RESET, 100)
+        release.set()
+
+    assert not guard.expired()
