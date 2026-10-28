@@ -130,29 +130,15 @@ while loop.time() < end:
 | `set_rate_control_mode` | Pro 1.2.6 |
 | `set_fps` | Pro 1.2.8 |
 
-`mjpeg_stream()` yields decoded `PIL.Image` frames; `mjpeg_stream_bytes()`
-yields the raw JPEG bytes. `get_snapshot(timeout=20.0)` returns the first raw
-JPEG frame; the Pro refuses it, because opening MJPEG there interrupts WebRTC.
+`mjpeg_stream()` yields decoded `PIL.Image` frames, `mjpeg_stream_bytes()` the
+raw JPEG bytes, and `get_snapshot()` the first one. `open_webrtc_signaling()`
+returns the H.264 WebRTC signaling session for the detected hardware.
+[Video streaming](streaming.md) covers both, and why the Pro refuses
+snapshots.
+
 `open_ws(path)` opens a new WebSocket on a path relative to the API base, such
-as `stream/h264/webrtc`, for protocols the client does not wrap. The caller closes it before the client exits.
-
-`open_webrtc_signaling()` opens the H.264 WebRTC signaling session for the
-detected hardware and returns a `nanokvm.webrtc.WebRTCSignaling`. Send the
-browser's offer with `send_offer(sdp)` and its candidates with
-`send_candidate(IceCandidate(...))`, and iterate it for `WebRTCAnswer` and
-`WebRTCCandidate` events. The Pro answers audio and video on separate peer
-connections; the session splits the offer and merges the answers, so the
-caller sees one offer and one answer on any hardware. Iteration raises
-`NanoKVMVideoModeError` when the Pro drops WebRTC because another video mode
-took the encoder, for example an MJPEG stream. Close it, or use it as an
-async context manager, before the client exits.
-
-```python
-async with await client.open_webrtc_signaling() as signaling:
-    await signaling.send_offer(offer_sdp)
-    async for event in signaling:
-        ...  # forward WebRTCAnswer.sdp and WebRTCCandidate.candidate
-```
+as `stream/h264/webrtc`, for protocols the client does not wrap. The caller
+closes it before the client exits.
 
 ### Images and scripts
 

@@ -44,6 +44,7 @@ Scripts that do not use asyncio can use the same API as blocking calls through
   certificates, sessions, passwords and user accounts
 - [API reference](docs/api.md): every method and the hardware and firmware it
   needs
+- [Video streaming](docs/streaming.md): snapshots, MJPEG and WebRTC signaling
 - [Blocking client](docs/sync.md): the API without asyncio
 - [Errors](docs/errors.md)
 - [SSH](docs/ssh.md)
