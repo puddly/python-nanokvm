@@ -22,6 +22,9 @@ dependencies = [
     "paramiko",
 ]
 
+[project.scripts]
+nanokvm = "nanokvm.cli:main"
+
 [tool.setuptools.packages.find]
 exclude = ["tests", "tests.*"]
 

@@ -46,5 +46,6 @@ Scripts that do not use asyncio can use the same API as blocking calls through
   needs
 - [Video streaming](docs/streaming.md): snapshots, MJPEG and WebRTC signaling
 - [Blocking client](docs/sync.md): the API without asyncio
+- [Command line](docs/cli.md): the `nanokvm` command for one-off actions
 - [Errors](docs/errors.md)
 - [SSH](docs/ssh.md)
