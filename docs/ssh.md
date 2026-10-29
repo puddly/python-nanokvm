@@ -24,3 +24,21 @@ async with NanoKVMSSH(
   phase.
 - Failures raise `NanoKVMSSHAuthenticationError`, `NanoKVMSSHConnectionError`
   (including host-key errors) or `NanoKVMSSHCommandError`.
+
+## Metrics and watchdog
+
+```python
+metrics = await ssh.get_metrics()
+metrics.cpu_temperature  # 45.8 (°C)
+```
+
+`get_metrics()` returns an `SSHMetrics` with `boot_time` (UTC),
+`cpu_temperature`, `memory_total` and `storage_total` (MiB, root filesystem),
+`memory_used_percent` and `storage_used_percent`, and `watchdog_enabled`. A
+field is `None` when the device output can't be parsed.
+
+The watchdog is the non-Pro firmware's own: `kvm_system` reboots the device
+when `kvm_vision` stops responding for more than 10 seconds, but only while
+`/etc/kvm/watchdog` exists. `get_watchdog_enabled()` returns `None` when the
+firmware has no watchdog (the Pro, or older non-Pro firmware), and
+`set_watchdog_enabled()` raises `NanoKVMNotSupportedError` there.

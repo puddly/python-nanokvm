@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 import threading
 from typing import Any
@@ -11,12 +12,14 @@ from unittest.mock import Mock, patch
 import paramiko
 import pytest
 
+from nanokvm.exceptions import NanoKVMNotSupportedError
 from nanokvm.ssh_client import (
     NanoKVMSSH,
     NanoKVMSSHAuthenticationError,
     NanoKVMSSHCommandError,
     NanoKVMSSHConnectionError,
     NanoKVMSSHNotConnectedError,
+    SSHMetrics,
 )
 
 
@@ -495,3 +498,54 @@ async def test_async_context_manager_disconnects_client() -> None:
 
     assert client.ssh_client is None
     fake_client.close.assert_called_once_with()
+
+
+_METRICS_OUTPUT = {
+    "cat /proc/stat": "cpu  1 2 3\nbtime 1761600000\nprocesses 42",
+    "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || true": "45843",
+    "cat /proc/meminfo": "MemTotal:  262144 kB\nMemAvailable: 65536 kB\n",
+    "df -k /": (
+        "Filesystem 1K-blocks Used Available Use% Mounted on\n"
+        "/dev/mmcblk0p2 7923848 1456520 6115884 19% /"
+    ),
+}
+
+
+async def _metrics(outputs: dict[str, str], watchdog: str) -> Any:
+    ssh = NanoKVMSSH("kvm.local")
+
+    async def run_command(command: str, timeout: float = 30) -> str:
+        return watchdog if "watchdog" in command else outputs[command]
+
+    with patch.object(ssh, "run_command", side_effect=run_command):
+        return await ssh.get_metrics()
+
+
+async def test_get_metrics_parses_device_output() -> None:
+    metrics = await _metrics(_METRICS_OUTPUT, "1")
+
+    assert metrics.boot_time == datetime.fromtimestamp(1761600000, UTC)
+    assert metrics.cpu_temperature == 45.8
+    assert metrics.memory_total == 256
+    assert metrics.memory_used_percent == 75
+    assert metrics.storage_total == 7738.13
+    assert metrics.storage_used_percent == 19
+    assert metrics.watchdog_enabled is True
+
+
+async def test_get_metrics_returns_none_for_unreadable_values() -> None:
+    outputs = dict.fromkeys(_METRICS_OUTPUT, "garbage")
+
+    metrics = await _metrics(outputs, "-")
+
+    assert metrics == SSHMetrics()
+
+
+async def test_set_watchdog_enabled_rejects_firmware_without_watchdog() -> None:
+    ssh = NanoKVMSSH("kvm.local")
+
+    with (
+        patch.object(ssh, "run_command", return_value="-"),
+        pytest.raises(NanoKVMNotSupportedError),
+    ):
+        await ssh.set_watchdog_enabled(True)
