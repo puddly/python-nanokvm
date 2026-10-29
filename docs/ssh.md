@@ -25,6 +25,27 @@ async with NanoKVMSSH(
 - Failures raise `NanoKVMSSHAuthenticationError`, `NanoKVMSSHConnectionError`
   (including host-key errors) or `NanoKVMSSHCommandError`.
 
+## Trusting a new device
+
+`probe_host_key()` reads the device's host key from the SSH handshake, without
+logging in. Show its fingerprint to the user, and once they approve it, pin the
+key with `host_key=`:
+
+```python
+from nanokvm.ssh_client import NanoKVMSSH, probe_host_key
+
+key = await probe_host_key("kvm.local")
+print(key.fingerprint)  # SHA256:..., compare with the device
+
+async with NanoKVMSSH("kvm.local", host_key=key.known_hosts_line) as ssh:
+    await ssh.authenticate("password")
+```
+
+A pinned key replaces the system known-hosts file, and it applies to the host
+you connect to whatever names its line carries, so a device that changed
+address keeps its key. An invalid line raises `ValueError`; a different server
+key raises `NanoKVMSSHConnectionError`.
+
 ## Metrics and watchdog
 
 ```python

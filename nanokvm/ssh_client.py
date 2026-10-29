@@ -8,10 +8,12 @@ import contextlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from os import PathLike
+import socket
 import threading
 from types import TracebackType
 
 import paramiko
+from paramiko.hostkeys import HostKeyEntry, InvalidHostKey
 
 from .exceptions import NanoKVMError, NanoKVMNotSupportedError
 
@@ -60,6 +62,46 @@ class SSHMetrics:
     """None when the firmware has no watchdog (the Pro, or older non-Pro firmware)."""
 
 
+@dataclass(frozen=True, slots=True)
+class SSHHostKey:
+    """A server's public host key."""
+
+    host: str
+    known_hosts_line: str
+    """The key as a known-hosts line, for ``NanoKVMSSH(host_key=...)``."""
+    fingerprint: str
+    """OpenSSH-style SHA-256 fingerprint, such as ``SHA256:...``."""
+
+
+async def probe_host_key(
+    host: str, port: int = 22, *, timeout: float | None = 10
+) -> SSHHostKey:
+    """Read a server's host key from the SSH handshake, without logging in.
+
+    This is useful for establishing an initial trust-on-first-use pin with
+    ``NanoKVMSSH(host, host_key=...)``.
+    """
+
+    def probe() -> SSHHostKey:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        with sock, paramiko.Transport(sock) as transport:
+            if timeout is not None:
+                transport.banner_timeout = timeout
+            transport.start_client(timeout=timeout)
+            key = transport.get_remote_server_key()
+        name = host if port == 22 else f"[{host}]:{port}"
+        return SSHHostKey(
+            host=host,
+            known_hosts_line=f"{name} {key.get_name()} {key.get_base64()}",
+            fingerprint=key.fingerprint,
+        )
+
+    try:
+        return await asyncio.to_thread(probe)
+    except (paramiko.SSHException, OSError) as e:
+        raise NanoKVMSSHConnectionError(f"SSH host-key probe failed: {e}") from e
+
+
 @dataclass
 class _CommandExecution:
     """Channel and cancellation state shared with one executor worker."""
@@ -86,6 +128,7 @@ class NanoKVMSSH:
         port: int = 22,
         *,
         known_hosts: str | PathLike[str] | None = None,
+        host_key: str | None = None,
         allow_unknown_host_key: bool = False,
         connect_timeout: float | None = 10,
         banner_timeout: float | None = 10,
@@ -98,6 +141,7 @@ class NanoKVMSSH:
         self.port = port
         self.username = username
         self.known_hosts = known_hosts
+        self.host_key = _parse_host_key(host_key) if host_key is not None else None
         self.allow_unknown_host_key = allow_unknown_host_key
         self.connect_timeout = connect_timeout
         self.banner_timeout = banner_timeout
@@ -132,7 +176,15 @@ class NanoKVMSSH:
         def connect() -> None:
             # Host-key files are read here so the event loop never blocks on
             # file I/O.
-            client.load_system_host_keys()
+            if self.host_key is not None:
+                # The pinned key replaces the system known-hosts file and
+                # applies to this host whatever names its line carries.
+                name = self.host if self.port == 22 else f"[{self.host}]:{self.port}"
+                client.get_host_keys().add(
+                    name, self.host_key.get_name(), self.host_key
+                )
+            else:
+                client.load_system_host_keys()
             if self.known_hosts is not None:
                 client.load_host_keys(str(self.known_hosts))
             client.set_missing_host_key_policy(
@@ -358,3 +410,13 @@ def _parse_df(df: str) -> tuple[float | None, float | None]:
         return round(int(parts[1]) / 1024, 2), float(parts[4].rstrip("%"))
     except (IndexError, ValueError):
         return None, None
+
+
+def _parse_host_key(known_hosts_line: str) -> paramiko.PKey:
+    try:
+        entry = HostKeyEntry.from_line(known_hosts_line)
+    except (paramiko.SSHException, InvalidHostKey) as e:
+        raise ValueError(f"Invalid host_key: {e}") from e
+    if entry is None:
+        raise ValueError("host_key must be a known-hosts line")
+    return entry.key

@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+import contextlib
 from datetime import UTC, datetime
 from pathlib import Path
+import socket
 import threading
 from typing import Any
 from unittest.mock import Mock, patch
 
 import paramiko
+from paramiko.common import AUTH_FAILED, AUTH_SUCCESSFUL
 import pytest
 
 from nanokvm.exceptions import NanoKVMNotSupportedError
@@ -20,6 +24,7 @@ from nanokvm.ssh_client import (
     NanoKVMSSHConnectionError,
     NanoKVMSSHNotConnectedError,
     SSHMetrics,
+    probe_host_key,
 )
 
 
@@ -549,3 +554,106 @@ async def test_set_watchdog_enabled_rejects_firmware_without_watchdog() -> None:
         pytest.raises(NanoKVMNotSupportedError),
     ):
         await ssh.set_watchdog_enabled(True)
+
+
+class _PasswordServer(paramiko.ServerInterface):
+    def get_allowed_auths(self, username: str) -> str:
+        return "password"
+
+    def check_auth_password(self, username: str, password: str) -> int:
+        if password == "synthetic-password":
+            return AUTH_SUCCESSFUL
+        return AUTH_FAILED
+
+
+@pytest.fixture(scope="module")
+def server_key() -> paramiko.RSAKey:
+    return paramiko.RSAKey.generate(2048)
+
+
+@pytest.fixture
+def ssh_server(server_key: paramiko.RSAKey) -> Iterator[int]:
+    """Serve SSH handshakes and password logins on a local port."""
+    listener = socket.create_server(("127.0.0.1", 0))
+    transports: list[paramiko.Transport] = []
+
+    def serve() -> None:
+        while True:
+            try:
+                sock, _ = listener.accept()
+            except OSError:
+                return
+            transport = paramiko.Transport(sock)
+            transport.add_server_key(server_key)
+            transports.append(transport)
+            with contextlib.suppress(paramiko.SSHException, EOFError):
+                transport.start_server(server=_PasswordServer())
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    yield listener.getsockname()[1]
+    listener.close()
+    for transport in transports:
+        transport.close()
+    thread.join(1)
+
+
+@pytest.mark.asyncio
+async def test_probe_host_key_reads_key_without_logging_in(
+    ssh_server: int, server_key: paramiko.RSAKey
+) -> None:
+    host_key = await probe_host_key("127.0.0.1", ssh_server)
+
+    assert host_key.host == "127.0.0.1"
+    assert host_key.known_hosts_line == (
+        f"[127.0.0.1]:{ssh_server} ssh-rsa {server_key.get_base64()}"
+    )
+    assert host_key.fingerprint == server_key.fingerprint
+
+
+@pytest.mark.asyncio
+async def test_probe_host_key_reports_unreachable_host() -> None:
+    listener = socket.create_server(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    listener.close()
+
+    with pytest.raises(NanoKVMSSHConnectionError):
+        await probe_host_key("127.0.0.1", port)
+
+
+@pytest.mark.asyncio
+async def test_pinned_host_key_authenticates_under_any_host_name(
+    ssh_server: int, server_key: paramiko.RSAKey
+) -> None:
+    line = f"old-name.local ssh-rsa {server_key.get_base64()}"
+
+    async with NanoKVMSSH("127.0.0.1", port=ssh_server, host_key=line) as ssh:
+        await ssh.authenticate("synthetic-password")
+        assert ssh.ssh_client is not None
+
+
+@pytest.mark.asyncio
+async def test_pinned_host_key_rejects_a_different_server_key(ssh_server: int) -> None:
+    other = paramiko.RSAKey.generate(2048)
+    line = f"127.0.0.1 ssh-rsa {other.get_base64()}"
+
+    async with NanoKVMSSH("127.0.0.1", port=ssh_server, host_key=line) as ssh:
+        with pytest.raises(NanoKVMSSHConnectionError):
+            await ssh.authenticate("synthetic-password")
+
+
+@pytest.mark.asyncio
+async def test_pinned_host_key_skips_system_known_hosts() -> None:
+    fake_client = Mock()
+    key = paramiko.RSAKey.generate(1024)
+    with patch("nanokvm.ssh_client.paramiko.SSHClient", return_value=fake_client):
+        client = NanoKVMSSH("kvm.local", host_key=f"x ssh-rsa {key.get_base64()}")
+        await client.authenticate("synthetic-password")
+
+    fake_client.load_system_host_keys.assert_not_called()
+
+
+@pytest.mark.parametrize("line", ["", "not a key line", "host ssh-rsa !!!"])
+def test_invalid_host_key_is_rejected_up_front(line: str) -> None:
+    with pytest.raises(ValueError):
+        NanoKVMSSH("kvm.local", host_key=line)
