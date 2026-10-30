@@ -6,7 +6,7 @@ leaves the media to a WebRTC peer, such as a browser or `aiortc`.
 
 | Need | Method |
 |---|---|
-| One still image | `get_snapshot()` (non-Pro) |
+| One still image | `get_snapshot()`, ending WebRTC on the Pro |
 | Raw JPEG frames | `mjpeg_stream_bytes()` |
 | Decoded `PIL.Image` frames | `mjpeg_stream()` |
 | Live H.264 video, and audio on the Pro | `open_webrtc_signaling()` |
@@ -18,9 +18,13 @@ The Pro encodes one stream mode at a time (`StreamMode`, set with
 WebRTC session in progress stops: its iteration raises
 `NanoKVMVideoModeError`. For that reason `get_snapshot()` raises
 `NanoKVMNotSupportedError` on the Pro without opening the stream
-([NanoKVM-Pro#157](https://github.com/sipeed/NanoKVM-Pro/issues/157)).
-`mjpeg_stream()` and `mjpeg_stream_bytes()` still work on the Pro, at that
-cost.
+([NanoKVM-Pro#157](https://github.com/sipeed/NanoKVM-Pro/issues/157)),
+unless the caller accepts that cost with `get_snapshot(interrupt_webrtc=True)`.
+`mjpeg_stream()` and `mjpeg_stream_bytes()` work on the Pro at the same cost.
+
+The interrupted session does not recover, but a new one started after the
+snapshot gets video. If new sessions stay black, `set_stream_mode()` with the
+WebRTC mode in use switches the encoder back.
 
 ## MJPEG
 
@@ -36,7 +40,8 @@ async with aclosing(client.mjpeg_stream_bytes()) as frames:
 ```
 
 `get_snapshot(timeout=20.0)` returns the first frame, raises `TimeoutError`
-when none arrives in time, and `NanoKVMError` when the stream ends without one.
+when none arrives in time, and `NanoKVMInvalidResponseError` when the stream
+ends without one.
 The streams run until the caller stops iterating; `aclosing()` closes the HTTP
 response as soon as the loop is left.
 

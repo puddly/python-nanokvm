@@ -135,7 +135,8 @@ while loop.time() < end:
 | Methods | Requires |
 |---|---|
 | `mjpeg_stream`, `mjpeg_stream_bytes`, `open_ws`, `open_webrtc_signaling` | all |
-| `get_snapshot`, `set_screen`, `set_frame_detect`, `pause_frame_detect` | non-Pro |
+| `get_snapshot` | non-Pro, or Pro with `interrupt_webrtc=True` |
+| `set_screen`, `set_frame_detect`, `pause_frame_detect` | non-Pro |
 | `get_input_region`, `set_input_region`, `get_input_resolution` | non-Pro 2.5.1 |
 | `reset_hdmi` | PCIe 2.1.5 |
 | `get_hdmi_state`, `enable_hdmi`, `disable_hdmi` | PCIe 2.2.8 |
@@ -151,7 +152,7 @@ while loop.time() < end:
 raw JPEG bytes, and `get_snapshot()` the first one. `open_webrtc_signaling()`
 returns the H.264 WebRTC signaling session for the detected hardware.
 [Video streaming](streaming.md) covers both, and why the Pro refuses
-snapshots.
+snapshots by default.
 
 `open_ws(path)` opens a new WebSocket on a path relative to the API base, such
 as `stream/h264/webrtc`, for protocols the client does not wrap. The caller
