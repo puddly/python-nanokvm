@@ -15,9 +15,7 @@ with NanoKVMSyncClient("https://kvm.local/api/") as kvm:
     kvm.push_button(GpioType.POWER, duration_ms=6000)
     print(kvm.get_gpio().pwr)
 
-    for frame in kvm.mjpeg_stream_bytes():
-        Path("screen.jpg").write_bytes(frame)
-        break
+    Path("screen.jpg").write_bytes(kvm.get_snapshot())
 ```
 
 - Every coroutine method of `NanoKVMClient` is a blocking method with the same

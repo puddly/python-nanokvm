@@ -11,6 +11,7 @@ pip install nanokvm
 
 ```python
 import asyncio
+from pathlib import Path
 
 from nanokvm.client import NanoKVMClient
 from nanokvm.models import GpioType, MouseButton
@@ -24,9 +25,7 @@ async def main() -> None:
         await client.paste_text("Hello\nworld!")
         await client.mouse_click(MouseButton.LEFT, 0.5, 0.5)
 
-        async for frame in client.mjpeg_stream():
-            frame.save("screen.jpg")
-            break
+        Path("screen.jpg").write_bytes(await client.get_snapshot())
 
 
 asyncio.run(main())

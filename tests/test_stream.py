@@ -9,7 +9,7 @@ from PIL import Image
 import pytest
 
 from nanokvm.client import NanoKVMClient
-from nanokvm.exceptions import NanoKVMError, NanoKVMNotSupportedError
+from nanokvm.exceptions import NanoKVMInvalidResponseError, NanoKVMNotSupportedError
 from nanokvm.models import HWVersion
 
 from .common import BASE_URL, mark_detected
@@ -112,7 +112,7 @@ async def test_get_snapshot_without_frames_raises(mocked: aioresponses) -> None:
     mocked.get(f"{BASE_URL}stream/mjpeg", headers=_MJPEG_HEADERS, body=b"--frame--\r\n")
     async with NanoKVMClient(BASE_URL, token="test-token") as c:
         mark_detected(c)
-        with pytest.raises(NanoKVMError, match="without a frame"):
+        with pytest.raises(NanoKVMInvalidResponseError, match="without a frame"):
             await c.get_snapshot()
 
 

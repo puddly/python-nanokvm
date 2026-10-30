@@ -14,7 +14,7 @@ from aiohttp import BodyPartReader, ClientWebSocketResponse, MultipartReader, hd
 from PIL import Image
 
 from ..compatibility import require_hardware
-from ..exceptions import NanoKVMError
+from ..exceptions import NanoKVMInvalidResponseError
 from ..models.common import HWFamily
 from ..webrtc import WebRTCSignaling
 from .session import Controller
@@ -69,7 +69,7 @@ class StreamController(Controller):
         ):
             async for frame in frames:
                 return frame
-        raise NanoKVMError("MJPEG stream ended without a frame")
+        raise NanoKVMInvalidResponseError("MJPEG stream ended without a frame")
 
     async def mjpeg_stream(self) -> AsyncGenerator[Image.Image, None]:
         """Stream decoded MJPEG frames."""

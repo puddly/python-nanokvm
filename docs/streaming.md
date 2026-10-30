@@ -36,7 +36,8 @@ async with aclosing(client.mjpeg_stream_bytes()) as frames:
 ```
 
 `get_snapshot(timeout=20.0)` returns the first frame, raises `TimeoutError`
-when none arrives in time, and `NanoKVMError` when the stream ends without one.
+when none arrives in time, and `NanoKVMInvalidResponseError` when the stream
+ends without one.
 The streams run until the caller stops iterating; `aclosing()` closes the HTTP
 response as soon as the loop is left.
 
