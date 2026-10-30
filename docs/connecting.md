@@ -47,6 +47,16 @@ in again after the device restarts, as `install_application_update()` needs.
 Logging out, changing the password, a failed login and closing the client drop
 them. They are never written to disk or shown in `repr()`.
 
+With kept credentials, the client also logs in again by itself when the device
+rejects the session, for example after its server restarted or someone logged
+out, and sends the rejected request once more. The device rejects such a
+request before running it, so nothing runs twice. This covers API calls, the
+start of a stream and WebSocket handshakes, but not uploads, whose body cannot
+be sent twice. Calls that lose the session together share one login. If the
+device rejects the credentials, they are dropped and the call raises
+`NanoKVMAuthenticationFailure`; if it cannot be reached, the error is raised
+and the next call tries again.
+
 ### Sessions and logout
 
 Starting another login or logging out invalidates operations and streams still

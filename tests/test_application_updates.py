@@ -400,6 +400,8 @@ async def test_install_update_waits_for_the_restart_and_logs_in_again(
     mocked.get(_INFO_URL, exception=aiohttp.ClientConnectionError())
     mocked.get(_INFO_URL, status=401)
     mocked.post(_LOGIN_URL, exception=aiohttp.ClientConnectionError())
+    # The next poll still carries the rejected token.
+    mocked.get(_INFO_URL, status=401)
     mocked.post(_LOGIN_URL, payload=_ok({"token": "second-token"}))
     mocked.get(_INFO_URL, payload=info_payload("2.5.2", image="v1.4.2"))
 
@@ -422,6 +424,7 @@ async def test_install_update_retries_pages_served_while_starting(
     mocked.get(_INFO_URL, body=page, content_type="text/html")
     mocked.get(_INFO_URL, status=401)
     mocked.post(_LOGIN_URL, body=page, content_type="text/html")
+    mocked.get(_INFO_URL, status=401)
     mocked.post(_LOGIN_URL, payload=_ok({"token": "second-token"}))
     mocked.get(_INFO_URL, payload=info_payload("2.5.2"))
 
