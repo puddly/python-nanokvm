@@ -13,8 +13,7 @@ import aiohttp
 from aiohttp import BodyPartReader, ClientWebSocketResponse, MultipartReader, hdrs
 from PIL import Image
 
-from ..compatibility import require_hardware
-from ..exceptions import NanoKVMInvalidResponseError
+from ..exceptions import NanoKVMInvalidResponseError, NanoKVMNotSupportedError
 from ..models.common import HWFamily
 from ..webrtc import WebRTCSignaling
 from .session import Controller
@@ -55,14 +54,24 @@ class StreamController(Controller):
                 session.check_session_generation(generation)
                 yield data
 
-    @require_hardware(HWFamily.NON_PRO)
-    async def get_snapshot(self, timeout: float = 20.0) -> bytes:
+    async def get_snapshot(
+        self, timeout: float = 20.0, *, interrupt_webrtc: bool = False
+    ) -> bytes:
         """Return one raw JPEG frame from the MJPEG stream.
 
-        Not on the Pro: its MJPEG and H.264 streams share one encoder mode, so
-        opening MJPEG interrupts any WebRTC session
-        (https://github.com/sipeed/NanoKVM-Pro/issues/157).
+        On the Pro, MJPEG and H.264 share one encoder mode, so opening MJPEG
+        ends any WebRTC session in progress
+        (https://github.com/sipeed/NanoKVM-Pro/issues/157). The Pro refuses
+        the snapshot unless ``interrupt_webrtc`` accepts that.
         """
+        session = self._session
+        if session._hw_version is None:
+            await session.detect_hardware()
+        if session.is_hardware_family(HWFamily.PRO) and not interrupt_webrtc:
+            raise NanoKVMNotSupportedError(
+                "get_snapshot on the Pro ends any WebRTC session in progress; "
+                "pass interrupt_webrtc=True to accept that"
+            )
         async with (
             asyncio.timeout(timeout),
             contextlib.aclosing(self.mjpeg_stream_bytes()) as frames,

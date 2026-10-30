@@ -120,6 +120,20 @@ async def test_get_snapshot_is_refused_on_the_pro(mocked: aioresponses) -> None:
     """The Pro never opens MJPEG for a snapshot, so WebRTC stays up."""
     async with NanoKVMClient(BASE_URL, token="test-token") as c:
         mark_detected(c, HWVersion.PRO)
-        with pytest.raises(NanoKVMNotSupportedError):
+        with pytest.raises(NanoKVMNotSupportedError, match="interrupt_webrtc"):
             await c.get_snapshot()
     assert not mocked.requests
+
+
+async def test_get_snapshot_on_the_pro_when_interrupting_webrtc(
+    mocked: aioresponses,
+) -> None:
+    """The Pro takes a snapshot once the caller accepts ending WebRTC."""
+    mocked.get(
+        f"{BASE_URL}stream/mjpeg",
+        headers=_MJPEG_HEADERS,
+        body=b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8one\r\n--frame--\r\n",
+    )
+    async with NanoKVMClient(BASE_URL, token="test-token") as c:
+        mark_detected(c, HWVersion.PRO)
+        assert await c.get_snapshot(interrupt_webrtc=True) == b"\xff\xd8one"
