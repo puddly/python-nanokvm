@@ -136,7 +136,7 @@ while loop.time() < end:
 |---|---|
 | `mjpeg_stream`, `mjpeg_stream_bytes`, `open_ws`, `open_webrtc_signaling` | all |
 | `get_snapshot` | non-Pro, or Pro with `interrupt_webrtc=True` |
-| `set_screen`, `set_frame_detect`, `pause_frame_detect` | non-Pro |
+| `set_screen`, `set_frame_detect`, `pause_frame_detect` | non-Pro; `set_screen(RESOLUTION, ...)` below 2.5.4 |
 | `get_input_region`, `set_input_region`, `get_input_resolution` | non-Pro 2.5.1 |
 | `reset_hdmi` | PCIe 2.1.5 |
 | `get_hdmi_state`, `enable_hdmi`, `disable_hdmi` | PCIe 2.2.8 |
