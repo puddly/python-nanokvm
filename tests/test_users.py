@@ -5,7 +5,7 @@ import pytest
 import yarl
 
 from nanokvm.client import NanoKVMClient, NanoKVMNotSupportedError
-from nanokvm.models import HWVersion, UserRole
+from nanokvm.models import HWVersion, Permission, UserRole
 
 from .common import BASE_URL, mark_detected
 
@@ -74,7 +74,7 @@ async def test_update_user_sends_only_given_fields(
     await client.update_user("guest", enabled=False)
 
     assert _sent_json(mocked, "PUT", "auth/users/guest") == {"enabled": False}
-    with pytest.raises(ValueError, match="role or enabled"):
+    with pytest.raises(ValueError, match="role, enabled or permissions"):
         await client.update_user("guest")
 
 
@@ -117,3 +117,83 @@ async def test_users_require_non_pro_2_5_1(
 
     with pytest.raises(NanoKVMNotSupportedError):
         await client.get_users()
+
+
+async def test_permissions_are_sent_from_2_5_3(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
+    """Grants and MCP key rotation reach the device, and older firmware refuses."""
+    mark_detected(client, application_version="2.5.2")
+    with pytest.raises(NanoKVMNotSupportedError):
+        await client.update_user("guest", permissions=[Permission.POWER])
+    with pytest.raises(NanoKVMNotSupportedError):
+        await client.delete_user("guest", rotate_mcp_key=True)
+    assert not mocked.requests
+
+    mark_detected(client, application_version="2.5.3")
+    mocked.post(f"{BASE_URL}auth/users", payload=_OK)
+    mocked.put(f"{BASE_URL}auth/users/guest", payload=_OK)
+    mocked.delete(f"{BASE_URL}auth/users/guest?rotateMcpKey=true", payload=_OK)
+
+    await client.create_user("guest", "pw", permissions=[])
+    await client.update_user(
+        "guest", permissions=[Permission.CONSOLE_VIEW, "mcp"], rotate_mcp_key=True
+    )
+    await client.delete_user("guest", rotate_mcp_key=True)
+
+    assert _sent_json(mocked, "POST", "auth/users")["permissions"] == []
+    assert _sent_json(mocked, "PUT", "auth/users/guest") == {
+        "permissions": ["console.view", "mcp"],
+        "rotateMcpKey": True,
+    }
+    assert ("DELETE", yarl.URL(f"{BASE_URL}auth/users/guest?rotateMcpKey=true")) in (
+        mocked.requests
+    )
+
+
+async def test_users_and_catalog_parse_permissions(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
+    """A null permission list from the device reads as empty."""
+    mark_detected(client)
+    mocked.get(
+        f"{BASE_URL}auth/users",
+        payload={
+            **_OK,
+            "data": {
+                "users": [
+                    {"username": "a", "role": "admin", "enabled": True},
+                    {
+                        "username": "b",
+                        "role": "user",
+                        "enabled": True,
+                        "permissions": None,
+                    },
+                ]
+            },
+        },
+    )
+    mocked.get(
+        f"{BASE_URL}auth/permissions",
+        payload={
+            **_OK,
+            "data": {
+                "permissions": [
+                    {"id": "console.view", "group": "console", "risk": "info"},
+                    {
+                        "id": "terminal",
+                        "group": "host",
+                        "risk": "warn",
+                        "implies": ["console.view"],
+                    },
+                ]
+            },
+        },
+    )
+
+    users = await client.get_users()
+    catalog = await client.get_permissions()
+
+    assert [user.permissions for user in users.users] == [[], []]
+    assert catalog.permissions[0].implies == []
+    assert catalog.permissions[1].implies == ["console.view"]

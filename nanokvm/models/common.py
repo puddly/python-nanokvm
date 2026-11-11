@@ -370,6 +370,7 @@ class LoginRsp(BaseModel):
 class GetAccountRsp(BaseModel):
     username: str
     role: str | None = None
+    permissions: list[str] | None = None  # effective grants, non-Pro 2.5.3
 
 
 class ChangePasswordReq(BaseModel):
@@ -469,6 +470,7 @@ class UpdateVirtualDeviceReq(BaseModel):
 
     device: VirtualDevice
     type: str | None = None  # Pro only (sdcard/emmc for disk device)
+    enable: bool | None = None  # non-Pro 2.5.3; older firmware toggles
 
 
 class GetVirtualDeviceRsp(BaseModel):
@@ -755,6 +757,8 @@ class StatusImageRsp(BaseModel):
     status: DownloadStatus
     file: str
     percentage: str
+    loaded: int | None = None  # bytes so far, non-Pro 2.5.3
+    total: int | None = None  # expected bytes, 0 when unknown, non-Pro 2.5.3
 
 
 class DownloadImageReq(BaseModel):
