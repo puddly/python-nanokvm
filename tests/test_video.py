@@ -5,7 +5,8 @@ import pytest
 import yarl
 
 from nanokvm.client import NanoKVMClient
-from nanokvm.models import HWVersion, StreamMode
+from nanokvm.exceptions import NanoKVMNotSupportedError
+from nanokvm.models import HWVersion, ScreenSettingType, StreamMode
 
 from .common import BASE_URL, mark_detected
 
@@ -39,3 +40,25 @@ async def test_pause_frame_detect(client: NanoKVMClient, mocked: aioresponses) -
     assert calls[0].kwargs["json"] == {"duration": 3}
     with pytest.raises(ValueError):
         await client.pause_frame_detect(0)
+
+
+async def test_set_screen_resolution_removed_in_2_5_4(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
+    """Test resolution is refused from 2.5.4 and still sent before it."""
+    url = f"{BASE_URL}vm/screen"
+    mocked.post(url, payload={"code": 0, "msg": "success", "data": None}, repeat=True)
+
+    mark_detected(client, HWVersion.PCIE, application_version="2.5.4")
+    with pytest.raises(NanoKVMNotSupportedError):
+        await client.set_screen(ScreenSettingType.RESOLUTION, 1080)
+    await client.set_screen(ScreenSettingType.GOP, 60)
+
+    mark_detected(client, HWVersion.PCIE, application_version="2.5.2")
+    await client.set_screen(ScreenSettingType.RESOLUTION, 1080)
+
+    calls = mocked.requests[("POST", yarl.URL(url))]
+    assert [call.kwargs["json"] for call in calls] == [
+        {"type": "gop", "value": 60},
+        {"type": "resolution", "value": 1080},
+    ]

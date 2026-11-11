@@ -53,9 +53,11 @@ __all__ = [
 class ScreenSettingType(StrEnum):
     """Screen Setting types."""
 
-    RESOLUTION = "resolution"
+    RESOLUTION = "resolution"  # removed in 2.5.4: video follows the HDMI input
     FPS = "fps"
     QUALITY = "quality"
+    TYPE = "type"  # 0 = MJPEG, any other value = H.264
+    GOP = "gop"  # 1-100; anything else falls back to 30
 
 
 class DNSMode(StrEnum):

@@ -7,6 +7,7 @@ from os import PathLike
 from aiohttp import ClientTimeout, hdrs
 
 from ..compatibility import require_hardware
+from ..exceptions import NanoKVMNotSupportedError
 from ..models.common import HWFamily, HWVersion
 from ..models.non_pro import (
     GetHdmiStateRsp,
@@ -102,7 +103,17 @@ class VideoController(Controller):
 
     @require_hardware(HWFamily.NON_PRO)
     async def set_screen(self, setting: ScreenSettingType, value: int) -> None:
-        """Set a non-Pro NanoKVM screen setting."""
+        """Set a non-Pro NanoKVM screen setting.
+
+        ``RESOLUTION`` is gone from 2.5.4, where the video follows the HDMI input.
+        """
+        if setting == ScreenSettingType.RESOLUTION and (
+            await self._session.application_version_at_least(non_pro="2.5.4")
+        ):
+            raise NanoKVMNotSupportedError(
+                "screen resolution requires non-Pro application version < 2.5.4 "
+                f"(detected: {self._session._application_version})"
+            )
         await self._session.api_request_json(
             hdrs.METH_POST,
             "/vm/screen",
