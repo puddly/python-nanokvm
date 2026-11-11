@@ -10,6 +10,7 @@ import yarl
 from . import models
 from .compatibility import require_application_version, require_hardware
 from .components.hid import PASTE_CHAR_MAP, HidController
+from .components.media import MediaController
 from .components.mouse import MouseController
 from .components.network import NetworkController
 from .components.services import ServiceController
@@ -60,6 +61,7 @@ class NanoKVMClient(
     HidController,
     VideoController,
     StorageController,
+    MediaController,
     NetworkController,
     ServiceController,
     UserController,

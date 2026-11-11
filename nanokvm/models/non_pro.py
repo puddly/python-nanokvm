@@ -14,6 +14,7 @@ __all__ = [
     "CreateUserReq",
     "DNSInfo",
     "DNSMode",
+    "EjectMediaReq",
     "GetAutostartRsp",
     "GetCdRomRsp",
     "GetDNSRsp",
@@ -21,13 +22,27 @@ __all__ = [
     "GetInputRegionRsp",
     "GetInputResolutionRsp",
     "GetMCPConfigRsp",
+    "GetMediaFilesRsp",
+    "GetMediaRsp",
+    "GetMediaStateRsp",
+    "GetMediaStatusRsp",
     "GetMemoryLimitRsp",
+    "GetPermissionsRsp",
     "GetSwapSizeRsp",
     "GetUpdateServerRsp",
     "GetUsersRsp",
     "InputRegionMode",
     "ManualRegion",
+    "MediaCapabilities",
+    "MediaFile",
+    "MediaItem",
+    "MediaPathReq",
+    "MediaRefReq",
+    "MediaType",
+    "MountMediaReq",
     "OriginalResolution",
+    "Permission",
+    "PermissionInfo",
     "ScreenSettingType",
     "SetAIControlModeReq",
     "SetAIControlModeRsp",
@@ -271,13 +286,53 @@ class UserRole(StrEnum):
     USER = "user"
 
 
+class Permission(StrEnum):
+    """Account permissions, from non-Pro 2.5.3. Administrators hold them all."""
+
+    CONSOLE_VIEW = "console.view"
+    CONSOLE_CONTROL = "console.control"
+    POWER = "power"
+    MEDIUM_ATTACH = "medium.attach"
+    LIBRARY_READ = "library.read"
+    LIBRARY_WRITE = "library.write"
+    TERMINAL = "terminal"
+    DEVICE = "device"
+    NETWORK = "network"
+    UPDATE = "update"
+    MCP = "mcp"
+    TAILSCALE = "tailscale"
+    AI = "ai"
+
+
+class PermissionInfo(BaseModel):
+    id: str
+    group: str
+    risk: str  # "info", or "warn" for a grant that amounts to full device control
+    implies: list[str] = Field(default_factory=list)
+
+    @field_validator("implies", mode="before")
+    @classmethod
+    def _normalize_implies(cls, value: Any) -> Any:
+        return _normalize_string_list(value)
+
+
+class GetPermissionsRsp(BaseModel):
+    permissions: list[PermissionInfo]
+
+
 class UserInfo(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     username: str
     role: str
     enabled: bool
+    permissions: list[str] = Field(default_factory=list)  # stored grants, 2.5.3
     system_account: bool = Field(default=False, alias="systemAccount")
+
+    @field_validator("permissions", mode="before")
+    @classmethod
+    def _normalize_permissions(cls, value: Any) -> Any:
+        return _normalize_string_list(value)
 
 
 class GetUsersRsp(BaseModel):
@@ -288,11 +343,16 @@ class CreateUserReq(BaseModel):
     username: str
     password: str = Field(repr=False)
     role: str
+    permissions: list[str] | None = None
 
 
 class UpdateUserReq(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     role: str | None = None
     enabled: bool | None = None
+    permissions: list[str] | None = None
+    rotate_mcp_key: bool | None = Field(default=None, alias="rotateMcpKey")
 
 
 class SetUserPasswordReq(BaseModel):
@@ -347,3 +407,107 @@ class GetDNSRsp(BaseModel):
 class SetDNSReq(BaseModel):
     mode: DNSMode
     servers: list[str] = Field(default_factory=list)
+
+
+class MediaType(StrEnum):
+    """What a virtual medium is: an image file or the shared data partition."""
+
+    IMAGE = "image"
+    PARTITION = "partition"
+
+
+class MediaItem(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    type: str
+    rel: str  # image path relative to the media directory; empty for the partition
+    name: str
+    size: int
+    fs: str
+    browsable: bool  # the device can list the files inside
+    attached: bool
+    modified_at: datetime = Field(alias="modifiedAt")
+
+
+class MediaCapabilities(BaseModel):
+    loop: bool
+
+
+class GetMediaRsp(BaseModel):
+    media: list[MediaItem] = Field(default_factory=list)
+    capabilities: MediaCapabilities
+
+    @field_validator("media", mode="before")
+    @classmethod
+    def _normalize_media(cls, value: Any) -> Any:
+        return _normalize_string_list(value)
+
+
+class GetMediaStateRsp(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    state: str  # none | image | partition | unsupported (virtual disk off)
+    type: str
+    rel: str
+    hid_only: bool = Field(alias="hidOnly")  # the gadget has no mass storage
+    open: list[str] = Field(default_factory=list)  # media the file manager holds
+    cdrom: bool
+    local_writable: bool | None = Field(default=None, alias="localWritable")  # 2.5.4
+
+    @field_validator("open", mode="before")
+    @classmethod
+    def _normalize_open(cls, value: Any) -> Any:
+        return _normalize_string_list(value)
+
+
+class GetMediaStatusRsp(BaseModel):
+    status: str
+    name: str
+    percentage: str
+    loaded: int
+    total: int  # 0 when unknown
+    message: str
+
+
+class MediaFile(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    size: int
+    is_dir: bool = Field(default=False, alias="isDir")
+    modified_at: datetime | None = Field(default=None, alias="modifiedAt")
+
+
+class GetMediaFilesRsp(BaseModel):
+    path: str
+    entries: list[MediaFile] = Field(default_factory=list)
+    free: int
+    total: int
+    # A zero-length entry is a transfer in progress while this is true.
+    writing: bool
+
+    @field_validator("entries", mode="before")
+    @classmethod
+    def _normalize_entries(cls, value: Any) -> Any:
+        return _normalize_string_list(value)
+
+
+class MediaRefReq(BaseModel):
+    type: MediaType
+    rel: str = ""
+
+
+class MountMediaReq(MediaRefReq):
+    cdrom: bool = False
+    force: bool = False
+
+
+class EjectMediaReq(BaseModel):
+    force: bool = False
+
+
+class MediaPathReq(MediaRefReq):
+    model_config = ConfigDict(populate_by_name=True)
+
+    path: str
+    exists_ok: bool | None = Field(default=None, alias="existsOk")

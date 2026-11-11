@@ -48,7 +48,7 @@ Request and response models live in `nanokvm.models`.
 |---|---|
 | `get_info`, `get_hardware`, `get_gpio`, `push_button` | all |
 | `get_oled_info`, `set_oled_sleep` | all |
-| `get_virtual_device_status`, `update_virtual_device` | all |
+| `get_virtual_device_status`, `update_virtual_device` | all; `enable=` non-Pro 2.5.3 |
 | `get_hostname`, `set_hostname`, `get_web_title`, `set_web_title` | non-Pro 2.2.6 / Pro |
 | `get_ssh_state`, `enable_ssh`, `disable_ssh` | non-Pro 2.1.6 / Pro |
 | `get_mdns_state`, `enable_mdns`, `disable_mdns` | non-Pro 2.2.2 / Pro |
@@ -82,6 +82,11 @@ await client.push_button(GpioType.POWER, 800)  # short press: power on
 Check the power LED rather than the video signal: on the PCIe,
 `get_hdmi_state().signal` can stay `True` for about ten seconds after the
 target is off.
+
+`update_virtual_device(device)` toggles the device. From non-Pro 2.5.3,
+`enable=True` or `enable=False` sets the state instead, and leaves a device
+already in that state alone. Older firmware ignores `enable` and toggles, so
+the client refuses it there.
 
 ### Keyboard and mouse
 
@@ -222,6 +227,42 @@ async for status in client.watch_image_download():
 
 Autostart scripts run when the device boots.
 
+### Virtual media
+
+| Methods | Requires |
+|---|---|
+| `get_media`, `get_media_state`, `get_media_status`, `mount_media`, `eject_media`, `delete_media` | non-Pro 2.5.3 |
+| `list_media_files`, `upload_media_file`, `download_media_file`, `delete_media_file`, `download_media` | non-Pro 2.5.3 |
+| `create_media_directory` | non-Pro 2.5.4 |
+
+From 2.5.3 the USB disk carries a medium: an image, or the device's shared data
+partition. `rel` names an image by its path in the media directory, as
+`get_media()` lists it; leaving `rel` out means the partition. The image
+methods above keep working.
+
+```python
+media = await client.get_media()  # media.media[0].rel: "debian.iso"
+await client.mount_media("debian.iso", cdrom=True)
+await client.eject_media()
+await client.mount_media()  # serve the data partition again
+
+listing = await client.list_media_files("/")  # files on the partition
+await client.upload_media_file("notes.txt", "/docs")
+await client.download_media_file("/docs/notes.txt", "notes-copy.txt")
+await client.list_media_files("/", rel="debian.iso")  # files inside an image
+```
+
+- An image is always served read-only. `cdrom=True` needs an ISO 9660 or UDF
+  image.
+- While the target machine holds the partition, `/data` is read-only on the
+  device and writes fail. `get_media_state().local_writable` (2.5.4) reports it.
+- `force=True` on `mount_media` and `eject_media` takes the disk back from a
+  target machine that holds it, losing its unflushed writes.
+- The device refuses a busy, attached or full medium with `NanoKVMApiError`:
+  -10 virtual disk off, -11 medium attached, -12 medium in use, -13 not
+  browsable, -14 not enough space, -15 not an optical image, -16 name taken.
+- A failed download raises and leaves no file at the destination.
+
 ### Network
 
 | Methods | Requires |
@@ -285,3 +326,22 @@ package from a local file. Pass `sha256=` to check the file first; non-Pro
 |---|---|
 | `authenticate`, `logout`, `get_account`, `change_password`, `is_password_updated` | all |
 | `get_users`, `create_user`, `update_user`, `delete_user`, `set_user_password` | non-Pro 2.5.1 |
+| `get_permissions`; `permissions=` and `rotate_mcp_key=` on the methods above | non-Pro 2.5.3 |
+
+From non-Pro 2.5.3, a `user` account holds an explicit set of `Permission`
+grants; administrators hold them all. `get_permissions()` lists the catalog
+with each grant's group, risk and implied grants, and `get_account().permissions`
+lists what the logged-in account can do.
+
+```python
+await client.create_user("viewer", "password", permissions=[Permission.CONSOLE_VIEW])
+await client.update_user("viewer", permissions=[], rotate_mcp_key=True)
+```
+
+- `create_user` without `permissions` grants console view, console control and
+  power, as the `user` role did before 2.5.3. An empty list grants nothing.
+- `update_user(permissions=...)` replaces the stored grants. From 2.5.3 only
+  disabling an account ends its sessions.
+- `rotate_mcp_key=True` regenerates the device MCP API key when the change or
+  deletion takes the `mcp` grant away, which disconnects every MCP client.
+- An account without the grant for a route gets `NanoKVMPermissionError`.

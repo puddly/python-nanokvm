@@ -8,7 +8,11 @@ from datetime import UTC, datetime
 from aiohttp import ClientTimeout, ServerDisconnectedError, hdrs
 
 from ..compatibility import require_application_version, require_hardware
-from ..exceptions import NanoKVMApiError, NanoKVMInvalidResponseError
+from ..exceptions import (
+    NanoKVMApiError,
+    NanoKVMInvalidResponseError,
+    NanoKVMNotSupportedError,
+)
 from ..models.common import (
     GetGpioRsp,
     GetHardwareRsp,
@@ -194,15 +198,29 @@ class SystemController(Controller):
         self,
         device: VirtualDevice,
         *,
+        enable: bool | None = None,  # non-Pro 2.5.3
         disk_type: DiskType | None = None,  # Pro only
     ) -> None:
-        """Toggle the state of a virtual device."""
+        """Toggle a virtual device, or with ``enable`` set it on or off.
+
+        Older firmware ignores ``enable`` and toggles, so it is refused there.
+        """
+        if enable is not None and not (
+            await self._session.application_version_at_least(non_pro="2.5.3")
+            and self._session.is_hardware_family(HWFamily.NON_PRO)
+        ):
+            raise NanoKVMNotSupportedError(
+                "update_virtual_device enable requires non-Pro application "
+                f"version >= 2.5.3 (detected: {self._session._hw_version} "
+                f"{self._session._application_version})"
+            )
         await self._session.api_request_json(
             hdrs.METH_POST,
             "/vm/device/virtual",
             data=UpdateVirtualDeviceReq(
                 device=device,
                 type=disk_type.value if disk_type else None,
+                enable=enable,
             ),
         )
 

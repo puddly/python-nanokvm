@@ -11,7 +11,7 @@ from aioresponses import aioresponses
 import pytest
 import yarl
 
-from nanokvm.client import NanoKVMApiError, NanoKVMClient
+from nanokvm.client import NanoKVMApiError, NanoKVMClient, NanoKVMNotSupportedError
 from nanokvm.models import DiskType, GpioType, HWVersion, VirtualDevice
 
 from .common import BASE_URL, mark_detected
@@ -270,3 +270,24 @@ async def test_push_button_still_times_out_when_the_device_does_not_answer() -> 
         release.set()
 
     assert not guard.expired()
+
+
+async def test_update_virtual_device_enable_needs_non_pro_2_5_3(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
+    """Older firmware toggles on ``enable``, so only 2.5.3 non-Pro gets it."""
+    url = f"{BASE_URL}vm/device/virtual"
+    mocked.post(url, payload={"code": 0, "msg": "success", "data": {"on": True}})
+
+    for hardware, version in ((HWVersion.PCIE, "2.5.2"), (HWVersion.PRO, "9.9.9")):
+        mark_detected(client, hardware, version)
+        with pytest.raises(NanoKVMNotSupportedError):
+            await client.update_virtual_device(VirtualDevice.DISK, enable=True)
+
+    mark_detected(client, HWVersion.PCIE, "2.5.3")
+    await client.update_virtual_device(VirtualDevice.DISK, enable=False)
+
+    calls = mocked.requests[("POST", yarl.URL(url))]
+    assert [call.kwargs["json"] for call in calls] == [
+        {"device": "disk", "enable": False}
+    ]
