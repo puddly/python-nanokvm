@@ -106,6 +106,7 @@ class SessionController:
         self._ws_heartbeat: asyncio.Task[None] | None = None
         self._ws_session: ClientSession | None = None
         self._ws_lock = asyncio.Lock()
+        self._renew_lock = asyncio.Lock()
         self._mouse_buttons = 0
         self._mouse_mode: Literal["relative", "absolute"] = "relative"
         self._mouse_abs_position: tuple[int, int] = (0, 0)
@@ -170,56 +171,73 @@ class SessionController:
         expected_generation: int | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[ClientResponse, None]:
-        """Make an authenticated or unauthenticated API request."""
+        """Make an authenticated or unauthenticated API request.
+
+        With kept credentials, a request rejected with 401 logs in again and is
+        sent once more. The device rejects it before running it, so this is
+        safe; only a ``data`` body (an upload) cannot be sent twice.
+        """
 
         if expected_generation is not None:
             self.check_session_generation(expected_generation)
         generation = self._session_generation
-        cookies = {}
-        if authenticate:
-            if not self._token:
-                raise NanoKVMNotAuthenticatedError("Client is not authenticated")
-            cookies[_SESSION_COOKIE_NAME] = self._token
-
-        if self._http_session is None or self._ssl_config is None:
-            raise RuntimeError(_NOT_STARTED)
-
-        self.clear_session_cookies()
+        renew = authenticate and "data" not in kwargs
         request_headers = {
             hdrs.ACCEPT: "application/json",
             **kwargs.pop("headers", {}),
         }
 
-        async with self._http_session.request(
-            method,
-            self.url / path.lstrip("/"),
-            headers=request_headers,
-            cookies=cookies,
-            timeout=timeout or ClientTimeout(total=self._request_timeout),
-            raise_for_status=False,
-            ssl=self._ssl_config,
-            **kwargs,
-        ) as response:
-            # The explicit token owns the session. Do not leave response cookies
-            # available to another client sharing this HTTP session.
+        while True:
+            cookies = {}
+            token = self._token
+            if authenticate:
+                if not token:
+                    raise NanoKVMNotAuthenticatedError("Client is not authenticated")
+                cookies[_SESSION_COOKIE_NAME] = token
+
+            if self._http_session is None or self._ssl_config is None:
+                raise RuntimeError(_NOT_STARTED)
+
             self.clear_session_cookies()
-            if authenticate:
-                self.check_session_generation(generation)
-            if authenticate and response.status == 401:
-                await self.clear_local_session(expected_generation=generation)
-                raise NanoKVMNotAuthenticatedError(
-                    "NanoKVM session is no longer authenticated"
-                )
-            if authenticate and response.status == 403:
-                raise NanoKVMPermissionError(
-                    status=response.status,
-                    method=response.method,
-                    path=f"/{path.lstrip('/')}",
-                )
-            response.raise_for_status()
-            yield response
-            if authenticate:
-                self.check_session_generation(generation)
+
+            async with self._http_session.request(
+                method,
+                self.url / path.lstrip("/"),
+                headers=request_headers,
+                cookies=cookies,
+                timeout=timeout or ClientTimeout(total=self._request_timeout),
+                raise_for_status=False,
+                ssl=self._ssl_config,
+                **kwargs,
+            ) as response:
+                # The explicit token owns the session. Do not leave response
+                # cookies available to another client sharing this HTTP session.
+                self.clear_session_cookies()
+                if authenticate:
+                    self.check_session_generation(generation)
+                if authenticate and response.status == 401:
+                    if not renew or self._credentials is None:
+                        await self.clear_local_session(expected_generation=generation)
+                        raise NanoKVMNotAuthenticatedError(
+                            "NanoKVM session is no longer authenticated"
+                        )
+                else:
+                    if authenticate and response.status == 403:
+                        raise NanoKVMPermissionError(
+                            status=response.status,
+                            method=response.method,
+                            path=f"/{path.lstrip('/')}",
+                        )
+                    response.raise_for_status()
+                    yield response
+                    if authenticate:
+                        self.check_session_generation(generation)
+                    return
+
+            # Log in again outside the rejected response, then send once more.
+            assert token is not None
+            renew = False
+            await self._renew_token(generation, token)
 
     async def read_json_response(self, response: ClientResponse) -> Any:
         """Read a JSON response and normalize decoding failures."""
@@ -430,6 +448,43 @@ class SessionController:
         """Replace the session with a new login."""
         # A failed identity switch must never leave the previous account usable.
         generation = await self.clear_local_session()
+        await self._request_token(username, password, generation)
+        return generation
+
+    async def _renew_token(self, generation: int, rejected_token: str) -> None:
+        """Log in again with the kept credentials after a 401 on ``rejected_token``.
+
+        The account stays the same, so the session keeps its generation and
+        operations in progress go on with the new token. Concurrent callers
+        share one login. Rejected credentials are dropped and end the session.
+        """
+        async with self._renew_lock:
+            self.check_session_generation(generation)
+            if self._token != rejected_token:
+                return
+            credentials = self._credentials
+            if credentials is None:
+                await self.clear_local_session(expected_generation=generation)
+                raise NanoKVMNotAuthenticatedError(
+                    "NanoKVM session is no longer authenticated"
+                )
+            _LOGGER.debug("Session rejected; logging in again")
+            try:
+                await self._request_token(
+                    credentials.username, credentials.password, generation
+                )
+            except NanoKVMAuthenticationFailure:
+                if self._credentials is credentials:
+                    self._credentials = None
+                await self.clear_local_session(expected_generation=generation)
+                raise
+            # A lost session often means the server restarted, maybe updated.
+            self.forget_versions()
+
+    async def _request_token(
+        self, username: str, password: str, generation: int
+    ) -> None:
+        """Log in within session ``generation`` and store the new token."""
         _LOGGER.debug("Attempting authentication for user: %s", username)
 
         # Unknown mode: try obfuscated first, then plain text, and remember
@@ -455,7 +510,6 @@ class SessionController:
                 break
 
         self.check_session_generation(generation)
-        return generation
 
     def check_session_generation(self, generation: int) -> None:
         """Reject an operation superseded by an authentication transition."""
@@ -730,25 +784,24 @@ class SessionController:
 
     async def get_ws(self) -> ClientWebSocketResponse:
         """Get or create the WebSocket shared by keyboard and mouse events."""
-        generation = self._session_generation
-        try:
-            async with self._ws_lock:
-                if self._ws is not None and not self._ws.closed:
-                    return self._ws
+        return await self._handshake("ws", self._get_or_connect_ws)
 
-                stale_ws = self._detach_ws()
-                if stale_ws is not None:
-                    await stale_ws.close()
+    async def _get_or_connect_ws(self) -> ClientWebSocketResponse:
+        """Return the open shared WebSocket, or connect a new one."""
+        # Clearing the session acquires _ws_lock, so _handshake maps a failed
+        # handshake only after this lock has been released.
+        async with self._ws_lock:
+            if self._ws is not None and not self._ws.closed:
+                return self._ws
 
-                generation = self._session_generation
-                ws = await self._connect_ws("ws")
-                self._ws = ws
-                self._ws_heartbeat = asyncio.create_task(self._send_heartbeats(ws))
-                return ws
-        except ClientResponseError as err:
-            # _clear_local_session acquires _ws_lock, so do this after the
-            # lock above has been released to avoid a self-deadlock.
-            await self._raise_ws_error(err, "ws", generation)
+            stale_ws = self._detach_ws()
+            if stale_ws is not None:
+                await stale_ws.close()
+
+            ws = await self._connect_ws("ws")
+            self._ws = ws
+            self._ws_heartbeat = asyncio.create_task(self._send_heartbeats(ws))
+            return ws
 
     async def send_ws(
         self, send: Callable[[ClientWebSocketResponse], Awaitable[None]]
@@ -780,11 +833,29 @@ class SessionController:
         the session and rejected. The caller closes the WebSocket, and must do
         so before the client exits. Logging out does not close it.
         """
-        generation = self._session_generation
-        try:
-            return await self._connect_ws(path, **kwargs)
-        except ClientResponseError as err:
-            await self._raise_ws_error(err, path, generation)
+        return await self._handshake(path, lambda: self._connect_ws(path, **kwargs))
+
+    async def _handshake(
+        self, path: str, connect: Callable[[], Awaitable[ClientWebSocketResponse]]
+    ) -> ClientWebSocketResponse:
+        """Run a WebSocket handshake, logging in again once after a 401."""
+        renew = True
+        while True:
+            generation = self._session_generation
+            token = self._token
+            try:
+                return await connect()
+            except ClientResponseError as err:
+                if (
+                    renew
+                    and err.status == 401
+                    and token
+                    and self._credentials is not None
+                ):
+                    renew = False
+                    await self._renew_token(generation, token)
+                    continue
+                await self._raise_ws_error(err, path, generation)
 
     async def _connect_ws(self, path: str, **kwargs: Any) -> ClientWebSocketResponse:
         """Connect a WebSocket on ``path`` carrying this session's token."""
