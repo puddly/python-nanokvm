@@ -9,10 +9,32 @@ from typing import Any
 import pytest
 
 from nanokvm import cli
-from nanokvm.client import NanoKVMApiError
-from nanokvm.models import GetGpioRsp, GetHardwareRsp, GetInfoRsp, GpioType, HWVersion
+from nanokvm.client import NanoKVMApiError, NanoKVMNotSupportedError
+from nanokvm.models import (
+    GetGpioRsp,
+    GetHardwareRsp,
+    GetImagesRsp,
+    GetInfoRsp,
+    GetMediaRsp,
+    GetMountedImageRsp,
+    GpioType,
+    HWVersion,
+)
 
 _URL = "http://kvm.example.test/api/"
+
+
+def _medium(rel: str, *, attached: bool) -> dict[str, Any]:
+    return {
+        "type": "image" if rel else "partition",
+        "rel": rel,
+        "name": rel or "Shared folder",
+        "size": 0,
+        "fs": "iso9660" if rel else "exfat",
+        "browsable": True,
+        "attached": attached,
+        "modifiedAt": "2026-11-16T00:00:00Z",
+    }
 
 
 class _FakeKVM:
@@ -22,6 +44,9 @@ class _FakeKVM:
     # Power LED readings in order; the last one repeats.
     power_leds: list[bool] = [False]
     login_error: Exception | None = None
+    # Whether the device has the non-Pro 2.5.3 media API; without it, the
+    # client refuses those calls and only the image API is left.
+    media_api = True
 
     def __init__(self, url: str, **kwargs: Any) -> None:
         self.url = url
@@ -63,6 +88,42 @@ class _FakeKVM:
     def push_button(self, button: GpioType, duration_ms: int) -> None:
         self.calls.append(("push_button", button, duration_ms))
 
+    def _require_media_api(self) -> None:
+        if not self.media_api:
+            raise NanoKVMNotSupportedError("requires non-Pro 2.5.3")
+
+    def get_media(self) -> GetMediaRsp:
+        self._require_media_api()
+        return GetMediaRsp.model_validate(
+            {
+                "media": [
+                    _medium("debian.iso", attached=False),
+                    _medium("isos/win.iso", attached=True),
+                    _medium("", attached=False),
+                ],
+                "capabilities": {"loop": True},
+            }
+        )
+
+    def mount_media(
+        self, rel: str | None = None, *, cdrom: bool = False, force: bool = False
+    ) -> None:
+        self._require_media_api()
+        self.calls.append(("mount_media", rel, cdrom, force))
+
+    def eject_media(self, *, force: bool = False) -> None:
+        self._require_media_api()
+        self.calls.append(("eject_media", force))
+
+    def get_images(self) -> GetImagesRsp:
+        return GetImagesRsp(files=["/data/debian.iso", "/data/win.iso"])
+
+    def get_mounted_image(self) -> GetMountedImageRsp:
+        return GetMountedImageRsp(file="/data/win.iso")
+
+    def mount_image(self, file: str | None = None, cdrom: bool = False) -> None:
+        self.calls.append(("mount_image", file, cdrom))
+
 
 @pytest.fixture(autouse=True)
 def fake_kvm(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -70,6 +131,7 @@ def fake_kvm(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     _FakeKVM.instances = []
     monkeypatch.setattr(_FakeKVM, "power_leds", [False])
     monkeypatch.setattr(_FakeKVM, "login_error", None)
+    monkeypatch.setattr(_FakeKVM, "media_api", True)
     monkeypatch.setattr(cli, "NanoKVMSyncClient", _FakeKVM)
     monkeypatch.setattr(cli, "_POLL_INTERVAL", 0)
     monkeypatch.setenv("NANOKVM_URL", _URL)
@@ -89,6 +151,14 @@ def _presses(kvm: _FakeKVM) -> list[tuple[Any, ...]]:
 
 def _led_reads(kvm: _FakeKVM) -> int:
     return kvm.calls.count(("get_gpio",))
+
+
+def _mounts(kvm: _FakeKVM) -> list[tuple[Any, ...]]:
+    return [
+        call
+        for call in kvm.calls
+        if call[0] in {"mount_media", "eject_media", "mount_image"}
+    ]
 
 
 def test_info_logs_in_with_the_environment_and_prints_versions(
@@ -245,18 +315,102 @@ def test_power_off_fails_when_the_led_stays_on(
     assert "not off after 0.05 s" in capsys.readouterr().err
 
 
+def test_media_lists_images_and_the_data_partition(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """From non-Pro 2.5.3, images go by their path in the media directory."""
+    assert cli.main(["media"]) == 0
+
+    assert capsys.readouterr().out == (
+        "  debian.iso\n* isos/win.iso\n  (data partition)\n"
+    )
+
+
+def test_media_lists_images_on_the_image_api(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Older firmware and the Pro list images by their full path."""
+    monkeypatch.setattr(_FakeKVM, "media_api", False)
+
+    assert cli.main(["media"]) == 0
+
+    assert capsys.readouterr().out == "  /data/debian.iso\n* /data/win.iso\n"
+
+
+@pytest.mark.parametrize(
+    ("argv", "media_api", "calls"),
+    [
+        (["mount", "debian.iso"], True, [("mount_media", "debian.iso", False, False)]),
+        (
+            ["mount", "debian.iso", "--cdrom", "--force"],
+            True,
+            [("mount_media", "debian.iso", True, True)],
+        ),
+        (["mount"], True, [("mount_media", None, False, False)]),
+        (["unmount"], True, [("eject_media", False)]),
+        (["unmount", "--force"], True, [("eject_media", True)]),
+        (
+            ["mount", "/data/debian.iso", "--cdrom"],
+            False,
+            [("mount_image", "/data/debian.iso", True)],
+        ),
+        (["unmount"], False, [("mount_image", None, False)]),
+    ],
+)
+def test_mount_and_unmount(
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    media_api: bool,
+    calls: list[tuple[Any, ...]],
+) -> None:
+    """The media API from non-Pro 2.5.3, the image API before it and on the Pro."""
+    monkeypatch.setattr(_FakeKVM, "media_api", media_api)
+
+    assert cli.main(argv) == 0
+
+    assert _mounts(_kvm()) == calls
+
+
+@pytest.mark.parametrize(
+    ("argv", "error"),
+    [
+        (["mount"], "mounting the data partition needs non-Pro 2.5.3"),
+        (["mount", "/data/debian.iso", "--force"], "--force needs non-Pro 2.5.3"),
+        (["unmount", "--force"], "--force needs non-Pro 2.5.3"),
+    ],
+)
+def test_the_image_api_refuses_media_api_options(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    error: str,
+) -> None:
+    """Without the media API, nothing is mounted or unmounted instead."""
+    monkeypatch.setattr(_FakeKVM, "media_api", False)
+
+    assert cli.main(argv) == 1
+
+    assert _mounts(_kvm()) == []
+    assert error in capsys.readouterr().err
+
+
 def test_device_errors_exit_with_a_message(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Errors print one line instead of a traceback."""
+    """Errors print one line, with the device's reason, instead of a traceback."""
     monkeypatch.setattr(
         _FakeKVM,
         "login_error",
-        NanoKVMApiError("API returned error (Code: -2)", code=-2, msg="failed"),
+        NanoKVMApiError(
+            "API returned error (Code: -11)",
+            code=-11,
+            msg="the target machine is using the medium",
+        ),
     )
 
     assert cli.main(["status"]) == 1
 
     assert capsys.readouterr().err == (
-        "nanokvm: error: API returned error (Code: -2)\n"
+        "nanokvm: error: API returned error (Code: -11): "
+        "the target machine is using the medium\n"
     )

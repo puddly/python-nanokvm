@@ -12,7 +12,7 @@ from typing import Any
 
 import aiohttp
 
-from .exceptions import NanoKVMError
+from .exceptions import NanoKVMApiError, NanoKVMError, NanoKVMNotSupportedError
 from .models import GpioType
 from .sync_client import NanoKVMSyncClient
 
@@ -20,6 +20,13 @@ from .sync_client import NanoKVMSyncClient
 _FORCE_OFF_MS = 6000
 _PRESS_MS = 800
 _POLL_INTERVAL = 1.0
+# How 'media' lists the shared data partition, which 'mount' without an image
+# attaches. It has no name to mount it by.
+_PARTITION = "(data partition)"
+_FORCE_HELP = (
+    "take the disk from a target that holds it, losing its unflushed writes "
+    "(non-Pro 2.5.3+)"
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -42,7 +49,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             command: Callable[[Any, argparse.Namespace], int] = args.command
             return command(kvm, args)
     except (NanoKVMError, aiohttp.ClientError, TimeoutError, OSError) as err:
-        print(f"nanokvm: error: {str(err) or type(err).__name__}", file=sys.stderr)
+        message = str(err) or type(err).__name__
+        if isinstance(err, NanoKVMApiError) and err.msg:
+            # The device says why it refused, such as a medium the target holds.
+            message = f"{message}: {err.msg}"
+        print(f"nanokvm: error: {message}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130
@@ -97,6 +108,23 @@ def _parser() -> argparse.ArgumentParser:
     reset = commands.add_parser("reset", help="press the target's reset button")
     reset.add_argument("--ms", type=int, default=_PRESS_MS, help="press duration")
     reset.set_defaults(command=_reset)
+
+    commands.add_parser(
+        "media", help="list what can be mounted; * marks the mounted one"
+    ).set_defaults(command=_media)
+    mount = commands.add_parser("mount", help="mount an image on the target")
+    mount.add_argument(
+        "image",
+        nargs="?",
+        help="image as 'media' lists it; without it, the data partition "
+        "(non-Pro 2.5.3+)",
+    )
+    mount.add_argument("--cdrom", action="store_true", help="mount as a CD-ROM")
+    mount.add_argument("--force", action="store_true", help=_FORCE_HELP)
+    mount.set_defaults(command=_mount)
+    unmount = commands.add_parser("unmount", help="unmount the mounted medium")
+    unmount.add_argument("--force", action="store_true", help=_FORCE_HELP)
+    unmount.set_defaults(command=_unmount)
     return parser
 
 
@@ -152,6 +180,51 @@ def _switch_power(kvm: Any, *, on: bool, press_ms: int, timeout: float) -> int:
 def _reset(kvm: Any, args: argparse.Namespace) -> int:
     kvm.push_button(GpioType.RESET, args.ms)
     return 0
+
+
+# Non-Pro 2.5.3 moved virtual media to the storage API. The client refuses it
+# on older firmware and on the Pro, which keep the image API.
+
+
+def _media(kvm: Any, args: argparse.Namespace) -> int:
+    try:
+        media = kvm.get_media().media
+    except NanoKVMNotSupportedError:
+        mounted = kvm.get_mounted_image().file
+        listing = [(image == mounted, image) for image in kvm.get_images().files]
+    else:
+        listing = [(item.attached, item.rel or _PARTITION) for item in media]
+    for attached, name in listing:
+        print(f"{'*' if attached else ' '} {name}")
+    return 0
+
+
+def _mount(kvm: Any, args: argparse.Namespace) -> int:
+    try:
+        kvm.mount_media(args.image, cdrom=args.cdrom, force=args.force)
+    except NanoKVMNotSupportedError:
+        if args.image is None:
+            raise NanoKVMNotSupportedError(
+                "name an image: mounting the data partition needs non-Pro 2.5.3 "
+                "or newer"
+            ) from None
+        _refuse_force(args)
+        kvm.mount_image(args.image, cdrom=args.cdrom)
+    return 0
+
+
+def _unmount(kvm: Any, args: argparse.Namespace) -> int:
+    try:
+        kvm.eject_media(force=args.force)
+    except NanoKVMNotSupportedError:
+        _refuse_force(args)
+        kvm.mount_image(None)
+    return 0
+
+
+def _refuse_force(args: argparse.Namespace) -> None:
+    if args.force:
+        raise NanoKVMNotSupportedError("--force needs non-Pro 2.5.3 or newer")
 
 
 def _on_off(value: bool) -> str:
