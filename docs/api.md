@@ -148,7 +148,7 @@ while loop.time() < end:
 | `set_hdmi_idle_timeout` | PCIe 2.5.0 |
 | `set_stream_mode`, `set_stream_quality`, `set_gop` | Pro |
 | `get_hdmi_capture`, `set_hdmi_capture`, `get_hdmi_passthrough`, `set_hdmi_passthrough` | Pro |
-| `get_edid`, `switch_edid` | Pro |
+| `get_edid`, `switch_edid` | Pro; `WQUXGA_3840X2400_30HZ` below 1.2.16 |
 | `get_custom_edid_list`, `upload_edid`, `delete_edid` | Pro 1.2.3 |
 | `set_rate_control_mode` | Pro 1.2.6 |
 | `set_fps` | Pro 1.2.8 |

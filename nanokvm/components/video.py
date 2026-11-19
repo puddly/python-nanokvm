@@ -24,7 +24,9 @@ from ..models.non_pro import (
     StopFrameDetectReq,
 )
 from ..models.pro import (
+    _LEGACY_EDID_NAMES,
     DeleteEdidReq,
+    EdidPreset,
     EdidValue,
     GetCustomEdidListRsp,
     GetEdidRsp,
@@ -41,6 +43,7 @@ from ..models.pro import (
     StreamMode,
     SwitchEdidReq,
     UploadEdidRsp,
+    _normalize_edid_value,
 )
 from .session import Controller
 
@@ -203,7 +206,20 @@ class VideoController(Controller):
 
     @require_hardware(HWFamily.PRO)
     async def switch_edid(self, edid: EdidValue) -> None:
-        """Switch EDID."""
+        """Switch EDID.
+
+        A preset, given by either of its names, is sent under the name the
+        device's firmware uses. Pro 1.2.16 dropped ``WQUXGA_3840X2400_30HZ``.
+        """
+        edid = _normalize_edid_value(edid)
+        if isinstance(edid, EdidPreset):
+            if not await self._session.application_version_at_least(pro="1.2.16"):
+                edid = _LEGACY_EDID_NAMES.get(edid, edid)
+            elif edid is EdidPreset.WQUXGA_3840X2400_30HZ:
+                raise NanoKVMNotSupportedError(
+                    "the 3840x2400 EDID preset requires Pro application version "
+                    f"< 1.2.16 (detected: {self._session._application_version})"
+                )
         await self._session.api_request_json(
             hdrs.METH_POST,
             "/vm/edid",
