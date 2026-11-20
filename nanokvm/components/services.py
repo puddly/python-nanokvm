@@ -113,7 +113,9 @@ class ServiceController(Controller):
 
         The device answers once the update is installed, then restarts its
         server, which ends the session. Non-Pro firmware before 2.5.1 restarts
-        before its answer is sent, so it drops the connection instead.
+        before its answer is sent, so it drops the connection instead. Pro
+        1.2.16 and later answer once the package is downloaded and install it
+        in the background, so a failed install shows only as the old version.
         """
         drops_connection = await self._restarts_before_answering()
         try:
