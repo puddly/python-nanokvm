@@ -6,7 +6,7 @@ import yarl
 
 from nanokvm.client import NanoKVMClient
 from nanokvm.exceptions import NanoKVMNotSupportedError
-from nanokvm.models import HWVersion, ScreenSettingType, StreamMode
+from nanokvm.models import EdidPreset, HWVersion, ScreenSettingType, StreamMode
 
 from .common import BASE_URL, mark_detected
 
@@ -26,6 +26,39 @@ async def test_set_stream_mode_accepts_existing_string_values(
 
     calls = mocked.requests[("POST", yarl.URL(f"{BASE_URL}stream/mode"))]
     assert calls[0].kwargs.get("json") == {"mode": "h264-direct"}
+
+
+async def test_edid_presets_follow_the_1_2_16_rename(
+    client: NanoKVMClient, mocked: aioresponses
+) -> None:
+    """Test presets are sent as the firmware names them and read under both names."""
+    url = f"{BASE_URL}vm/edid"
+    mocked.post(url, payload={"code": 0, "msg": "success", "data": None}, repeat=True)
+
+    mark_detected(client, HWVersion.PRO, "1.2.15")
+    await client.switch_edid(EdidPreset.QHD_1440P_60HZ)
+    await client.switch_edid("nanokvm-pro-1920x1080-60")
+    await client.switch_edid(EdidPreset.WQUXGA_3840X2400_30HZ)
+
+    mark_detected(client, HWVersion.PRO, "1.2.16")
+    await client.switch_edid("E56-2K60FPS")
+    await client.switch_edid("custom.bin")
+    with pytest.raises(NanoKVMNotSupportedError):
+        await client.switch_edid(EdidPreset.WQUXGA_3840X2400_30HZ)
+
+    calls = mocked.requests[("POST", yarl.URL(url))]
+    assert [call.kwargs["json"]["edid"] for call in calls] == [
+        "E56-2K60FPS",
+        "E54-1080P60FPS",
+        "E58-4K16-10",
+        "nanokvm-pro-2560x1440-60",
+        "custom.bin",
+    ]
+
+    for name in ("E63-Ultrawide", "nanokvm-pro-3440x1440-60"):
+        mocked.get(url, payload={"code": 0, "msg": "success", "data": {"edid": name}})
+        rsp = await client.get_edid()
+        assert rsp.edid is EdidPreset.ULTRAWIDE_3440X1440_60HZ
 
 
 async def test_pause_frame_detect(client: NanoKVMClient, mocked: aioresponses) -> None:

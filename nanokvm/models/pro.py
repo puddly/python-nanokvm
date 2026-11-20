@@ -81,25 +81,40 @@ class LcdTimeFormat(_CaseInsensitiveStrEnum):
 
 
 class EdidPreset(StrEnum):
-    """Built-in NanoKVM Pro EDID presets."""
+    """Built-in NanoKVM Pro EDID presets, named as Pro 1.2.16 names them.
 
-    UHD_4K_30HZ = "E18-4K30FPS"
-    UHD_4K_39HZ = "E48-4K39FPS"
-    QHD_1440P_60HZ = "E56-2K60FPS"
-    FHD_1080P_60HZ = "E54-1080P60FPS"
+    Pro 1.2.15 and older use other names, and only they have
+    ``WQUXGA_3840X2400_30HZ``.
+    """
+
+    UHD_4K_30HZ = "nanokvm-pro-3840x2160-30"
+    UHD_4K_39HZ = "nanokvm-pro-3840x2160-39"
+    QHD_1440P_60HZ = "nanokvm-pro-2560x1440-60"
+    FHD_1080P_60HZ = "nanokvm-pro-1920x1080-60"
     WQUXGA_3840X2400_30HZ = "E58-4K16-10"
-    ULTRAWIDE_3440X1440_60HZ = "E63-Ultrawide"
+    ULTRAWIDE_3440X1440_60HZ = "nanokvm-pro-3440x1440-60"
 
 
 EdidValue = EdidPreset | str
 
+# Pro 1.2.15 and older names of the presets that 1.2.16 renamed.
+_LEGACY_EDID_NAMES: dict[EdidPreset, str] = {
+    EdidPreset.UHD_4K_30HZ: "E18-4K30FPS",
+    EdidPreset.UHD_4K_39HZ: "E48-4K39FPS",
+    EdidPreset.QHD_1440P_60HZ: "E56-2K60FPS",
+    EdidPreset.FHD_1080P_60HZ: "E54-1080P60FPS",
+    EdidPreset.ULTRAWIDE_3440X1440_60HZ: "E63-Ultrawide",
+}
+_PRESETS_BY_LEGACY_NAME = {name: preset for preset, name in _LEGACY_EDID_NAMES.items()}
+
 
 def _normalize_edid_value(value: Any) -> Any:
+    """Return the preset for either name of a built-in EDID, else ``value``."""
     if isinstance(value, str):
         try:
             return EdidPreset(value)
         except ValueError:
-            return value
+            return _PRESETS_BY_LEGACY_NAME.get(value, value)
     return value
 
 
@@ -125,12 +140,8 @@ class GetEdidRsp(BaseModel):
 
 
 class SwitchEdidReq(BaseModel):
+    # The client picks the name the firmware uses, so it is sent unchanged.
     edid: EdidValue
-
-    @field_validator("edid", mode="before")
-    @classmethod
-    def _normalize_edid(cls, value: Any) -> Any:
-        return _normalize_edid_value(value)
 
 
 class GetCustomEdidListRsp(BaseModel):
